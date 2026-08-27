@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/openfoto-core", "crates/openfoto-cli"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"

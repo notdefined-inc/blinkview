@@ -1,0 +1,13 @@
+[package]
+name = "openfoto-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "openfoto"
+path = "src/main.rs"
+
+[dependencies]
+openfoto-core = { path = "../openfoto-core" }
+anyhow.workspace = true
