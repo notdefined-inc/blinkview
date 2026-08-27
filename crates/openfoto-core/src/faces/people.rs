@@ -18,6 +18,14 @@ pub struct Person {
     /// five clusters; keeping all of them raised within-person similarity to 0.842
     /// against 0.456 for other people (ADR-0003).
     pub references: Vec<Vec<f32>>,
+    /// Photo hashes the user has explicitly said are *not* this person.
+    ///
+    /// Recognition can be right about a face and still wrong about what the user
+    /// wants; an exclusion is a direct correction and always outranks a match. Kept
+    /// per person rather than globally so removing someone from one photo does not
+    /// affect anyone else in it.
+    #[serde(default)]
+    pub excluded: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -51,10 +59,30 @@ impl People {
         self.people.iter().find(|p| p.name == name)
     }
 
+    /// True when the user has said this photo is not this person.
+    pub fn is_excluded(&self, name: &str, photo_hash: &str) -> bool {
+        self.get(name).is_some_and(|p| p.excluded.iter().any(|h| h == photo_hash))
+    }
+
+    /// Record that these photos are not this person.
+    pub fn exclude(&mut self, name: &str, hashes: &[String]) {
+        if let Some(p) = self.people.iter_mut().find(|p| p.name == name) {
+            for h in hashes {
+                if !p.excluded.iter().any(|x| x == h) {
+                    p.excluded.push(h.clone());
+                }
+            }
+        }
+    }
+
     pub fn add_references(&mut self, name: &str, refs: Vec<Vec<f32>>) {
         match self.people.iter_mut().find(|p| p.name == name) {
             Some(p) => p.references.extend(refs),
-            None => self.people.push(Person { name: name.to_string(), references: refs }),
+            None => self.people.push(Person {
+                name: name.to_string(),
+                references: refs,
+                excluded: Vec::new(),
+            }),
         }
     }
 

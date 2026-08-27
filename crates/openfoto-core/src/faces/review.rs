@@ -9,6 +9,7 @@ use crate::{
     imageio, Library,
 };
 use anyhow::Result;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Thumbnail crop side. Small: these tile at ~44px in the strip.
@@ -63,14 +64,34 @@ pub struct ReviewResult {
     pub assignments: std::collections::BTreeMap<usize, String>,
 }
 
-fn crop_data_uri(lib: &Library, f: &StoredFace, path: &str, side: u32) -> Option<String> {
-    let img = imageio::load_rgb(&lib.abs(path)).ok()?;
-    // Face coordinates are in *analysis* space: the image scaled so its long edge is
-    // ANALYSIS_LONG_EDGE, or left alone if it was already smaller. Recover that exact
-    // factor rather than approximating it, or crops land on empty sky.
-    let long = img.width().max(img.height());
-    let analysis_long = long.min(crate::faces::pipeline::ANALYSIS_LONG_EDGE);
-    let scale = long as f32 / analysis_long as f32;
+/// Takes the library *root* rather than the `Library` itself: the latter owns a
+/// SQLite connection, which is not `Sync` and so cannot cross a rayon boundary.
+///
+/// `thumb` is the cached 512px thumbnail. Small crops are cut from it rather than from
+/// the original, because decoding a 12MP photo to produce a 44px face is the single
+/// most expensive thing this module does — with a dozen crops per cluster it dominated
+/// the whole call. The hero crop still comes from the original, where the resolution
+/// is actually visible.
+fn crop_data_uri(
+    root: &std::path::Path,
+    f: &StoredFace,
+    path: &str,
+    side: u32,
+    thumb: Option<&std::path::Path>,
+) -> Option<String> {
+    let original = root.join(path);
+    let use_thumb = thumb.filter(|t| side <= CROP && t.exists());
+    let img = imageio::load_rgb(use_thumb.unwrap_or(&original)).ok()?;
+
+    // Face coordinates are in *analysis* space: the original scaled so its long edge is
+    // ANALYSIS_LONG_EDGE. Recover that factor against whichever image we actually
+    // loaded, or crops land on empty sky.
+    let orig_long = match use_thumb {
+        Some(_) => imageio::dimensions(&original).map(|(w, h)| w.max(h))?,
+        None => img.width().max(img.height()),
+    };
+    let analysis_long = orig_long.min(crate::faces::pipeline::ANALYSIS_LONG_EDGE);
+    let scale = img.width().max(img.height()) as f32 / analysis_long as f32;
     let m = f.w * CROP_MARGIN;
     let x0 = ((f.x - m) * scale).max(0.0) as u32;
     let y0 = ((f.y - m) * scale).max(0.0) as u32;
@@ -141,22 +162,35 @@ pub fn build(lib: &Library, people: &People, opt: &assign::Options, max_distance
             }
         }
 
-        let faces: Vec<ReviewFace> = sorted
+        // Crop generation decodes a full-resolution photo per face. Done serially that
+        // dominates the whole call (hundreds of 12MP decodes), so it runs in parallel.
+        let jobs: Vec<(usize, StoredFace, String, u32)> = sorted
             .iter()
             .take(MAX_CROPS)
             .enumerate()
             .filter_map(|(i, f)| {
-                let path = hash_to_path.get(&f.hash)?;
+                let path = hash_to_path.get(&f.hash)?.clone();
                 // The first crop is the card's hero and is rendered large.
-                let side = if i == 0 { HERO_CROP } else { CROP };
-                Some(ReviewFace {
-                    hash: f.hash.clone(),
-                    idx: f.idx,
-                    crop: crop_data_uri(lib, f, path, side)?,
-                    score: f.score,
-                })
+                Some((i, f.clone(), path, if i == 0 { HERO_CROP } else { CROP }))
             })
             .collect();
+        let root = lib.root().to_path_buf();
+        let mut made: Vec<(usize, ReviewFace)> = jobs
+            .par_iter()
+            .filter_map(|(i, f, path, side)| {
+                Some((
+                    *i,
+                    ReviewFace {
+                        hash: f.hash.clone(),
+                        idx: f.idx,
+                        crop: crop_data_uri(&root, f, path, *side, Some(&crate::thumbs::thumb_path_at(&root, &f.hash)))?,
+                        score: f.score,
+                    },
+                ))
+            })
+            .collect();
+        made.sort_by_key(|(i, _)| *i);
+        let faces: Vec<ReviewFace> = made.into_iter().map(|(_, f)| f).collect();
 
         // Unit-length mean of the group. Shipped to the page so that naming one group
         // can immediately re-suggest the same person for every other group that looks

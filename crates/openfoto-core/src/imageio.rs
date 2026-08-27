@@ -53,6 +53,17 @@ pub fn apply_luma(img: GrayImage, o: u16) -> GrayImage {
     }
 }
 
+/// Read image dimensions from the header without decoding pixels, with EXIF
+/// orientation applied. Cheap enough to call per face.
+pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut dec = jpeg_decoder::Decoder::new(std::io::BufReader::new(file));
+    dec.read_info().ok()?;
+    let info = dec.info()?;
+    let (w, h) = (u32::from(info.width), u32::from(info.height));
+    Some(if matches!(orientation(path), 5..=8) { (h, w) } else { (w, h) })
+}
+
 /// Decode to RGB with EXIF orientation applied.
 pub fn load_rgb(path: &Path) -> Result<RgbImage> {
     let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;

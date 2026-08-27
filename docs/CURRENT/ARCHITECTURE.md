@@ -1,16 +1,31 @@
 # Architecture
 
 ## Today
-Not built yet. Cargo workspace with two empty crates.
+
+    crates/openfoto-core/       all logic; no UI, no CLI concerns
+    crates/openfoto-cli/        `openfoto` binary — thin wrapper over core
+    apps/desktop/src-tauri/     Tauri v2 shell — same core crate
+    apps/desktop/dist/          frontend: index.html, app.css, app.js (no bundler)
+
+The CLI and the desktop app are peers over one engine. Every Tauri command calls the
+same function the CLI does, so the two can never disagree about what a library holds
+or what an operation will do.
 
 ## Intended shape
 
     crates/openfoto-core/   Rust lib. All logic: scan, hash, dedupe, faces, plan/apply/undo.
     crates/openfoto-cli/    Rust bin. Thin argument parsing over core. Ships first.
-    (later) openfoto-app/   Tauri v2 desktop viewer. Same core crate, web frontend.
+    apps/desktop/           Tauri v2 desktop viewer. Same core crate, web frontend.
 
 The CLI and the eventual GUI are peers over one engine. The CLI is never demoted to a
 legacy interface.
+
+## Sources
+
+The desktop app holds a list of *source folders*, each an independent library with its
+own disposable `.openfoto/`. The list lives in the app config directory and is the only
+app-level state; losing it costs nothing but re-adding folders. There is deliberately no
+global database — that is the whole premise (ADR-0001).
 
 ## The vault
 

@@ -2,7 +2,30 @@
 
 _Last updated: 2026-08-27_
 
-## Current work
+## Current work — desktop app
+
+`apps/desktop` runs. Multi-folder sources (remembered across launches), date-grouped
+justified grid, lightbox with folder/person context, in-app people review with live
+re-suggestion, selection with context menu, delete to a recoverable `Trash/`, per-photo
+rename, per-person untagging, and the organize sheet (preview then apply).
+
+Run it: `cargo run --release -p openfoto-desktop`.
+
+### Bugs found by driving the real window
+Each of these looked fine in code and only appeared on screen:
+- `display` in a class rule outranks the `hidden` attribute, so every overlay was
+  permanently visible until `[hidden]{display:none!important}` was added.
+- Tauri's `asset:` scope glob `**` does not match an absolute path, so every image
+  404'd. Replaced with our own `photo://` scheme that only serves inside added sources.
+- Synchronous `#[tauri::command]` functions run on the UI thread; building 280
+  thumbnails froze the window until the heavy commands were made `async`.
+- `backdrop-filter` on the lightbox created a compositing context in WKWebView that
+  swallowed the photo entirely — it measured correctly and never painted.
+- With a few hundred filmstrip thumbnails in a sibling row, WKWebView laid the image
+  out hundreds of pixels below its own `overflow:hidden` parent. Fixed with absolute
+  centring plus windowing the filmstrip.
+
+## Previously
 Phase 1 done bar polish. Working today: `scan`, `status`, `dedupe`, `rename`, `undo`,
 `history`. 32 tests pass (`cargo test --workspace`), clippy clean with `-D warnings`
 across all targets.

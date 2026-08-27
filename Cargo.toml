@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/openfoto-core", "crates/openfoto-cli"]
+members = ["crates/openfoto-core", "crates/openfoto-cli", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.0.1"
@@ -25,3 +25,9 @@ rayon = "1"
 jpeg-decoder = "0.3"
 ort = "2.0.0-rc.10"
 ndarray = "0.17"
+
+# Debug builds keep debug_assertions on (the MCP UI-verification bridge needs it) but
+# image decoding and ONNX inference are unusable unoptimized. Optimizing dependencies
+# only keeps our own code fast to compile and debuggable.
+[profile.dev.package."*"]
+opt-level = 3

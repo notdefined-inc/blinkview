@@ -1,0 +1,24 @@
+[package]
+name = "openfoto-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "openfoto_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+openfoto-core = { path = "../../../crates/openfoto-core" }
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+http = "1"
+
+[target.'cfg(debug_assertions)'.dependencies]
+tauri-plugin-mcp-bridge = "0.12"

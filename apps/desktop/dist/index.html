@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openfoto</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="titlebar" data-tauri-drag-region>
+  <div class="tb-left">
+    <span class="logo"></span>
+    <span class="wordmark">openfoto</span>
+  </div>
+  <div class="tb-mid" data-tauri-drag-region><span id="crumb"></span></div>
+  <div class="tb-right">
+    <input id="search" class="search" type="search" placeholder="Search photos" aria-label="Search photos">
+    <button class="icon-btn" id="btn-tools" title="Organize" aria-label="Organize">◈</button>
+  </div>
+</div>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <section class="nav-block">
+      <div class="nav-head"><span>Sources</span><button class="mini" id="btn-add" title="Add a folder">＋</button></div>
+      <div id="sources"></div>
+    </section>
+    <section class="nav-block" id="people-block" hidden>
+      <div class="nav-head"><span>People</span><button class="mini" id="btn-review" title="Review people">◎</button></div>
+      <div id="people"></div>
+    </section>
+    <section class="nav-block" id="folders-block" hidden>
+      <div class="nav-head"><span>Folders</span></div>
+      <div id="folders"></div>
+    </section>
+  </aside>
+
+  <main id="main">
+    <div id="stage"></div>
+  </main>
+</div>
+
+<div class="lightbox" id="lightbox" hidden>
+  <div class="lb-chrome lb-top">
+    <button class="icon-btn" id="lb-close" aria-label="Close">✕</button>
+    <div class="lb-title"><b id="lb-name"></b><span id="lb-meta"></span></div>
+    <div class="lb-actions">
+      <span class="lb-folder" id="lb-folder"></span>
+      <button class="icon-btn" id="lb-rename" title="Rename" aria-label="Rename">✎</button>
+      <button class="icon-btn danger" id="lb-delete" title="Move to Trash" aria-label="Move to Trash">🗑</button>
+    </div>
+  </div>
+  <button class="lb-nav prev" id="lb-prev" aria-label="Previous">‹</button>
+  <div class="lb-stage"><img id="lb-img" alt=""></div>
+  <button class="lb-nav next" id="lb-next" aria-label="Next">›</button>
+  <div class="lb-strip" id="lb-strip"></div>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet-head"><h2 id="sheet-title">Organize</h2><button class="icon-btn" id="sheet-close" aria-label="Close">✕</button></div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </div>
+</div>
+
+<div class="selbar" id="selbar" hidden>
+  <span class="selcount num" id="selcount"></span>
+  <button class="btn ghost sm" id="sel-all">Select all</button>
+  <button class="btn ghost sm" id="sel-none">Clear</button>
+  <span class="selspacer"></span>
+  <button class="btn ghost sm" id="sel-untag" hidden>Not this person</button>
+  <button class="btn ghost sm danger" id="sel-delete">Move to Trash</button>
+</div>
+
+<div class="ctx" id="ctx" hidden role="menu"></div>
+<div class="toasts" id="toasts"></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>

@@ -1,15 +1,14 @@
 # Roadmap
 
 ## Now
-Phase 1 — safe mechanics, no ML: `scan`, `dedupe`, `rename`, `undo`.
-Proves the journal/undo core and the exFAT handling on low-risk operations.
+Phase 3 — the desktop viewer. Shipping: multi-folder sources, date-grouped justified
+grid, lightbox with folder context, in-app people review, organize sheet with
+preview-then-apply. Remaining: progress reporting for long operations, selection and
+bulk actions, video playback.
 
-## Next
-Phase 2 — faces: YuNet detection + SFace embeddings via `ort`, complete-linkage
-clustering, discriminative assignment, the HTML review page, and `scenery`.
-
-## Later
-Phase 3 — the viewer: Tauri v2 shell with a virtualized grid over the thumbnail cache.
-Picasa-fast is the bar. Follow the `ui-design` playbook.
+## Done
+Phase 1 — `scan`, `dedupe`, `rename`, `undo`, journal/undo core, exFAT handling.
+Phase 2 — faces end to end: detection, embeddings, clustering, assignment, review,
+`scenery`, and filing by person.
 
 Beyond v1: RAW/HEIC, geotagging, tag hierarchies, plugins.

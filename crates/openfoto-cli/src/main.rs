@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 mod web;
 
 use openfoto_core::faces::{assign, people::People, pipeline, review};
-use openfoto_core::{dedupe, journal::Journal, rename, scan, Library};
+use openfoto_core::{dedupe, journal::Journal, rename, scan, scenery, Library};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -35,6 +35,16 @@ enum Cmd {
     Faces {
         #[command(subcommand)]
         cmd: FacesCmd,
+    },
+    /// Set aside photos with no close-up person.
+    Scenery {
+        /// Largest face, as a fraction of image width, still counted as scenery.
+        #[arg(long, default_value_t = scenery::DEFAULT_MAX_FACE)]
+        max_face: f32,
+        #[arg(long, default_value = scenery::DEFAULT_DEST)]
+        dest: String,
+        #[arg(long)]
+        apply: bool,
     },
     /// Find burst near-duplicates and set them aside.
     Dedupe {
@@ -84,6 +94,11 @@ enum FacesCmd {
     },
     /// List known people and their reference counts.
     People,
+    /// Move photos into a folder per person.
+    File {
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 fn open(cli: &Cli) -> Result<Library> {
@@ -157,6 +172,35 @@ fn main() -> Result<()> {
                     println!("  {:<20} {} reference faces", p.name, p.references.len());
                 }
             }
+            FacesCmd::File { apply } => {
+                let mut lib = open(&cli)?;
+                let people = People::load(&lib.vault())?;
+                if people.is_empty() {
+                    println!("no people known yet — run `openfoto faces review` first.");
+                    return Ok(());
+                }
+                let out = openfoto_core::faces::file::plan(&lib, &people, &assign::Options::default())?;
+                println!("{} photos to file, {} shared between people (left in place), {} unclaimed",
+                         out.plan.len(), out.shared.len(), out.unclaimed);
+                for op in out.plan.ops.iter().take(8) {
+                    println!("  {}  ->  {}", op.from(), op.to());
+                }
+                if out.plan.len() > 8 {
+                    println!("  ... and {} more", out.plan.len() - 8);
+                }
+                for (p, why) in out.plan.skipped.iter().take(5) {
+                    println!("  keeping {p} — {why}");
+                }
+                if !apply {
+                    println!("\ndry run — nothing changed. Re-run with --apply to commit.");
+                    return Ok(());
+                }
+                for name in people.people.iter().map(|p| &p.name) {
+                    std::fs::create_dir_all(lib.abs(name))?;
+                }
+                let j = out.plan.apply(&mut lib)?;
+                println!("\napplied. undo with:  openfoto undo {} --apply", j.id);
+            }
             FacesCmd::Review { distance, dump } => {
                 let lib = open(&cli)?;
                 let mut people = People::load(&lib.vault())?;
@@ -200,6 +244,25 @@ fn main() -> Result<()> {
                 println!("run `openfoto faces people` to see them.");
             }
         },
+        Cmd::Scenery { max_face, dest, apply } => {
+            let mut lib = open(&cli)?;
+            let opt = scenery::Options { max_face: *max_face, dest: dest.clone() };
+            let split = scenery::split(&lib, &opt)?;
+            if split.unanalysed > 0 {
+                println!("{} photos have no face data yet — run `openfoto faces analyze` first.",
+                         split.unanalysed);
+            }
+            println!("{} photos with no close-up person, {} with someone at {:.0}% of frame or more",
+                     split.scenery.len(), split.people, max_face * 100.0);
+            if !apply {
+                println!("\ndry run — nothing changed. Re-run with --apply to commit.");
+                return Ok(());
+            }
+            std::fs::create_dir_all(lib.abs(dest))?;
+            let plan = scenery::plan(&lib, &opt)?;
+            let j = plan.apply(&mut lib)?;
+            println!("applied. undo with:  openfoto undo {} --apply", j.id);
+        }
         Cmd::Dedupe { rmse, dest, apply } => {
             let mut lib = open(&cli)?;
             let opt = dedupe::Options { rmse: *rmse, dest: dest.clone(), ..Default::default() };
