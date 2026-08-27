@@ -701,6 +701,7 @@ dependencies = [
  "anyhow",
  "clap",
  "openfoto-core",
+ "serde_json",
 ]
 
 [[package]]

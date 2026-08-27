@@ -5,6 +5,9 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+mod web;
+
+use openfoto_core::faces::{assign, people::People, pipeline, review};
 use openfoto_core::{dedupe, journal::Journal, rename, scan, Library};
 use std::path::PathBuf;
 
@@ -28,6 +31,11 @@ enum Cmd {
     },
     /// What the index knows, and how it differs from the disk.
     Status,
+    /// Detect people, review clusters, and file photos by person.
+    Faces {
+        #[command(subcommand)]
+        cmd: FacesCmd,
+    },
     /// Find burst near-duplicates and set them aside.
     Dedupe {
         /// Pixel-difference threshold. Lower is stricter. 0.20/0.30/0.45 moved
@@ -56,6 +64,26 @@ enum Cmd {
     },
     /// List applied operations.
     History,
+}
+
+#[derive(Subcommand)]
+enum FacesCmd {
+    /// Detect and embed faces. Reads only; never moves a photo.
+    Analyze {
+        #[arg(long, default_value_t = pipeline::DEFAULT_SCORE)]
+        score: f32,
+    },
+    /// Open the review page to name the people found.
+    Review {
+        /// Maximum cosine distance for two faces to share a cluster.
+        #[arg(long, default_value_t = 0.55)]
+        distance: f32,
+        /// Write the page to a file instead of serving it. For design work.
+        #[arg(long)]
+        dump: Option<PathBuf>,
+    },
+    /// List known people and their reference counts.
+    People,
 }
 
 fn open(cli: &Cli) -> Result<Library> {
@@ -107,6 +135,71 @@ fn main() -> Result<()> {
                 println!("\ncapture time from: {sources:?}");
             }
         }
+        Cmd::Faces { cmd } => match cmd {
+            FacesCmd::Analyze { score } => {
+                let lib = open(&cli)?;
+                let st = pipeline::analyze(&lib, *score)?;
+                println!(
+                    "analysed {} photos ({} already done): {} faces, {} too small to embed",
+                    st.photos, st.skipped_cached, st.faces, st.too_small
+                );
+                for e in st.errors.iter().take(5) {
+                    eprintln!("  error: {e}");
+                }
+            }
+            FacesCmd::People => {
+                let lib = open(&cli)?;
+                let people = People::load(&lib.vault())?;
+                if people.is_empty() {
+                    println!("no people yet — run `openfoto faces review`");
+                }
+                for p in &people.people {
+                    println!("  {:<20} {} reference faces", p.name, p.references.len());
+                }
+            }
+            FacesCmd::Review { distance, dump } => {
+                let lib = open(&cli)?;
+                let mut people = People::load(&lib.vault())?;
+                let opt = assign::Options::default();
+                println!("building review…");
+                let payload = review::build(&lib, &people, &opt, *distance)?;
+                if payload.clusters.is_empty() {
+                    println!("no unassigned faces to review.");
+                    return Ok(());
+                }
+                println!(
+                    "{} clusters, {} unassigned faces",
+                    payload.clusters.len(),
+                    payload.unassigned_faces
+                );
+                let json = serde_json::to_string(&payload)?;
+                if let Some(path) = dump {
+                    std::fs::write(path, web::render_page(&json))?;
+                    println!("wrote {}", path.display());
+                    return Ok(());
+                }
+                let body = web::serve_review(&json)?;
+                let result: review::ReviewResult = serde_json::from_str(&body)?;
+
+                // Naming a cluster teaches the person that cluster's faces.
+                let groups = pipeline::cluster_unassigned(&lib, &people, &opt, *distance)?;
+                let mut learned = 0;
+                for (id, name) in &result.assignments {
+                    if let Some(g) = groups.get(*id) {
+                        let refs: Vec<Vec<f32>> =
+                            g.iter().filter_map(|f| f.embedding.clone()).collect();
+                        learned += refs.len();
+                        people.add_references(name, refs);
+                    }
+                }
+                people.save(&lib.vault())?;
+                println!(
+                    "\nlearned {learned} reference faces across {} people.",
+                    result.assignments.len()
+                );
+                println!("run `openfoto faces people` to see them.");
+            }
+        },
         Cmd::Dedupe { rmse, dest, apply } => {
             let mut lib = open(&cli)?;
             let opt = dedupe::Options { rmse: *rmse, dest: dest.clone(), ..Default::default() };

@@ -37,8 +37,13 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
-- `faces` and `scenery` CLI commands are not wired up yet — spec tasks 10-11. The
-  detection, embedding, clustering and assignment layers are done.
+- `scenery` is not implemented — spec task 11.
+- `faces` cannot yet *move* photos into per-person folders; review teaches identities
+  but filing them is still to come.
+- The review page holds every face crop as an inlined data URI: ~800KB for 15 clusters.
+  A library with hundreds of unnamed groups needs crops served on demand instead.
+- Model files are not committed (37MB). `openfoto models fetch` is not implemented yet;
+  place them in `models/` or set `OPENFOTO_MODELS`.
 - Detection uses the YuNet `2026may` export, not the `2023mar` one the thresholds were
   tuned against (ADR-0004). The 4% scenery ratio in particular is still unconfirmed
   against the new export.
@@ -60,6 +65,10 @@ face alone, which is the intended bias. Reproduce with
 - 2026-08-27 `openfoto-core`: library/index/scan/plan/journal/fsops/rename/timesource.
 - 2026-08-27 `openfoto` CLI: scan, status, rename, undo, history. Nothing mutates
   without `--apply`.
+- 2026-08-27 Task 10: `openfoto faces review` — a dark, photo-first review page served
+  from localhost, with live re-suggestion. Naming three people cut the remaining review
+  from 15 clusters / 110 faces to 6 / 31.
+- 2026-08-27 Task 9: people.json, discriminative assignment, EXIF orientation fix.
 - 2026-08-27 Task 8: YuNet detection + SFace embeddings via `ort`, with landmark
   alignment. Verified against OpenCV: identical embedding on a shared crop (cosine
   1.000000), 0.9956 across the full pipeline, matching face counts and 0.990 box IoU.
