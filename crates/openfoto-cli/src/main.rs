@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use openfoto_core::{journal::Journal, rename, scan, Library};
+use openfoto_core::{dedupe, journal::Journal, rename, scan, Library};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -28,6 +28,18 @@ enum Cmd {
     },
     /// What the index knows, and how it differs from the disk.
     Status,
+    /// Find burst near-duplicates and set them aside.
+    Dedupe {
+        /// Pixel-difference threshold. Lower is stricter. 0.20/0.30/0.45 moved
+        /// 134/284/549 photos on the reference library.
+        #[arg(long, default_value_t = dedupe::DEFAULT_RMSE)]
+        rmse: f32,
+        /// Folder the duplicates go to.
+        #[arg(long, default_value = dedupe::DEFAULT_DEST)]
+        dest: String,
+        #[arg(long)]
+        apply: bool,
+    },
     /// Give every file a date-time filename.
     Rename {
         #[arg(long, default_value = rename::DEFAULT_FORMAT)]
@@ -94,6 +106,38 @@ fn main() -> Result<()> {
             if !sources.is_empty() {
                 println!("\ncapture time from: {sources:?}");
             }
+        }
+        Cmd::Dedupe { rmse, dest, apply } => {
+            let mut lib = open(&cli)?;
+            let opt = dedupe::Options { rmse: *rmse, dest: dest.clone(), ..Default::default() };
+            let n = dedupe::ensure_signatures(&lib)?;
+            if n > 0 {
+                println!("analysed {n} photos");
+            }
+            let groups = dedupe::find_groups(&lib, &opt)?;
+            let moves: usize = groups.iter().map(|g| g.duplicates.len()).sum();
+            println!("{} groups, {} photos, {} would move (keeping the sharpest)",
+                     groups.len(), moves + groups.len(), moves);
+            for g in groups.iter().take(5) {
+                println!("  keep {}", g.keep.path);
+                for d in g.duplicates.iter().take(4) {
+                    println!("       {}", d.path);
+                }
+                if g.duplicates.len() > 4 {
+                    println!("       ... and {} more", g.duplicates.len() - 4);
+                }
+            }
+            if groups.len() > 5 {
+                println!("  ... and {} more groups", groups.len() - 5);
+            }
+            if !apply {
+                println!("\ndry run — nothing changed. Re-run with --apply to commit.");
+                return Ok(());
+            }
+            std::fs::create_dir_all(lib.abs(dest))?;
+            let plan = dedupe::plan(&lib, &opt)?;
+            let j = plan.apply(&mut lib)?;
+            println!("\napplied. undo with:  openfoto undo {} --apply", j.id);
         }
         Cmd::Rename { format, apply } => {
             let mut lib = open(&cli)?;

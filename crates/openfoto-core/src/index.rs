@@ -41,6 +41,16 @@ impl Index {
             );
             CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+            -- Keyed by content hash, not path: a renamed or moved file keeps its
+            -- signature for free, which is what makes rescans cheap (ADR-0001).
+            CREATE TABLE IF NOT EXISTS signatures (
+                hash      TEXT PRIMARY KEY,
+                dhash     INTEGER NOT NULL,
+                thumb     BLOB    NOT NULL,
+                sharpness REAL    NOT NULL,
+                width     INTEGER NOT NULL,
+                height    INTEGER NOT NULL
+            );
             "#,
         )?;
         Ok(Self { conn })
@@ -98,6 +108,34 @@ impl Index {
     pub fn remove_path(&self, path: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM files WHERE path=?1", params![path])?;
+        Ok(())
+    }
+
+    pub fn get_signature(&self, hash: &str) -> Result<Option<crate::imagesig::Signature>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT dhash,thumb,sharpness,width,height FROM signatures WHERE hash=?1",
+                params![hash],
+                |r| {
+                    Ok(crate::imagesig::Signature {
+                        dhash: r.get::<_, i64>(0)? as u64,
+                        thumb: r.get(1)?,
+                        sharpness: r.get(2)?,
+                        width: r.get(3)?,
+                        height: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn put_signature(&self, hash: &str, s: &crate::imagesig::Signature) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO signatures (hash,dhash,thumb,sharpness,width,height)
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![hash, s.dhash as i64, s.thumb, s.sharpness, s.width, s.height],
+        )?;
         Ok(())
     }
 

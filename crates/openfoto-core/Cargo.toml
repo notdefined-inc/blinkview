@@ -15,6 +15,12 @@ serde.workspace = true
 serde_json.workspace = true
 kamadak-exif.workspace = true
 regex.workspace = true
+image.workspace = true
+rayon.workspace = true
+jpeg-decoder.workspace = true
 
 [dev-dependencies]
 walkdir.workspace = true
+
+[[example]]
+name = "diag"
