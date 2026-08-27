@@ -1,0 +1,128 @@
+//! SQLite index. Entirely derived from the photos on disk — see ADR-0001.
+//!
+//! Note `files.hash` is deliberately *not* unique: two files may legitimately hold
+//! identical bytes. `path` is the unique column.
+
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection, OptionalExtension};
+use std::path::Path;
+
+pub struct Index {
+    conn: Connection,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileRow {
+    pub hash: String,
+    pub path: String,
+    pub size: i64,
+    pub mtime: i64,
+    pub kind: String,
+    pub taken_at: Option<i64>,
+    pub taken_src: Option<String>,
+}
+
+impl Index {
+    pub fn open(db: &Path) -> Result<Self> {
+        let conn = Connection::open(db).with_context(|| format!("opening {}", db.display()))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS files (
+                id        INTEGER PRIMARY KEY,
+                hash      TEXT    NOT NULL,
+                path      TEXT    NOT NULL UNIQUE,
+                size      INTEGER NOT NULL,
+                mtime     INTEGER NOT NULL,
+                kind      TEXT    NOT NULL,
+                taken_at  INTEGER,
+                taken_src TEXT
+            );
+            CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
+            CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+            "#,
+        )?;
+        Ok(Self { conn })
+    }
+
+    pub fn by_path(&self, path: &str) -> Result<Option<FileRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files WHERE path=?1",
+                params![path],
+                row_to_file,
+            )
+            .optional()?)
+    }
+
+    /// Rows sharing a content hash. Used to re-identify files moved outside the tool.
+    pub fn by_hash(&self, hash: &str) -> Result<Vec<FileRow>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files WHERE hash=?1")?;
+        let rows = st.query_map(params![hash], row_to_file)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn all(&self) -> Result<Vec<FileRow>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files ORDER BY path")?;
+        let rows = st.query_map([], row_to_file)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn upsert(&self, f: &FileRow) -> Result<()> {
+        self.conn.execute(
+            r#"INSERT INTO files (hash,path,size,mtime,kind,taken_at,taken_src)
+               VALUES (?1,?2,?3,?4,?5,?6,?7)
+               ON CONFLICT(path) DO UPDATE SET
+                 hash=excluded.hash, size=excluded.size, mtime=excluded.mtime,
+                 kind=excluded.kind, taken_at=excluded.taken_at,
+                 taken_src=excluded.taken_src"#,
+            params![f.hash, f.path, f.size, f.mtime, f.kind, f.taken_at, f.taken_src],
+        )?;
+        Ok(())
+    }
+
+    /// Move a row to a new path, keeping its identity. Used both when we move files
+    /// ourselves and when a scan discovers the user moved one in Finder.
+    pub fn repath(&self, from: &str, to: &str) -> Result<()> {
+        self.conn
+            .execute("UPDATE files SET path=?2 WHERE path=?1", params![from, to])?;
+        Ok(())
+    }
+
+    pub fn remove_path(&self, path: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM files WHERE path=?1", params![path])?;
+        Ok(())
+    }
+
+    pub fn count(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
+    }
+
+    pub fn transaction<T>(&mut self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        let tx = self.conn.transaction()?;
+        let out = f(&tx)?;
+        tx.commit()?;
+        Ok(out)
+    }
+}
+
+fn row_to_file(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
+    Ok(FileRow {
+        hash: r.get(0)?,
+        path: r.get(1)?,
+        size: r.get(2)?,
+        mtime: r.get(3)?,
+        kind: r.get(4)?,
+        taken_at: r.get(5)?,
+        taken_src: r.get(6)?,
+    })
+}

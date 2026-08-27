@@ -9,26 +9,14 @@
 //! * Nothing touches the disk except through `Plan` -> `apply` -> `Journal`, so every
 //!   mutation is previewable and reversible.
 
-/// A previewed set of changes. Produced by pure planning functions; holds no open
-/// handles and writes nothing. `--dry-run` prints one of these and stops.
-#[derive(Debug, Default)]
-pub struct Plan {
-    pub ops: Vec<Op>,
-}
+pub mod fsops;
+pub mod index;
+pub mod journal;
+pub mod library;
+pub mod plan;
+pub mod rename;
+pub mod scan;
+pub mod timesource;
 
-/// A single reversible change to the library.
-#[derive(Debug)]
-pub enum Op {
-    Move { hash: String, from: String, to: String },
-    Rename { hash: String, from: String, to: String },
-}
-
-impl Plan {
-    pub fn is_empty(&self) -> bool {
-        self.ops.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.ops.len()
-    }
-}
+pub use library::Library;
+pub use plan::{Op, Plan};

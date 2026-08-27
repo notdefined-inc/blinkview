@@ -11,3 +11,4 @@ path = "src/main.rs"
 [dependencies]
 openfoto-core = { path = "../openfoto-core" }
 anyhow.workspace = true
+clap.workspace = true

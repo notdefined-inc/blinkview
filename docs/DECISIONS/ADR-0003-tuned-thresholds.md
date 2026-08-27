@@ -53,6 +53,15 @@ mandatory rather than a convenience.
 >= 0.75). Bands measured: <4% is incidental figures on stairs and in alleys; 4-7% is
 *posed full-body portraits* and must not be swept.
 
+**Capture time.** EXIF `DateTimeOriginal` first, camera filename second, mtime last.
+Measured on a 300-photo random sample of the reference library: **100%** carry
+`DateTimeOriginal`, and it disagrees with the camera filename in **13%** of cases, always
+by exactly one second. EXIF is authoritative.
+
+(An earlier probe reported only 36 of 119 photos having EXIF and nearly drove the opposite
+ordering. It was reading the primary IFD, where `DateTimeOriginal` does not live — it sits
+in the Exif sub-IFD at 0x8769. Corrected here so the mistake is not repeated.)
+
 **Filenames.** `%I-%M-%S_%p_%d_%b_%Y` lowercased, `_2`/`_3` suffixes for collisions,
 unique across the **whole library**.
 
