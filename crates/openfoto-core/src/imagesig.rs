@@ -68,15 +68,24 @@ pub fn compute(path: &Path) -> Result<Signature> {
         probe.read_info()?;
         let info = probe.info().context("jpeg has no frame info")?;
         let g = decode_jpeg_scaled(path, 512)?;
-        (g, u32::from(info.width), u32::from(info.height))
+        // Orientation must be applied before hashing, or the same scene shot in
+        // portrait and landscape would never match.
+        let o = crate::imageio::orientation(path);
+        let (fw, fh) = if matches!(o, 5..=8) {
+            (u32::from(info.height), u32::from(info.width))
+        } else {
+            (u32::from(info.width), u32::from(info.height))
+        };
+        (crate::imageio::apply_luma(g, o), fw, fh)
     } else {
         let img = image::ImageReader::open(path)
             .with_context(|| format!("opening {}", path.display()))?
             .with_guessed_format()?
             .decode()
             .with_context(|| format!("decoding {}", path.display()))?;
-        let (w, h) = (img.width(), img.height());
-        (img.into_luma8(), w, h)
+        let g = crate::imageio::apply_luma(img.into_luma8(), crate::imageio::orientation(path));
+        let (w, h) = (g.width(), g.height());
+        (g, w, h)
     };
 
     let dh = image::imageops::resize(&gray, (THUMB + 1) as u32, THUMB as u32, FilterType::Triangle);

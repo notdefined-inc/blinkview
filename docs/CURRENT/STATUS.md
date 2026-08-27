@@ -21,12 +21,30 @@ was re-identified by content hash: 12 moved, 0 lost.
 - Build profile matters enormously here: the same cold dedupe takes 28.7s in a debug
   build. Benchmark with `--release` or the numbers are meaningless.
 
+## Face assignment accuracy (measured)
+120 real photos across three people, solo shots only as ground truth (a group photo
+filed under one person also contains other faces, so it cannot label a face):
+
+| References per person | Correct | Wrong | Left in place |
+|---|---|---|---|
+| 3  | 83% | 0% | 15 |
+| 5  | 83% | 2% | 12 |
+| 10 | 90% | 3% |  5 |
+
+More references raise recall, as ADR-0003 predicts — a person needs coverage across
+poses, not a single canonical face. Errors stay low and the system prefers to leave a
+face alone, which is the intended bias. Reproduce with
+`cargo run --release --example eval_faces -- <library> <seeds>`.
+
 ## Known issues
-- `faces` and `scenery` commands are not wired up yet — spec tasks 9-11. The detection
-  and embedding layer (task 8) is done and verified.
-- Detection now uses the YuNet `2026may` export rather than the `2023mar` one the
-  thresholds were tuned against (ADR-0004). Detection-side values — score 0.75, the
-  50px minimum, the 4% scenery ratio — need re-confirming on the full library.
+- `faces` and `scenery` CLI commands are not wired up yet — spec tasks 10-11. The
+  detection, embedding, clustering and assignment layers are done.
+- Detection uses the YuNet `2026may` export, not the `2023mar` one the thresholds were
+  tuned against (ADR-0004). The 4% scenery ratio in particular is still unconfirmed
+  against the new export.
+- Two `saurabh -> Me` misassignments persist across seed counts. Not yet established
+  whether these are matcher errors or mislabels in the fixture, which was itself
+  produced by a semi-automatic process.
 - Model files are not committed (37MB). `openfoto models fetch` is not implemented yet;
   for now place them in `models/` or set `OPENFOTO_MODELS`.
 - Candidate generation in `dedupe` is O(n^2) over dHash. Fine to ~10k photos; a

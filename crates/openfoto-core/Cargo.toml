@@ -28,3 +28,6 @@ image.workspace = true
 
 [[example]]
 name = "diag"
+
+[[example]]
+name = "eval_faces"

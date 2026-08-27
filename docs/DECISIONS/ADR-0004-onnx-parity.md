@@ -25,6 +25,12 @@ embeddings are reliable.
 stride-32 branch disagrees with its skip connection ("broadcast an axis by a dimension
 other than 1, 36 by 37").
 
+**4. `cv2.imread` applies EXIF orientation; the `image` crate does not.** Phone cameras
+store pixels in sensor orientation and record the rotation in EXIF tag 274. On the
+reference library **59 of 60** sampled photos carry a non-upright tag. YuNet detects
+upright faces, so handing it unrotated input dropped detection from 137 faces to **22**
+across the same 120 person photos — a 6x loss, with no error raised.
+
 ## Decision
 
 Use the **`2026may`** YuNet export, whose height and width axes are symbolic, and
@@ -32,6 +38,10 @@ zero-pad inputs on the right and bottom to a multiple of 32. Padding the far edg
 the origin fixed, so detected coordinates need no correction.
 
 Feed **BGR to YuNet** and **RGB to SFace**, matching OpenCV's per-model `swapRB`.
+
+Apply EXIF orientation on every decode, centrally in `imageio.rs`. This matters beyond
+faces: two shots of one scene taken in different orientations would otherwise never match
+during duplicate detection.
 
 Alignment reproduces `getSimilarityTransformMatrix`: a least-squares similarity transform
 onto ArcFace's canonical 112x112 five-point template, sampled bilinearly.
@@ -46,6 +56,7 @@ Measured parity against OpenCV on real photos from the reference library:
 | Full pipeline (our align + our embed) | cosine **0.9956** mean, 0.9865 worst |
 | Detector: face counts | identical on all 10 images, including a 3-face shot |
 | Detector: box IoU | **0.990** mean |
+| Faces found, 120 person photos | 22 before the orientation fix, **137** after |
 
 The residual in the full pipeline is bilinear-interpolation rounding in the warp, three
 orders of magnitude inside the 0.50 similarity threshold. The thresholds in ADR-0003

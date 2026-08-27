@@ -43,6 +43,25 @@ impl Index {
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
             -- Keyed by content hash, not path: a renamed or moved file keeps its
             -- signature for free, which is what makes rescans cheap (ADR-0001).
+            -- One row per detected face. Keyed by photo content hash, so faces
+            -- survive renames and moves along with everything else.
+            CREATE TABLE IF NOT EXISTS faces (
+                id        INTEGER PRIMARY KEY,
+                hash      TEXT    NOT NULL,
+                idx       INTEGER NOT NULL,
+                x         REAL    NOT NULL,
+                y         REAL    NOT NULL,
+                w         REAL    NOT NULL,
+                h         REAL    NOT NULL,
+                score     REAL    NOT NULL,
+                ratio     REAL    NOT NULL,
+                embedding BLOB,
+                UNIQUE(hash, idx)
+            );
+            CREATE INDEX IF NOT EXISTS faces_hash ON faces(hash);
+            -- Photos analysed but containing no usable face. Without this we would
+            -- re-decode every landscape shot on each run.
+            CREATE TABLE IF NOT EXISTS faces_done (hash TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS signatures (
                 hash      TEXT PRIMARY KEY,
                 dhash     INTEGER NOT NULL,
@@ -137,6 +156,11 @@ impl Index {
             params![hash, s.dhash as i64, s.thumb, s.sharpness, s.width, s.height],
         )?;
         Ok(())
+    }
+
+    /// Raw connection, for modules that own their own tables (faces, signatures).
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
     }
 
     pub fn count(&self) -> Result<i64> {
