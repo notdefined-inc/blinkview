@@ -23,3 +23,5 @@ regex = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rayon = "1"
 jpeg-decoder = "0.3"
+ort = "2.0.0-rc.10"
+ndarray = "0.17"

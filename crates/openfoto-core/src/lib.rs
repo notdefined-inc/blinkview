@@ -11,6 +11,7 @@
 
 pub mod cluster;
 pub mod dedupe;
+pub mod faces;
 pub mod fsops;
 pub mod imagesig;
 pub mod index;

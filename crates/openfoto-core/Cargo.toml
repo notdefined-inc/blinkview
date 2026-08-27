@@ -18,9 +18,13 @@ regex.workspace = true
 image.workspace = true
 rayon.workspace = true
 jpeg-decoder.workspace = true
+ort.workspace = true
+ndarray.workspace = true
 
 [dev-dependencies]
 walkdir.workspace = true
+serde_json.workspace = true
+image.workspace = true
 
 [[example]]
 name = "diag"

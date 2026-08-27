@@ -22,7 +22,13 @@ was re-identified by content hash: 12 moved, 0 lost.
   build. Benchmark with `--release` or the numbers are meaningless.
 
 ## Known issues
-- `faces` and `scenery` are not implemented — spec tasks 8-11.
+- `faces` and `scenery` commands are not wired up yet — spec tasks 9-11. The detection
+  and embedding layer (task 8) is done and verified.
+- Detection now uses the YuNet `2026may` export rather than the `2023mar` one the
+  thresholds were tuned against (ADR-0004). Detection-side values — score 0.75, the
+  50px minimum, the 4% scenery ratio — need re-confirming on the full library.
+- Model files are not committed (37MB). `openfoto models fetch` is not implemented yet;
+  for now place them in `models/` or set `OPENFOTO_MODELS`.
 - Candidate generation in `dedupe` is O(n^2) over dHash. Fine to ~10k photos; a
   100k-photo library needs a BK-tree or LSH bucket step.
 - No thumbnail cache yet; `.openfoto/thumbs/` is created but unused.
@@ -36,6 +42,9 @@ was re-identified by content hash: 12 moved, 0 lost.
 - 2026-08-27 `openfoto-core`: library/index/scan/plan/journal/fsops/rename/timesource.
 - 2026-08-27 `openfoto` CLI: scan, status, rename, undo, history. Nothing mutates
   without `--apply`.
+- 2026-08-27 Task 8: YuNet detection + SFace embeddings via `ort`, with landmark
+  alignment. Verified against OpenCV: identical embedding on a shared crop (cosine
+  1.000000), 0.9956 across the full pipeline, matching face counts and 0.990 box IoU.
 - 2026-08-27 Task 6: perceptual signatures (dHash + normalized RMSE + Laplacian
   sharpness), complete-linkage clustering, `dedupe`. Verified on 22 real burst photos
   drawn from six known groups: all six recovered, no cross-day grouping.
