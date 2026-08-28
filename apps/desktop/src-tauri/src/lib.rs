@@ -249,6 +249,27 @@ async fn add_source(app: tauri::AppHandle, state: tauri::State<'_, AppState>, pa
     })
 }
 
+/// Detect faces for a source that has not been analysed yet.
+///
+/// Called after a folder is added: finding people is the point of the app, and making
+/// the user discover a menu item first is a poor introduction. It is skipped when the
+/// models are absent so adding a folder never fails for want of a download.
+#[tauri::command]
+async fn autodetect_faces(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<String> {
+    if !model_fetch::specs().iter().all(model_fetch::is_present) {
+        return Ok("models not installed".into());
+    }
+    let sink = emitter(&app, "faces");
+    with(&state, &path, |lib| {
+        let st = pipeline::analyze_with_progress(lib, pipeline::DEFAULT_SCORE, &sink)?;
+        Ok(format!("{} faces found in {} photos", st.faces, st.photos))
+    })
+}
+
 #[tauri::command]
 fn remove_source(app: tauri::AppHandle, state: tauri::State<'_, AppState>, path: String) -> R<()> {
     let list: Vec<String> = load_sources(&app).into_iter().filter(|p| p != &path).collect();
@@ -415,6 +436,139 @@ async fn name_clusters(
     })
 }
 
+// ---------------------------------------------------------------- people overview
+
+#[derive(Serialize)]
+pub struct PersonEntry {
+    /// `None` for a group nobody has named yet.
+    name: Option<String>,
+    /// Cluster id, only meaningful for unnamed groups.
+    cluster: Option<usize>,
+    photos: usize,
+    cover: Option<String>,
+    suggestion: Option<String>,
+}
+
+/// Everyone the library knows about — named people *and* groups still waiting for a
+/// name.
+///
+/// Unnamed groups were previously reachable only through a modal, so running face
+/// detection appeared to do nothing at all. Surfacing them beside named people is what
+/// makes detection's result visible.
+#[tauri::command]
+async fn people_overview(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    distance: f32,
+) -> R<Vec<PersonEntry>> {
+    with(&state, &path, |lib| {
+        let people = People::load(&lib.vault())?;
+        let opt = assign::Options::default();
+        let root = lib.root().to_path_buf();
+
+        let mut claimed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut cover: BTreeMap<String, (String, i64)> = BTreeMap::new();
+        for f in lib.all_faces()? {
+            let Some(e) = f.embedding.as_ref() else { continue };
+            if let Some(n) = assign::assign(e, &people, &opt).person() {
+                if people.is_excluded(n, &f.hash) {
+                    continue;
+                }
+                claimed.entry(n.to_string()).or_default().insert(f.hash.clone());
+                cover.entry(n.to_string()).or_insert((f.hash.clone(), f.idx));
+            }
+        }
+
+        let mut out: Vec<PersonEntry> = people
+            .people
+            .iter()
+            .map(|p| PersonEntry {
+                photos: claimed.get(&p.name).map(|s| s.len()).unwrap_or(0),
+                cover: cover.get(&p.name).map(|(h, i)| {
+                    pipeline::face_crop_path(&root, h, *i).display().to_string()
+                }),
+                name: Some(p.name.clone()),
+                cluster: None,
+                suggestion: None,
+            })
+            .collect();
+        out.sort_by(|a, b| b.photos.cmp(&a.photos));
+
+        // Groups nobody has claimed yet, largest first.
+        let groups = pipeline::cluster_unassigned(lib, &people, &opt, distance)?;
+        // Singletons are included. A person photographed once is still a person, and
+        // hiding them meant a small library reported "No faces found" while nine faces
+        // sat in the index. Ordering by size and capping the list in the UI keeps the
+        // long tail of passers-by from dominating.
+        let mut unnamed: Vec<PersonEntry> = groups
+            .iter()
+            .enumerate()
+            .map(|(id, g)| {
+                let best = g
+                    .iter()
+                    .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+                PersonEntry {
+                    name: None,
+                    cluster: Some(id),
+                    photos: g.iter().map(|f| &f.hash).collect::<BTreeSet<_>>().len(),
+                    cover: best.map(|f| {
+                        pipeline::face_crop_path(&root, &f.hash, f.idx).display().to_string()
+                    }),
+                    suggestion: best.and_then(|f| {
+                        f.embedding.as_ref().and_then(|e| {
+                            assign::score_all(e, &people).first().and_then(|(n, s)| {
+                                (*s >= 0.45).then(|| n.clone())
+                            })
+                        })
+                    }),
+                }
+            })
+            .collect();
+        unnamed.sort_by(|a, b| b.photos.cmp(&a.photos));
+        out.extend(unnamed);
+        Ok(out)
+    })
+}
+
+/// Name one unnamed group, teaching that identity its faces.
+#[tauri::command]
+async fn name_cluster(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    distance: f32,
+    cluster: usize,
+    name: String,
+) -> R<usize> {
+    with(&state, &path, |lib| {
+        let mut people = People::load(&lib.vault())?;
+        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
+        let refs: Vec<Vec<f32>> = g.iter().filter_map(|f| f.embedding.clone()).collect();
+        let n = refs.len();
+        people.add_references(name.trim(), refs);
+        people.save(&lib.vault())?;
+        Ok(n)
+    })
+}
+
+/// Photo hashes belonging to an unnamed group, so the grid can show them.
+#[tauri::command]
+async fn cluster_photos(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    distance: f32,
+    cluster: usize,
+) -> R<Vec<String>> {
+    with(&state, &path, |lib| {
+        let people = People::load(&lib.vault())?;
+        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        Ok(groups
+            .get(cluster)
+            .map(|g| g.iter().map(|f| f.hash.clone()).collect::<BTreeSet<_>>().into_iter().collect())
+            .unwrap_or_default())
+    })
+}
+
 // ---------------------------------------------------------------- models
 
 #[derive(Serialize)]
@@ -449,6 +603,39 @@ async fn models_fetch(app: tauri::AppHandle) -> R<String> {
         "All models already installed".into()
     } else {
         format!("Installed {}", got.join(" and "))
+    })
+}
+
+// ---------------------------------------------------------------- photo editing
+
+/// Rotate and/or crop one photo.
+///
+/// `keep_original` defaults to true and moves the untouched file to `Originals/`,
+/// mirroring how deleting moves a photo to `Trash/`. See openfoto_core::edit for why
+/// the original is not kept in the (disposable) vault.
+#[tauri::command]
+async fn edit_photo(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hash: String,
+    edit: openfoto_core::edit::Edit,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        let row = lib
+            .index
+            .all()?
+            .into_iter()
+            .find(|r| r.hash == hash)
+            .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
+        let out = openfoto_core::edit::apply(lib, &row.path, &edit)?;
+        // The file changed, so its hash did: re-scan to re-identify it, and drop the
+        // stale thumbnail and face data keyed to the old content.
+        let _ = std::fs::remove_file(thumbs::thumb_path(lib, &hash));
+        scan::scan(lib, false)?;
+        Ok(match out.original {
+            Some(o) => format!("Saved {}x{} · original kept in {}", out.width, out.height, o),
+            None => format!("Saved {}x{} · original not kept", out.width, out.height),
+        })
     })
 }
 
@@ -896,7 +1083,9 @@ pub fn run() {
             clusters, name_clusters,
             plan_op, apply_op, history, undo,
             delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
-            models_status, models_fetch
+            models_status, models_fetch,
+            people_overview, name_cluster, cluster_photos, autodetect_faces,
+            edit_photo
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

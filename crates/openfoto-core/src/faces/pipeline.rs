@@ -16,6 +16,19 @@ pub const ANALYSIS_LONG_EDGE: u32 = 1280;
 pub const MIN_FACE_PX: f32 = 50.0;
 pub const DEFAULT_SCORE: f32 = 0.75;
 pub const DEFAULT_NMS: f32 = 0.3;
+/// Side of the cached face crop, in pixels.
+pub const FACE_CROP: u32 = 160;
+
+/// Where a detected face's cached crop lives.
+///
+/// Written during analysis rather than on demand, because the UI wants to show faces
+/// in lists and sidebars: producing them lazily would mean decoding a full photo to
+/// draw a 28px avatar.
+pub fn face_crop_path(root: &std::path::Path, hash: &str, idx: i64) -> std::path::PathBuf {
+    root.join(crate::library::VAULT_DIR)
+        .join("faces")
+        .join(format!("{hash}-{idx}.jpg"))
+}
 
 #[derive(Debug, Default)]
 pub struct AnalyzeStats {
@@ -105,6 +118,21 @@ pub fn analyze_with_progress(
                 st.too_small += 1;
                 None
             };
+            // Cache a square crop so faces can be shown without re-decoding the photo.
+            let m = f.w * 0.45;
+            let x0 = (f.x - m).max(0.0) as u32;
+            let y0 = (f.y - m).max(0.0) as u32;
+            let cw = ((f.w + 2.0 * m) as u32).min(w as u32 - x0).max(1);
+            let ch = ((f.h + 2.0 * m) as u32).min(h as u32 - y0).max(1);
+            let crop = image::imageops::crop_imm(&rgb, x0, y0, cw, ch).to_image();
+            let sq = image::imageops::resize(
+                &crop, FACE_CROP, FACE_CROP, image::imageops::FilterType::Triangle);
+            let dst = face_crop_path(lib.root(), &r.hash, i as i64);
+            if let Some(parent) = dst.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = image::DynamicImage::ImageRgb8(sq).save(&dst);
+
             lib.put_face(&StoredFace {
                 hash: r.hash.clone(),
                 idx: i as i64,
@@ -157,7 +185,16 @@ pub fn cluster_unassigned(
             }
         }
     }
-    Ok(cluster::complete_linkage(n, pairs, close)
+    // complete_linkage only returns groups of two or more; a face that resembles
+    // nothing else is still someone, so it comes back as a group of one.
+    let mut groups = cluster::complete_linkage(n, pairs, close);
+    let grouped: std::collections::HashSet<usize> = groups.iter().flatten().copied().collect();
+    for i in 0..n {
+        if !grouped.contains(&i) {
+            groups.push(vec![i]);
+        }
+    }
+    Ok(groups
         .into_iter()
         .map(|g| g.into_iter().map(|i| faces[i].clone()).collect())
         .collect())

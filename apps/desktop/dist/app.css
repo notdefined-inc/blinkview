@@ -14,6 +14,11 @@
   --glass-hi:rgba(255,255,255,.05);
 }
 *{box-sizing:border-box}
+/* Images must never start a native drag. Dragging inside the lightbox is our pan
+   gesture, and the OS was reading it as a file drag — which popped the folder-drop
+   overlay mid-zoom. */
+img{-webkit-user-drag:none;user-drag:none}
+.cell,.lb-stage,.lb-strip{user-select:none;-webkit-user-select:none}
 html,body{margin:0;height:100%;overflow:hidden}
 body{
   background:var(--bg); color:var(--text);
@@ -47,10 +52,24 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .wordmark{font-weight:600;letter-spacing:-.01em}
 .tb-mid{color:var(--text-dim);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tb-right{display:flex;align-items:center;gap:var(--s2)}
+.searchwrap{position:relative;display:flex;align-items:center}
 .search{
-  width:230px;padding:6px var(--s3);font:inherit;font-size:13px;color:var(--text);
+  width:290px;padding:6px var(--s3);font:inherit;font-size:13px;color:var(--text);
   background:rgba(255,255,255,.06);border:1px solid var(--glass-line);border-radius:var(--r-pill);
 }
+/* Shows how the query was read — "23 aug" becomes a visible date rather than
+   silently matching nothing. */
+.qchip{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill);
+  background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent);
+  border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);pointer-events:none;
+}
+.morelink{
+  display:block;width:100%;text-align:left;padding:5px var(--s2);margin-top:var(--s1);
+  font-size:12px;color:var(--text-faint);border-radius:var(--r);
+}
+.morelink:hover{color:var(--accent);background:rgba(255,255,255,.05)}
 .search::placeholder{color:var(--text-faint)}
 .search:focus{outline:none;border-color:var(--accent);background:rgba(255,255,255,.09)}
 .icon-btn{
@@ -84,7 +103,27 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .row .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .n{font-size:11px;color:var(--text-faint)}
 .row.missing{color:var(--danger)}
-.avatar{width:22px;height:22px;border-radius:var(--r-pill);object-fit:cover;background:var(--surface-2);flex:0 0 auto}
+.avatar{width:26px;height:26px;border-radius:var(--r-pill);object-fit:cover;
+  background:var(--surface-2);flex:0 0 auto;border:1px solid var(--glass-line)}
+.avatar.lg{width:44px;height:44px}
+.avatar.blank{display:block}
+.row.unnamed{color:var(--text-faint)}
+.row.unnamed .avatar{border-style:dashed;border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.row.unnamed:hover{color:var(--text)}
+
+/* Inline naming: a strip above the grid, so identifying someone never means
+   opening a modal and finding them again. */
+.namebar{
+  position:sticky;top:0;z-index:8;margin:0 var(--s6) var(--s3);
+  display:flex;align-items:center;gap:var(--s3);padding:var(--s3);
+  background:rgba(24,24,30,.86);backdrop-filter:saturate(180%) blur(24px);
+  border:1px solid var(--glass-line);border-radius:var(--r-lg);
+}
+.nameinput{
+  font:inherit;font-size:15px;font-weight:600;color:var(--text);width:260px;
+  background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:7px var(--s3);
+}
+.nameinput:focus{outline:none;border-color:var(--accent)}
 .dotmark{width:6px;height:6px;border-radius:var(--r-pill);background:var(--text-faint);flex:0 0 auto}
 .indent-1{padding-left:var(--s6)} .indent-2{padding-left:var(--s8)}
 
@@ -213,6 +252,14 @@ main{overflow:auto;position:relative}
 /* ---------- sheet ---------- */
 .sheet{position:fixed;inset:0;z-index:70;background:rgba(6,6,9,.6);display:grid;place-items:center;
   backdrop-filter:blur(8px)}
+.sheet-panel.small{width:min(430px,92vw)}
+.asktext{margin:0 0 var(--s4);color:var(--text-dim);font-size:13px}
+.askopt{display:flex;gap:var(--s3);align-items:flex-start;padding:var(--s3);
+  border:1px solid var(--glass-line);border-radius:var(--r);cursor:pointer;margin-bottom:var(--s2)}
+.askopt:hover{background:rgba(255,255,255,.05)}
+.askopt b{display:block;font-size:14px;font-weight:600}
+.askopt small{color:var(--text-faint);font-size:12px}
+.askrow{display:flex;gap:var(--s2);justify-content:flex-end;margin-top:var(--s4)}
 .sheet-panel{
   width:min(780px,92vw);max-height:84vh;display:flex;flex-direction:column;
   background:rgba(22,22,28,.86);backdrop-filter:saturate(180%) blur(30px);
@@ -284,10 +331,24 @@ main{overflow:auto;position:relative}
 
 /* ---------- selection ---------- */
 .cell.sel{outline:3px solid var(--accent);outline-offset:-3px}
-.cell.sel::after{
-  content:"✓";position:absolute;right:6px;top:6px;width:20px;height:20px;border-radius:var(--r-pill);
-  background:var(--accent);color:var(--accent-ink);font-size:12px;font-weight:700;
-  display:grid;place-items:center
+.cell.sel img{transform:scale(.93);border-radius:6px}
+.cell img{transition:transform .12s var(--ease)}
+
+/* Select affordance: a circle top-left, revealed on hover, persistent once chosen.
+   Clicking the circle selects without opening, so selecting never costs a wrong view. */
+.pick{
+  position:absolute;left:7px;top:7px;width:22px;height:22px;border-radius:var(--r-pill);
+  border:2px solid rgba(255,255,255,.9);background:rgba(0,0,0,.28);
+  backdrop-filter:blur(4px);display:grid;place-items:center;
+  color:transparent;font-size:13px;font-weight:800;line-height:1;
+  opacity:0;transform:scale(.85);transition:opacity .12s var(--ease),transform .12s var(--ease);
+  cursor:pointer;z-index:2
+}
+.cell:hover .pick{opacity:1;transform:scale(1)}
+.pick:hover{background:rgba(0,0,0,.5)}
+.cell.sel .pick{
+  opacity:1;transform:scale(1);
+  background:var(--accent);border-color:var(--accent);color:var(--accent-ink)
 }
 .selbar{
   position:fixed;left:50%;bottom:var(--s6);transform:translateX(-50%);z-index:55;

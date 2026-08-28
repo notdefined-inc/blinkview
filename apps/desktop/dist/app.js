@@ -13,6 +13,10 @@ const S = {
   source: null,          // active source path
   folder: null,          // active subfolder, null = whole source
   person: null,
+  cluster: null,           // an unnamed group being viewed
+  clusterHashes: null,
+  people: [],              // named + unnamed, from people_overview
+  peopleCollapsed: true,
   photos: [],
   view: [],              // filtered/sorted photos currently on screen
   lbIndex: -1,
@@ -20,6 +24,8 @@ const S = {
   sel: new Set(),          // selected photo hashes
   lastIndex: -1,           // anchor for shift-range selection
   zoom: 1, panX: 0, panY: 0,
+  edit: null,              // pending, unsaved edit on the open photo
+  keepOriginal: true,      // safe editing, remembered per session
 };
 
 const TRASH = "Trash";
@@ -109,16 +115,42 @@ function renderSidebar() {
   if (!src) { pb.hidden = true; fb.hidden = true; return; }
 
   pb.hidden = false;
-  $("#people").replaceChildren(
-    ...(src.people.length ? src.people.map(p => el("button", {
-      class: "row", "aria-current": String(S.person === p.name),
-      onclick: () => selectPerson(p.name)
-    },
-      p.cover ? el("img", { class: "avatar", src: photoUrl(p.cover), alt: "" })
-              : el("span", { class: "dotmark" }),
-      el("span", { class: "grow" }, p.name),
-      el("span", { class: "n num" }, String(p.photos))))
-      : [el("div", { class: "row", style: "color:var(--text-faint)" }, "None named yet")]));
+  const collapsed = S.peopleCollapsed;
+  const named = S.people.filter(p => p.name);
+  const unnamed = S.people.filter(p => !p.name);
+  const face = p => p.cover
+    ? el("img", { class: "avatar", src: photoUrl(p.cover), alt: "", loading: "lazy" })
+    : el("span", { class: "avatar blank" });
+
+  const rows = named.map(p => el("button", {
+    class: "row", "aria-current": String(S.person === p.name),
+    onclick: () => selectPerson(p.name)
+  }, face(p), el("span", { class: "grow" }, p.name), el("span", { class: "n num" }, String(p.photos))));
+
+  // Unnamed groups are shown too. Detection finding 243 faces and the sidebar still
+  // reading "None named yet" is what made face detection look broken.
+  for (const u of unnamed.slice(0, 12)) {
+    rows.push(el("button", {
+      class: "row unnamed", "aria-current": String(S.cluster === u.cluster),
+      title: u.suggestion ? `Looks like ${u.suggestion}` : "Unnamed person",
+      onclick: () => selectCluster(u.cluster)
+    }, face(u),
+      el("span", { class: "grow" }, u.suggestion ? `${u.suggestion}?` : "Who is this?"),
+      el("span", { class: "n num" }, String(u.photos))));
+  }
+  if (!rows.length) {
+    rows.push(el("div", { class: "row", style: "color:var(--text-faint)" },
+      src.faces_analysed < src.photos ? "Not scanned yet" : "No faces found"));
+  }
+  if (unnamed.length > 12) {
+    rows.push(el("div", { class: "row", style: "color:var(--text-faint)" },
+      `+${unnamed.length - 12} more groups`));
+  }
+  $("#people").replaceChildren(...(collapsed ? rows.slice(0, 3) : rows));
+  const toggle = $("#people-toggle");
+  toggle.hidden = rows.length <= 3;
+  toggle.textContent = collapsed ? `Show all ${rows.length}` : "Show less";
+  toggle.onclick = () => { S.peopleCollapsed = !S.peopleCollapsed; renderSidebar(); };
 
   const trash = src.folders.find(f => f.path === TRASH);
   const tb = $("#trash-block");
@@ -227,6 +259,10 @@ function cellFor(p, w, h) {
       showCtx(e.clientX, e.clientY);
     }
   }, img,
+    el("button", {
+      class: "pick", "aria-label": `Select ${p.name}`, tabindex: "-1",
+      onclick: e => { e.stopPropagation(); toggleSel(p); }
+    }, "\u2713"),
     p.kind === "video" ? el("span", { class: "play" }, "\u25B6") : null,
     p.people.length ? el("span", { class: "badge" }, p.people.join(", ")) : null);
 }
@@ -440,6 +476,8 @@ function closeLightbox() {
   $("#lb-img").src = "";
   document.querySelector(".lb-stage")?.querySelector("video")?.remove();
   resetZoom();
+  S.edit = null;
+  applyEditPreview();
 }
 
 /* ---------------- zoom and pan ----------------
@@ -502,39 +540,117 @@ async function refreshSources() {
   S.sources = await invoke("list_sources");
   renderSidebar();
 }
+
+async function refreshPeople() {
+  if (!S.source) return;
+  try {
+    S.people = await invoke("people_overview", { path: S.source, distance: 0.55 });
+  } catch { S.people = []; }
+  await refreshSources();
+}
 async function loadPhotos() {
   S.photos = await invoke("photos", { path: S.source, folder: null, person: null });
   applyFilter();
 }
-/* Search covers what a person would actually type: a filename, a person's name, a
-   folder, or a date like "august" or "2026". */
-function matches(p, q) {
-  const hay = [
-    p.name, p.folder, p.people.join(" "),
-    p.taken_at ? DAY(p.taken_at) : "",
-  ].join(" ").toLowerCase();
-  return q.split(/\s+/).every(term => hay.includes(term));
+/* ---------------- search ----------------
+   A date is the most natural way to look for a photo, so the query is parsed for date
+   parts first and any combination is allowed: a year, a month, a day, or any mix of
+   them ("august", "2026", "aug 2026", "23 august", "23 aug 2026", "2026-08-23").
+   Whatever is left over is matched as text against filename, folder and people. */
+
+const MONTHS = ["january","february","march","april","may","june",
+                "july","august","september","october","november","december"];
+
+function parseQuery(q) {
+  const want = { year: null, month: null, day: null };
+  const text = [];
+  const tokens = q.toLowerCase().split(/[\s,]+/).filter(Boolean);
+
+  for (const raw of tokens) {
+    // ISO-ish: 2026-08-23, 2026/08, 23.08.2026
+    const iso = raw.match(/^(\d{4})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/);
+    if (iso) {
+      want.year = +iso[1]; want.month = +iso[2];
+      if (iso[3]) want.day = +iso[3];
+      continue;
+    }
+    const dmy = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    if (dmy) { want.day = +dmy[1]; want.month = +dmy[2]; want.year = +dmy[3]; continue; }
+
+    const m = MONTHS.findIndex(n => n.startsWith(raw) && raw.length >= 3);
+    if (m >= 0) { want.month = m + 1; continue; }
+
+    if (/^\d{4}$/.test(raw)) { want.year = +raw; continue; }
+    // A bare 1-2 digit number is a day; "23rd" and "3rd" count too.
+    const d = raw.match(/^(\d{1,2})(?:st|nd|rd|th)?$/);
+    if (d && +d[1] >= 1 && +d[1] <= 31) { want.day = +d[1]; continue; }
+
+    text.push(raw);
+  }
+  const hasDate = want.year !== null || want.month !== null || want.day !== null;
+  return { want, text, hasDate };
+}
+
+/** Human description of a parsed date query, for the chip in the search bar. */
+function describeQuery({ want }) {
+  const parts = [];
+  if (want.day !== null) parts.push(String(want.day));
+  if (want.month !== null) parts.push(MONTHS[want.month - 1].replace(/^./, c => c.toUpperCase()));
+  if (want.year !== null) parts.push(String(want.year));
+  return parts.join(" ");
+}
+
+function matchesQuery(p, parsed) {
+  const { want, text, hasDate } = parsed;
+  if (hasDate) {
+    if (!p.taken_at) return false;
+    const d = new Date(p.taken_at * 1000);
+    if (want.year !== null && d.getFullYear() !== want.year) return false;
+    if (want.month !== null && d.getMonth() + 1 !== want.month) return false;
+    if (want.day !== null && d.getDate() !== want.day) return false;
+  }
+  if (!text.length) return true;
+  const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
+  return text.every(t => hay.includes(t));
+}
+
+/* Show what the query was understood to mean, so "23 aug" visibly becomes a date
+   rather than silently matching nothing. */
+function showQueryChip(parsed) {
+  const chip = $("#qchip");
+  if (!parsed || !parsed.hasDate) { chip.hidden = true; return; }
+  chip.hidden = false;
+  chip.textContent = describeQuery(parsed);
 }
 
 function applyFilter() {
-  const q = $("#search").value.trim().toLowerCase();
+  document.querySelector(".namebar")?.remove();
+  const q = $("#search").value.trim();
+  const parsed = q ? parseQuery(q) : null;
+  showQueryChip(parsed);
   S.view = S.photos.filter(p =>
     // Trash is a real folder, but it should not appear in the library view unless
     // the user deliberately opens it.
     (S.folder === TRASH || p.folder !== TRASH) &&
     (!S.folder || p.folder === S.folder) &&
     (!S.person || p.people.includes(S.person)) &&
-    (!q || matches(p, q)));
+    (!S.clusterHashes || S.clusterHashes.has(p.hash)) &&
+    (!parsed || matchesQuery(p, parsed)));
   const src = S.sources.find(s => s.path === S.source);
-  $("#crumb").textContent = [src?.name, S.folder, S.person ? `👤 ${S.person}` : null]
-    .filter(Boolean).join("  ›  ") + `   ·   ${S.view.length} photos`;
+  $("#crumb").textContent = [
+    src?.name, S.folder,
+    S.person ? `\u{1F464} ${S.person}` : null,
+    S.cluster !== null ? "\u{1F464} unnamed person" : null,
+  ].filter(Boolean).join("  \u203A  ") + `   \u00B7   ${S.view.length} photos`;
   renderGrid();
   paintSel();
 }
 async function selectSource(path) {
   S.source = path; S.folder = null; S.person = null;
+  S.cluster = null; S.clusterHashes = null; S.people = [];
   renderSidebar();
   await busy("Loading library…", loadPhotos);
+  refreshPeople();
   // Thumbnails are produced on demand by the photo:// handler as cells scroll into
   // view, so nothing blocks the first paint. A background pass backfills the rest so
   // later scrolling is instant, but it is an optimisation, not a prerequisite.
@@ -546,7 +662,47 @@ async function selectSource(path) {
   }
 }
 function selectFolder(f) { S.folder = (S.folder === f ? null : f); S.person = null; renderSidebar(); applyFilter(); }
-function selectPerson(p) { S.person = (S.person === p ? null : p); S.folder = null; renderSidebar(); applyFilter(); }
+function selectPerson(p) {
+  S.person = (S.person === p ? null : p);
+  S.folder = null; S.cluster = null; S.clusterHashes = null;
+  renderSidebar(); applyFilter();
+}
+
+/* Viewing an unnamed group shows its photos and offers a name inline, so naming
+   someone never requires opening a modal and hunting for them. */
+async function selectCluster(id) {
+  if (S.cluster === id) { S.cluster = null; S.clusterHashes = null; renderSidebar(); applyFilter(); return; }
+  S.person = null; S.folder = null; S.cluster = id;
+  const hashes = await busy("Finding this person's photos…",
+    () => invoke("cluster_photos", { path: S.source, distance: 0.55, cluster: id }));
+  S.clusterHashes = new Set(hashes);
+  renderSidebar(); applyFilter();
+  namePrompt(id);
+}
+
+function namePrompt(id) {
+  const u = S.people.find(p => p.cluster === id);
+  const bar = el("div", { class: "namebar" },
+    u?.cover ? el("img", { class: "avatar lg", src: photoUrl(u.cover), alt: "" }) : null,
+    el("span", { class: "grow" }, "Who is this?"),
+    el("input", {
+      class: "nameinput", type: "text", placeholder: u?.suggestion || "Add a name",
+      "aria-label": "Person name",
+      onkeydown: async e => {
+        if (e.key !== "Enter") return;
+        const v = e.target.value.trim() || u?.suggestion;
+        if (!v) return;
+        await busy(`Learning ${v}…`,
+          () => invoke("name_cluster", { path: S.source, distance: 0.55, cluster: id, name: v }));
+        toast(`Named ${v}`, "ok");
+        S.cluster = null; S.clusterHashes = null;
+        await refreshPeople(); await loadPhotos();
+      }
+    }),
+    el("button", { class: "btn ghost sm", onclick: () => { S.cluster = null; S.clusterHashes = null; renderSidebar(); applyFilter(); } }, "Skip"));
+  $("#stage").before(bar);
+  setTimeout(() => bar.querySelector("input")?.focus(), 60);
+}
 
 async function addSource() {
   const picked = await dialog.open({ directory: true, multiple: false, title: "Add a photo folder" });
@@ -557,6 +713,19 @@ async function addSource() {
     await selectSource(picked);
   });
   toast("Folder added", "ok");
+  autodetect(picked);
+}
+
+/* Finding people is the point of the app, so a newly added folder is scanned for
+   faces without being asked. Silent if the models are not installed. */
+async function autodetect(path) {
+  try {
+    const msg = await busy("Looking for people…", () => invoke("autodetect_faces", { path }));
+    if (msg.includes("models not installed")) return;
+    await refreshPeople();
+    const unnamed = S.people.filter(p => !p.name).length;
+    if (unnamed) toast(`${unnamed} people found — name them in the sidebar`, "ok");
+  } catch { /* reported by busy */ }
 }
 async function removeSource(path) {
   if (!confirm(`Remove ${path} from openfoto?\n\nYour photos are not touched.`)) return;
@@ -643,7 +812,10 @@ async function runApply(op, out, applyBtn) {
 async function analyze() {
   const msg = await busy("Detecting faces… this runs once per photo", () => invoke("analyze_faces", { path: S.source }));
   toast(msg, "ok");
-  await refreshSources(); await loadPhotos();
+  $("#sheet").hidden = true;
+  await refreshPeople(); await loadPhotos();
+  const unnamed = S.people.filter(p => !p.name).length;
+  if (unnamed) toast(`${unnamed} people to name — see the sidebar`, "ok");
 }
 async function doUndo() {
   const msg = await busy("Undoing…", () => invoke("undo", { path: S.source, id: null }));
@@ -730,10 +902,15 @@ async function saveNames(cl) {
 /* ---------------- drag and drop ----------------
    Tauri reports OS drops on the window itself; the webview never sees a real path in
    a DOM drop event, so the listener is on the Tauri event rather than `ondrop`. */
-listen("tauri://drag-enter", () => document.body.classList.add("dropping"));
+/* A drag that begins inside the app is a pan or a selection, never a folder drop.
+   Without this guard, dragging to pan a zoomed photo raised the drop overlay. */
+const dropBlocked = () => !$("#lightbox").hidden || !$("#sheet").hidden;
+
+listen("tauri://drag-enter", () => { if (!dropBlocked()) document.body.classList.add("dropping"); });
 listen("tauri://drag-leave", () => document.body.classList.remove("dropping"));
 listen("tauri://drag-drop", async ({ payload }) => {
   document.body.classList.remove("dropping");
+  if (dropBlocked()) return;
   const paths = payload?.paths || [];
   if (!paths.length) return;
   let added = 0;
@@ -747,8 +924,99 @@ listen("tauri://drag-drop", async ({ payload }) => {
     await refreshSources();
     await selectSource(paths[0]);
     toast(`Added ${added} folder${added > 1 ? "s" : ""}`, "ok");
+    autodetect(paths[0]);
   }
 });
+
+/* ---------------- editing ----------------
+   Edits are previewed with a CSS transform and only written when saved, so nothing
+   touches a photo until the user commits. */
+
+function editState() {
+  if (!S.edit) S.edit = { rotate: 0, crop: null };
+  return S.edit;
+}
+
+function rotateBy(deg) {
+  const e = editState();
+  e.rotate = (e.rotate + deg + 360) % 360;
+  applyEditPreview();
+}
+
+function applyEditPreview() {
+  const img = $("#lb-img");
+  const dirty = S.edit && (S.edit.rotate !== 0 || S.edit.crop);
+  $("#lb-save").hidden = !dirty;
+  $("#lb-revert").hidden = !dirty;
+  if (!img) return;
+  const r = S.edit?.rotate || 0;
+  // Rotating a landscape photo into portrait needs the preview scaled to fit.
+  const stage = document.querySelector(".lb-stage");
+  const quarter = r === 90 || r === 270;
+  let fit = 1;
+  if (quarter && img.naturalWidth) {
+    const availW = stage.clientWidth - 32, availH = stage.clientHeight - 32;
+    const shown = img.getBoundingClientRect();
+    if (shown.height > 0) fit = Math.min(availW / shown.height, availH / shown.width, 1);
+  }
+  img.style.transform =
+    `translate(${S.panX}px, ${S.panY}px) scale(${S.zoom * fit}) rotate(${r}deg)`;
+}
+
+function discardEdit() {
+  S.edit = null;
+  applyEditPreview();
+  applyZoom();
+}
+
+async function saveEdit() {
+  const p = S.lbList[S.lbIndex];
+  if (!p || !S.edit) return;
+  const keep = await askKeepOriginal();
+  if (keep === null) return;
+  S.keepOriginal = keep;
+  const rotate = { 0: "none", 90: "cw90", 180: "cw180", 270: "cw270" }[S.edit.rotate] || "none";
+  const msg = await busy("Saving…", () => invoke("edit_photo", {
+    path: S.source, hash: p.hash,
+    edit: { rotate, crop: S.edit.crop, keep_original: keep }
+  }));
+  toast(msg, "ok");
+  S.edit = null;
+  closeLightbox();
+  await refreshSources(); await loadPhotos();
+}
+
+/* Asked once per session, defaulting to keeping the original. Editing is the only
+   thing here that changes a photograph, so the safe answer is the pre-selected one. */
+function askKeepOriginal() {
+  return new Promise(resolve => {
+    const box = el("div", { class: "sheet", id: "ask" },
+      el("div", { class: "sheet-panel small", role: "dialog", "aria-modal": "true" },
+        el("div", { class: "sheet-head" }, el("h2", {}, "Save changes")),
+        el("div", { class: "sheet-body" },
+          el("p", { class: "asktext" },
+            "openfoto can keep the untouched original so you can go back to it."),
+          el("label", { class: "askopt" },
+            el("input", { type: "radio", name: "keep", value: "1", checked: true }),
+            el("span", {}, el("b", {}, "Keep the original"),
+              el("small", {}, "Moved to the Originals folder. Reversible."))),
+          el("label", { class: "askopt" },
+            el("input", { type: "radio", name: "keep", value: "0" }),
+            el("span", {}, el("b", {}, "Replace it"),
+              el("small", {}, "The original is not kept. This cannot be undone."))),
+          el("div", { class: "askrow" },
+            el("button", { class: "btn ghost", onclick: () => { box.remove(); resolve(null); } }, "Cancel"),
+            el("button", {
+              class: "btn btn-primary",
+              onclick: () => {
+                const v = box.querySelector("input[name=keep]:checked").value === "1";
+                box.remove(); resolve(v);
+              }
+            }, "Save")))));
+    document.body.append(box);
+    if (!S.keepOriginal) box.querySelector('input[value="0"]').checked = true;
+  });
+}
 
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
@@ -769,6 +1037,7 @@ $("#lb-close").onclick = closeLightbox;
     S.zoom > 1 ? resetZoom() : zoomAt(3, e.clientX, e.clientY);
   });
   let drag = null;
+  stage.addEventListener("dragstart", e => e.preventDefault());
   stage.addEventListener("pointerdown", e => {
     if (S.zoom <= 1) return;
     drag = { x: e.clientX, y: e.clientY, px: S.panX, py: S.panY };
@@ -786,6 +1055,11 @@ $("#lb-close").onclick = closeLightbox;
   stage.addEventListener("pointercancel", endDrag);
 }
 $("#lb-rename").onclick = () => { const p = S.lbList[S.lbIndex]; if (p) renamePhoto(p); };
+$("#lb-rot-l").onclick = () => rotateBy(-90);
+$("#lb-rot-r").onclick = () => rotateBy(90);
+$("#lb-save").onclick = saveEdit;
+$("#lb-revert").onclick = discardEdit;
+$("#lb-crop").onclick = () => toast("Crop is coming next — rotate works now", "info");
 $("#lb-delete").onclick = async () => {
   const p = S.lbList[S.lbIndex]; if (!p) return;
   S.sel = new Set([p.hash]); closeLightbox(); await deleteSelected();

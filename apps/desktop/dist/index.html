@@ -14,7 +14,11 @@
   </div>
   <div class="tb-mid" data-tauri-drag-region><span id="crumb"></span></div>
   <div class="tb-right">
-    <input id="search" class="search" type="search" placeholder="Search photos" aria-label="Search photos">
+    <div class="searchwrap">
+      <input id="search" class="search" type="search"
+             placeholder="Search photos, people, or a date" aria-label="Search photos">
+      <span class="qchip" id="qchip" hidden></span>
+    </div>
     <button class="icon-btn" id="btn-tools" title="Organize" aria-label="Organize">◈</button>
   </div>
 </div>
@@ -28,6 +32,7 @@
     <section class="nav-block" id="people-block" hidden>
       <div class="nav-head"><span>People</span><button class="mini" id="btn-review" title="Review people">◎</button></div>
       <div id="people"></div>
+      <button class="morelink" id="people-toggle" hidden></button>
     </section>
     <section class="nav-block" id="folders-block" hidden>
       <div class="nav-head"><span>Folders</span></div>
@@ -51,6 +56,11 @@
     <div class="lb-actions">
       <span class="lb-zoom num" id="lb-zoom"></span>
       <span class="lb-folder" id="lb-folder"></span>
+      <button class="icon-btn" id="lb-rot-l" title="Rotate left" aria-label="Rotate left">⟲</button>
+      <button class="icon-btn" id="lb-rot-r" title="Rotate right" aria-label="Rotate right">⟳</button>
+      <button class="icon-btn" id="lb-crop" title="Crop" aria-label="Crop">⛶</button>
+      <button class="btn btn-primary sm" id="lb-save" hidden>Save</button>
+      <button class="btn ghost sm" id="lb-revert" hidden>Discard</button>
       <button class="icon-btn" id="lb-rename" title="Rename" aria-label="Rename">✎</button>
       <button class="icon-btn danger" id="lb-delete" title="Move to Trash" aria-label="Move to Trash">🗑</button>
     </div>

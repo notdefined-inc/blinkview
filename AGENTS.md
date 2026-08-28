@@ -48,6 +48,49 @@ failing clippy run here. Branch on the exit code:
     cargo clippy --workspace --all-targets -q -- -D warnings \
       && echo PASS || { echo FAIL; ... }
 
+## Mistakes already made here — do not repeat them
+
+Each of these cost real time in this project, and every one produced a *confident wrong
+answer* rather than an error. They are listed because they recur.
+
+**1. Running a stale binary.** Happened twice. `cargo build -p openfoto-core` does not
+rebuild `openfoto-cli`; `cargo build --workspace` does not build examples. Both times a
+fix looked like it had failed ("face crops cached: 0", "22 faces found") when the code
+was correct and the binary was old. **Build the exact artefact you are about to run**,
+or `cargo build --workspace --all-targets`.
+
+**2. A check that cannot fail.** `cargo clippy | grep error; echo "clean"` prints
+"clean" whatever happened — this produced a commit on top of a failing clippy run.
+Likewise `cargo clippy` without `--all-targets` skips test targets and reported a green
+workspace while a test target would not compile. **Branch on the exit code**:
+`cmd && echo PASS || { echo FAIL; ... }`.
+
+**3. Trusting a fixture you generated.** A 20,000-file test library contained only 768
+distinct images, because the generator's colour offset wrapped at 256. Thumbnails are
+content-addressed, so "only 768 built" was *correct* — and nearly triggered an
+optimisation of code that was working. A synthetic "blurred" frame was likewise so
+unlike its sharp twin that it failed to group, and the instinct was to loosen the
+threshold rather than fix the fixture. **Verify the fixture has the property you think
+it has before drawing conclusions from it.**
+
+**4. Assuming where the time goes.** The dedupe bottleneck was diagnosed as the O(n^2)
+pair scan and a multi-index-hashing rewrite was planned. The real cost was two lines
+inside `rmse`, which normalised both thumbnails and allocated on *every* call. Fixing
+that gave 67x without touching the pair count. **Read the hot function before
+optimising the algorithm.**
+
+**5. Shell metacharacters in commit messages.** Backticks inside a double-quoted
+`git commit -m` are command substitution; `` `openfoto thumbs` `` executed and left a
+hole in the message. **Write multi-paragraph messages to a file and use `-F`.**
+
+**6. Touching a database another process holds.** Deleting `index.sqlite-wal` while the
+app was running corrupted the index. The vault is disposable so recovery was cheap, but
+`people.json` is *not* recomputable — back it up before rebuilding a vault.
+
+**7. Judging UI from code.** Five rendering bugs in this project were invisible in
+source and obvious in a screenshot, including a CSS `display` rule silently overriding
+the `hidden` attribute. **Screenshot the running window; the DOM is not the paint.**
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.
