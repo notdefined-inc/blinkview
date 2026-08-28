@@ -19,6 +19,7 @@ const S = {
   lbList: [],
   sel: new Set(),          // selected photo hashes
   lastIndex: -1,           // anchor for shift-range selection
+  zoom: 1, panX: 0, panY: 0,
 };
 
 const TRASH = "Trash";
@@ -66,6 +67,7 @@ async function busy(msg, fn) {
 const OP_LABEL = {
   faces: "Detecting faces", thumbs: "Building thumbnails",
   clusters: "Grouping faces", plan: "Analysing photos", apply: "Analysing photos",
+  models: "Downloading face models",
 };
 
 listen("progress", ({ payload }) => {
@@ -354,6 +356,7 @@ function paintLightbox() {
   } else {
     img.src = photoUrl(p.path);
   }
+  resetZoom();
   $("#lb-name").textContent = p.name;
   $("#lb-meta").textContent = [
     p.taken_at ? `${DAY(p.taken_at)} · ${TIME(p.taken_at)}` : "Undated",
@@ -380,7 +383,62 @@ function paintLightbox() {
   }));
   strip.querySelector('[aria-current="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
 }
-function closeLightbox() { $("#lightbox").hidden = true; $("#lb-img").src = ""; }
+function closeLightbox() {
+  $("#lightbox").hidden = true;
+  $("#lb-img").src = "";
+  document.querySelector(".lb-stage")?.querySelector("video")?.remove();
+  resetZoom();
+}
+
+/* ---------------- zoom and pan ----------------
+   Zoom is applied as a transform on the image rather than by resizing it, so panning
+   costs nothing and the browser keeps the decoded bitmap. Panning is clamped to the
+   image's own edges so it can never be dragged off screen and lost. */
+const MAX_ZOOM = 8;
+
+function resetZoom() {
+  S.zoom = 1; S.panX = 0; S.panY = 0;
+  applyZoom();
+}
+
+function clampPan() {
+  const img = $("#lb-img");
+  const stage = document.querySelector(".lb-stage");
+  if (!img || !stage) return;
+  // Overflow at the current zoom, halved because the image is centred.
+  const ox = Math.max(0, (img.clientWidth * S.zoom - stage.clientWidth) / 2);
+  const oy = Math.max(0, (img.clientHeight * S.zoom - stage.clientHeight) / 2);
+  S.panX = Math.max(-ox, Math.min(ox, S.panX));
+  S.panY = Math.max(-oy, Math.min(oy, S.panY));
+}
+
+function applyZoom() {
+  const img = $("#lb-img");
+  if (!img) return;
+  clampPan();
+  img.style.transform = `translate(${S.panX}px, ${S.panY}px) scale(${S.zoom})`;
+  img.style.cursor = S.zoom > 1 ? "grab" : "";
+  const lb = $("#lightbox");
+  lb.dataset.zoomed = S.zoom > 1 ? "1" : "0";
+  $("#lb-zoom").textContent = S.zoom > 1 ? `${Math.round(S.zoom * 100)}%` : "";
+}
+
+/* Zoom about the pointer, so the point under the cursor stays put. */
+function zoomAt(factor, clientX, clientY) {
+  const img = $("#lb-img");
+  if (!img) return;
+  const before = S.zoom;
+  S.zoom = Math.max(1, Math.min(MAX_ZOOM, S.zoom * factor));
+  if (S.zoom === before) return;
+  const r = img.getBoundingClientRect();
+  const cx = clientX - (r.left + r.width / 2);
+  const cy = clientY - (r.top + r.height / 2);
+  const ratio = S.zoom / before;
+  S.panX = S.panX - cx * (ratio - 1);
+  S.panY = S.panY - cy * (ratio - 1);
+  if (S.zoom === 1) { S.panX = 0; S.panY = 0; }
+  applyZoom();
+}
 function step(d) {
   if (S.lbIndex < 0) return;
   S.lbIndex = (S.lbIndex + d + S.lbList.length) % S.lbList.length;
@@ -473,15 +531,39 @@ function openSheet() {
         el("button", { class: "btn ghost", onclick: () => runPreview(op, out, apply) }, "Preview"),
         apply);
     }),
-    el("div", { class: "op" },
+    el("div", { class: "op", id: "op-faces" },
       el("div", { class: "txt" }, el("b", {}, "Find people"),
-        el("span", {}, "Detect faces, then name the groups openfoto finds.")),
+        el("span", { id: "faces-note" }, "Detect faces, then name the groups openfoto finds.")),
       el("button", { class: "btn ghost", onclick: analyze }, "Detect faces"),
       el("button", { class: "btn", onclick: openReview }, "Review people")),
     el("div", { class: "op" },
       el("div", { class: "txt" }, el("b", {}, "Undo"), el("span", {}, "Reverse the most recent change.")),
       el("button", { class: "btn ghost", onclick: doUndo }, "Undo last")));
   $("#sheet").hidden = false;
+  checkModels();
+}
+
+/* Face work needs two ONNX models that are not shipped with the app. If they are
+   missing, say so here and offer to fetch them rather than failing later with a
+   file-not-found deep inside detection. */
+async function checkModels() {
+  const st = await invoke("models_status").catch(() => []);
+  const missing = st.filter(m => !m.present);
+  const note = $("#faces-note");
+  const row = $("#op-faces");
+  if (!note || !row) return;
+  row.querySelector(".getmodels")?.remove();
+  if (!missing.length) return;
+  const mb = Math.round(missing.reduce((a, m) => a + m.megabytes, 0));
+  note.textContent = `Needs the face models (${mb} MB) — they are not bundled.`;
+  row.append(el("button", {
+    class: "btn getmodels",
+    onclick: async () => {
+      const msg = await busy("Downloading face models…", () => invoke("models_fetch"));
+      toast(msg, "ok");
+      checkModels();
+    }
+  }, `Download ${mb} MB`));
 }
 async function runPreview(op, out, applyBtn) {
   const plan = await busy(`Planning ${op.title.toLowerCase()}…`,
@@ -599,6 +681,34 @@ $("#btn-review").onclick = openReview;
 $("#sheet-close").onclick = () => ($("#sheet").hidden = true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") $("#sheet").hidden = true; };
 $("#lb-close").onclick = closeLightbox;
+{
+  const stage = document.querySelector(".lb-stage");
+  stage.addEventListener("wheel", e => {
+    e.preventDefault();
+    // Trackpad pinch arrives as ctrlKey+wheel; a plain wheel also zooms here since
+    // there is nothing else to scroll.
+    zoomAt(Math.exp(-e.deltaY * 0.0025), e.clientX, e.clientY);
+  }, { passive: false });
+  stage.addEventListener("dblclick", e => {
+    S.zoom > 1 ? resetZoom() : zoomAt(3, e.clientX, e.clientY);
+  });
+  let drag = null;
+  stage.addEventListener("pointerdown", e => {
+    if (S.zoom <= 1) return;
+    drag = { x: e.clientX, y: e.clientY, px: S.panX, py: S.panY };
+    stage.setPointerCapture(e.pointerId);
+    $("#lb-img").style.cursor = "grabbing";
+  });
+  stage.addEventListener("pointermove", e => {
+    if (!drag) return;
+    S.panX = drag.px + (e.clientX - drag.x);
+    S.panY = drag.py + (e.clientY - drag.y);
+    applyZoom();
+  });
+  const endDrag = () => { drag = null; $("#lb-img").style.cursor = S.zoom > 1 ? "grab" : ""; };
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+}
 $("#lb-rename").onclick = () => { const p = S.lbList[S.lbIndex]; if (p) renamePhoto(p); };
 $("#lb-delete").onclick = async () => {
   const p = S.lbList[S.lbIndex]; if (!p) return;
@@ -615,9 +725,15 @@ $("#lb-next").onclick = () => step(1);
 $("#search").oninput = applyFilter;
 addEventListener("keydown", e => {
   if (!$("#lightbox").hidden) {
-    if (e.key === "Escape") closeLightbox();
-    if (e.key === "ArrowRight") step(1);
-    if (e.key === "ArrowLeft") step(-1);
+    if (e.key === "Escape") S.zoom > 1 ? resetZoom() : closeLightbox();
+    // Arrows pan while zoomed in, and step between photos otherwise.
+    if (e.key === "ArrowRight") { if (S.zoom > 1) { S.panX -= 60; applyZoom(); } else step(1); }
+    if (e.key === "ArrowLeft") { if (S.zoom > 1) { S.panX += 60; applyZoom(); } else step(-1); }
+    if (e.key === "ArrowUp" && S.zoom > 1) { S.panY += 60; applyZoom(); }
+    if (e.key === "ArrowDown" && S.zoom > 1) { S.panY -= 60; applyZoom(); }
+    if (e.key === "+" || e.key === "=") zoomAt(1.4, innerWidth / 2, innerHeight / 2);
+    if (e.key === "-" || e.key === "_") zoomAt(1 / 1.4, innerWidth / 2, innerHeight / 2);
+    if (e.key === "0") resetZoom();
     return;
   }
   if (e.key === "Escape") { hideCtx(); if (!$("#sheet").hidden) $("#sheet").hidden = true; else if (S.sel.size) clearSel(); }

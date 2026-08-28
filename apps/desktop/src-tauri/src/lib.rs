@@ -11,7 +11,7 @@
 
 use openfoto_core::{
     dedupe,
-    faces::{assign, file as faces_file, people::People, pipeline, review},
+    faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
     rename, scan, scenery, thumbs, Library,
 };
@@ -415,6 +415,43 @@ async fn name_clusters(
     })
 }
 
+// ---------------------------------------------------------------- models
+
+#[derive(Serialize)]
+pub struct ModelStatus {
+    name: String,
+    present: bool,
+    megabytes: f64,
+}
+
+#[tauri::command]
+async fn models_status() -> R<Vec<ModelStatus>> {
+    Ok(model_fetch::specs()
+        .into_iter()
+        .map(|s| ModelStatus {
+            name: s.name.to_string(),
+            present: model_fetch::is_present(&s),
+            megabytes: (s.bytes as f64) / 1_048_576.0,
+        })
+        .collect())
+}
+
+/// Download any missing models. Face detection cannot run without them, so the app
+/// offers this rather than leaving the user to read a README.
+#[tauri::command]
+async fn models_fetch(app: tauri::AppHandle) -> R<String> {
+    let sink = |name: &str, done: usize, total: usize| {
+        let _ = app.emit("progress", ProgressEvent { op: "models", done, total });
+        let _ = name;
+    };
+    let got = model_fetch::fetch_missing(&sink).map_err(err)?;
+    Ok(if got.is_empty() {
+        "All models already installed".into()
+    } else {
+        format!("Installed {}", got.join(" and "))
+    })
+}
+
 // ---------------------------------------------------------------- editing
 
 pub const TRASH: &str = "Trash";
@@ -788,7 +825,8 @@ pub fn run() {
             photos, build_thumbs, analyze_faces,
             clusters, name_clusters,
             plan_op, apply_op, history, undo,
-            delete_photos, rename_photo, untag_person, restore_photos, empty_trash
+            delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
+            models_status, models_fetch
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

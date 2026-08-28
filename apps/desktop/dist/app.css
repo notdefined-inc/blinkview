@@ -147,6 +147,10 @@ main{overflow:auto;position:relative}
    effect stays where it belongs: the chrome bars over the photo. */
 .lightbox{position:fixed;inset:0;z-index:60;background:#08080b;display:grid;
   grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}
+/* While zoomed the arrows pan, so hide the step buttons to avoid a mixed metaphor. */
+.lightbox[data-zoomed="1"] .lb-nav{opacity:0;pointer-events:none}
+.lb-nav{transition:opacity .15s var(--ease)}
+.lb-stage{touch-action:none}
 .lb-chrome{
   display:flex;align-items:center;gap:var(--s4);padding:var(--s3) var(--s4);
   background:var(--glass);border-bottom:1px solid var(--glass-line);
@@ -170,7 +174,11 @@ main{overflow:auto;position:relative}
   max-width:calc(100% - var(--s8));max-height:calc(100% - var(--s8));
   width:auto;height:auto;border-radius:var(--r);background:#000
 }
+.lb-zoom{font-size:12px;color:var(--accent);min-width:38px;text-align:right}
+/* Transform-based zoom keeps the decoded bitmap; only the compositor moves. */
 #lb-img{
+  transform-origin:center center;
+  transition:transform .12s var(--ease);
   position:absolute;inset:var(--s4);margin:auto;
   max-width:calc(100% - var(--s8));max-height:calc(100% - var(--s8));
   width:auto;height:auto;object-fit:contain;

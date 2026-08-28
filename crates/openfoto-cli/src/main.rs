@@ -74,6 +74,11 @@ enum Cmd {
     },
     /// List applied operations.
     History,
+    /// Download the face-detection models.
+    Models {
+        #[command(subcommand)]
+        cmd: ModelsCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -120,6 +125,14 @@ fn cli_progress(label: &'static str) -> impl Fn(usize, usize) + Sync {
         }
         let _ = std::io::stderr().flush();
     }
+}
+
+#[derive(Subcommand)]
+enum ModelsCmd {
+    /// Show which models are installed and where they are looked for.
+    Status,
+    /// Download any missing models into the user cache.
+    Fetch,
 }
 
 fn open(cli: &Cli) -> Result<Library> {
@@ -336,6 +349,54 @@ fn main() -> Result<()> {
             }
             let j = plan.apply(&mut lib)?;
             println!("\napplied. undo with:  openfoto undo {} --apply", j.id);
+        }
+        Cmd::Models { cmd } => {
+            use openfoto_core::faces::{fetch, models};
+            match cmd {
+                ModelsCmd::Status => {
+                    println!("looked for in:");
+                    for d in models::search_paths() {
+                        println!("  {}", d.display());
+                    }
+                    println!();
+                    for spec in fetch::specs() {
+                        let ok = fetch::is_present(&spec);
+                        let where_ = models::find(spec.name)
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|_| "not found".into());
+                        println!(
+                            "  {:<12} {}  {}",
+                            spec.name,
+                            if ok { "ok     " } else { "MISSING" },
+                            where_
+                        );
+                    }
+                }
+                ModelsCmd::Fetch => {
+                    println!("cache: {}", fetch::cache_dir()?.display());
+                    let sink = |name: &str, done: usize, total: usize| {
+                        use std::io::Write;
+                        let width = 24usize;
+                        let filled = if total > 0 { done * width / total } else { 0 };
+                        eprint!(
+                            "\r  {name:<12} [{}{}] {:>3}%",
+                            "#".repeat(filled),
+                            " ".repeat(width - filled),
+                            if total > 0 { done * 100 / total } else { 0 }
+                        );
+                        if done == total {
+                            eprintln!();
+                        }
+                        let _ = std::io::stderr().flush();
+                    };
+                    let got = fetch::fetch_missing(&sink)?;
+                    if got.is_empty() {
+                        println!("all models already installed and verified.");
+                    } else {
+                        println!("installed: {}", got.join(", "));
+                    }
+                }
+            }
         }
         Cmd::History => {
             let lib = open(&cli)?;

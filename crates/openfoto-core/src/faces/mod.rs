@@ -3,6 +3,7 @@
 pub mod assign;
 pub mod detect;
 pub mod embed;
+pub mod fetch;
 pub mod file;
 pub mod models;
 pub mod people;

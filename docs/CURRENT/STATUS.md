@@ -27,6 +27,14 @@ its toast; the CLI rewrites a single stderr line. Updates are throttled to ~100 
 regardless of library size, and counted atomically so parallel work never reports a
 count going backwards.
 
+### Models
+`openfoto models fetch` downloads the two ONNX models into `~/.cache/openfoto/models`,
+and the app offers the same when they are missing. Downloads come from the LFS *media*
+endpoint — `raw.githubusercontent.com` returns a 133-byte pointer that loads as a
+corrupt model — and are verified against a pinned SHA-256 before install, because a
+different model silently invalidates every threshold in ADR-0003 and ADR-0004. Files
+land in `.part` and are renamed only after verification.
+
 ### Build size
 The desktop crate emitted `staticlib` + `cdylib` targets for Tauri mobile that are never
 linked (a 532MB `.a` alone), and full debug info across the ort/onnxruntime/wry tree.
@@ -82,6 +90,8 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- Lightbox zoom is transform-based, so at very high zoom the browser upscales the
+  already-decoded bitmap rather than re-decoding at native resolution.
 - `scenery` is not implemented — spec task 11.
 - `faces` cannot yet *move* photos into per-person folders; review teaches identities
   but filing them is still to come.

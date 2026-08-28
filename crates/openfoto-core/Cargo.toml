@@ -18,6 +18,8 @@ regex.workspace = true
 image.workspace = true
 rayon.workspace = true
 jpeg-decoder.workspace = true
+ureq.workspace = true
+sha2.workspace = true
 ort.workspace = true
 ndarray.workspace = true
 
