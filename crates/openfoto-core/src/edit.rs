@@ -97,40 +97,44 @@ impl Edit {
     }
 }
 
-/// The largest axis-aligned rectangle that fits inside a `w` x `h` rectangle rotated
-/// by `angle` radians.
+/// The largest centred rectangle **of the image's own aspect ratio** that fits inside
+/// that image rotated by `angle` radians.
 ///
-/// Rotating by a few degrees leaves blank wedges at the corners. Rather than show them
-/// or let the user crop them away by hand, the result is trimmed to the biggest
-/// rectangle that contains no blank area — which is what every photo editor does when
-/// you straighten a horizon.
-fn largest_inscribed(w: f32, h: f32, angle: f32) -> (f32, f32) {
+/// Straightening leaves blank wedges at the corners, and they have to go. The obvious
+/// answer — the largest rectangle of *any* shape — changes the proportions of the
+/// photograph, so a 3:4 portrait comes back some other shape. Apple Photos and Google
+/// Photos both keep the original aspect and zoom in slightly instead, which is what a
+/// person expects from "straighten", so that is what this computes.
+///
+/// A centred axis-aligned box of half-size (u, v) fits inside the rotated w x h
+/// rectangle exactly when
+///     u|cos| + v|sin| <= w/2   and   u|sin| + v|cos| <= h/2
+/// and substituting u = a*v for the desired aspect `a` gives a bound on v from each.
+fn inscribed_same_aspect(w: f32, h: f32, angle: f32) -> (f32, f32) {
     if w <= 0.0 || h <= 0.0 {
         return (0.0, 0.0);
     }
     let (sin_a, cos_a) = (angle.sin().abs(), angle.cos().abs());
-    let width_is_longer = w >= h;
-    let (long, short) = if width_is_longer { (w, h) } else { (h, w) };
+    let a = w / h;
+    let v = (w / (2.0 * (a * cos_a + sin_a))).min(h / (2.0 * (a * sin_a + cos_a)));
+    (2.0 * a * v, 2.0 * v)
+}
 
-    if short <= 2.0 * sin_a * cos_a * long || (sin_a - cos_a).abs() < 1e-10 {
-        // Half-constrained: the rectangle touches the midpoints of the long sides.
-        let x = 0.5 * short;
-        if width_is_longer {
-            (x / sin_a.max(1e-6), x / cos_a.max(1e-6))
-        } else {
-            (x / cos_a.max(1e-6), x / sin_a.max(1e-6))
-        }
-    } else {
-        let cos_2a = cos_a * cos_a - sin_a * sin_a;
-        ((w * cos_a - h * sin_a) / cos_2a, (h * cos_a - w * sin_a) / cos_2a)
+/// How much the preview must zoom so no blank corner shows, for a given angle.
+/// The frontend uses this so what is previewed is what gets saved.
+pub fn straighten_zoom(w: f32, h: f32, degrees: f32) -> f32 {
+    if w <= 0.0 || h <= 0.0 {
+        return 1.0;
     }
+    let (kw, _) = inscribed_same_aspect(w, h, degrees.to_radians());
+    if kw <= 0.0 { 1.0 } else { w / kw }
 }
 
 /// Rotate by an arbitrary angle with bilinear sampling, then trim the blank corners.
 fn straighten(img: &image::RgbImage, degrees: f32) -> image::RgbImage {
     let angle = degrees.to_radians();
     let (w, h) = (img.width() as f32, img.height() as f32);
-    let (kw, kh) = largest_inscribed(w, h, angle);
+    let (kw, kh) = inscribed_same_aspect(w, h, angle);
     let (ow, oh) = ((kw.floor().max(1.0)) as u32, (kh.floor().max(1.0)) as u32);
 
     let (sin_a, cos_a) = (angle.sin(), angle.cos());
@@ -291,6 +295,38 @@ mod tests {
             let p = out.get_pixel(x, y);
             assert!(p[0] > 150, "corner {x},{y} is blank: {p:?}");
         }
+    }
+
+    /// Straightening must not reshape the photograph. A 4:3 frame stays 4:3.
+    #[test]
+    fn straightening_preserves_the_aspect_ratio() {
+        for angle in [1.0f32, 5.0, 12.0, -8.0] {
+            let img = image::RgbImage::from_pixel(400, 300, image::Rgb([200, 100, 50]));
+            let out = straighten(&img, angle);
+            let before = 400.0 / 300.0;
+            let after = out.width() as f32 / out.height() as f32;
+            assert!((before - after).abs() < 0.02,
+                "{angle} deg reshaped {before:.3} -> {after:.3}");
+        }
+    }
+
+    /// The zoom the preview applies must match the trim the save performs, or the
+    /// preview shows something the user will not get.
+    #[test]
+    fn preview_zoom_matches_the_saved_trim() {
+        for angle in [2.0f32, 7.0, 15.0] {
+            let img = image::RgbImage::from_pixel(400, 300, image::Rgb([9, 9, 9]));
+            let out = straighten(&img, angle);
+            let zoom = straighten_zoom(400.0, 300.0, angle);
+            let implied = 400.0 / zoom;
+            assert!((implied - out.width() as f32).abs() <= 1.5,
+                "{angle} deg: preview implies {implied:.1}px wide, save gave {}", out.width());
+        }
+    }
+
+    #[test]
+    fn zero_angle_needs_no_zoom() {
+        assert!((straighten_zoom(400.0, 300.0, 0.0) - 1.0).abs() < 1e-4);
     }
 
     #[test]

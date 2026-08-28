@@ -215,6 +215,10 @@ main{overflow:auto;position:relative}
    overflow:hidden parent — the geometry was internally inconsistent, not merely
    mis-specified. `inset:0; margin:auto` cannot express that state. */
 .lb-stage{grid-row:2;position:relative;min-width:0;min-height:0;overflow:hidden}
+/* While straightening the photo is zoomed past its own edges; clipping to its
+   original box is what makes the preview frame the saved result rather than showing
+   the overhang. */
+#lb-img.straightening{clip-path:inset(0)}
 #lb-video{
   position:absolute;inset:var(--s4);margin:auto;
   max-width:calc(100% - var(--s8));max-height:calc(100% - var(--s8));
@@ -224,7 +228,9 @@ main{overflow:auto;position:relative}
 /* Transform-based zoom keeps the decoded bitmap; only the compositor moves. */
 #lb-img{
   transform-origin:center center;
-  transition:transform .12s var(--ease);
+  /* No transform transition. A straighten slider must track the pointer with no lag,
+     and WKWebView was leaving the transition pending here — computed style stayed at
+     the start value, so the photo never visibly moved. */
   position:absolute;inset:var(--s4);margin:auto;
   max-width:calc(100% - var(--s8));max-height:calc(100% - var(--s8));
   width:auto;height:auto;object-fit:contain;

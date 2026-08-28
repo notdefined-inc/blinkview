@@ -73,21 +73,29 @@ unlike its sharp twin that it failed to group, and the instinct was to loosen th
 threshold rather than fix the fixture. **Verify the fixture has the property you think
 it has before drawing conclusions from it.**
 
-**4. Assuming where the time goes.** The dedupe bottleneck was diagnosed as the O(n^2)
+**4. Measuring the wrong moment.** Reading a computed CSS transform immediately after
+setting it returns the *start* of a pending transition, not the value. This produced two
+false conclusions in a row on the same feature: "rotation is broken" (it was working),
+then "my fix broke it" (it had not). The inline style was correct both times. Related:
+`getBoundingClientRect` on a rotated element returns the enclosing box of the rotated
+shape, not the element's frame — use `offsetWidth`/`offsetTop` when you want the layout
+box. **When a measurement disagrees with the code, suspect the measurement.**
+
+**5. Assuming where the time goes.** The dedupe bottleneck was diagnosed as the O(n^2)
 pair scan and a multi-index-hashing rewrite was planned. The real cost was two lines
 inside `rmse`, which normalised both thumbnails and allocated on *every* call. Fixing
 that gave 67x without touching the pair count. **Read the hot function before
 optimising the algorithm.**
 
-**5. Shell metacharacters in commit messages.** Backticks inside a double-quoted
+**6. Shell metacharacters in commit messages.** Backticks inside a double-quoted
 `git commit -m` are command substitution; `` `openfoto thumbs` `` executed and left a
 hole in the message. **Write multi-paragraph messages to a file and use `-F`.**
 
-**6. Touching a database another process holds.** Deleting `index.sqlite-wal` while the
+**7. Touching a database another process holds.** Deleting `index.sqlite-wal` while the
 app was running corrupted the index. The vault is disposable so recovery was cheap, but
 `people.json` is *not* recomputable — back it up before rebuilding a vault.
 
-**7. Judging UI from code.** Five rendering bugs in this project were invisible in
+**8. Judging UI from code.** Five rendering bugs in this project were invisible in
 source and obvious in a screenshot, including a CSS `display` rule silently overriding
 the `hidden` attribute. **Screenshot the running window; the DOM is not the paint.**
 

@@ -952,6 +952,19 @@ function editState() {
   return S.edit;
 }
 
+/* Zoom needed so a straightened photo shows no blank corner — the mirror of
+   edit::inscribed_same_aspect. The preview must zoom by exactly what the save trims,
+   or it shows the user something they will not get. */
+function straightenZoom(w, h, degrees) {
+  if (!w || !h || !degrees) return 1;
+  const a = w / h;
+  const rad = Math.abs(degrees) * Math.PI / 180;
+  const sin = Math.abs(Math.sin(rad)), cos = Math.abs(Math.cos(rad));
+  const v = Math.min(w / (2 * (a * cos + sin)), h / (2 * (a * sin + cos)));
+  const kw = 2 * a * v;
+  return kw > 0 ? w / kw : 1;
+}
+
 /* Adjustments preview through a CSS filter, which is the compositor's job and costs
    nothing; the same numbers are applied per-pixel in Rust on save. The mapping has to
    agree with edit::adjust or the preview would lie. */
@@ -967,8 +980,20 @@ function filterFor(e) {
    The rectangle is kept in fractions of the *displayed* image, which is also the space
    the backend crops in (it rotates and flips before cropping, so the two agree). */
 
+/* The crop rectangle must sit over the photo's *layout* box, not its rendered bounding
+   box. Once the image is rotated, getBoundingClientRect returns the enclosing box of the
+   rotated shape — larger than the visible photo — so crop fractions computed from it
+   land in the wrong place. Transforms do not affect layout, and the straightened result
+   fills exactly the layout box, so that is the correct frame. */
 function imgRect() {
-  return $("#lb-img").getBoundingClientRect();
+  const img = $("#lb-img");
+  const stage = document.querySelector(".lb-stage").getBoundingClientRect();
+  return {
+    left: stage.left + img.offsetLeft,
+    top: stage.top + img.offsetTop,
+    width: img.offsetWidth,
+    height: img.offsetHeight,
+  };
 }
 
 function startCrop() {
@@ -1059,6 +1084,15 @@ function applyEditPreview() {
   const r = (S.edit?.rotate || 0) + (S.edit?.straighten || 0);
   const flip = S.edit?.flipH ? " scaleX(-1)" : "";
   img.style.filter = filterFor(S.edit);
+
+  // Zoom past the blank corners by the same factor the save trims by, and clip to the
+  // photo's own box so the preview frames exactly the saved result.
+  const deg = S.edit?.straighten || 0;
+  const shown = img.getBoundingClientRect();
+  const sZoom = deg
+    ? straightenZoom(shown.width || img.naturalWidth, shown.height || img.naturalHeight, deg)
+    : 1;
+  img.classList.toggle("straightening", !!deg);
   // Rotating a landscape photo into portrait needs the preview scaled to fit.
   const stage = document.querySelector(".lb-stage");
   const quarter = r === 90 || r === 270;
@@ -1069,7 +1103,7 @@ function applyEditPreview() {
     if (shown.height > 0) fit = Math.min(availW / shown.height, availH / shown.width, 1);
   }
   img.style.transform =
-    `translate(${S.panX}px, ${S.panY}px) scale(${S.zoom * fit}) rotate(${r}deg)${flip}`;
+    `translate(${S.panX}px, ${S.panY}px) scale(${S.zoom * fit * sZoom}) rotate(${r}deg)${flip}`;
   if (S.cropping) drawCrop();
 }
 
