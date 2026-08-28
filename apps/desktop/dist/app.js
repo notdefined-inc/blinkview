@@ -19,6 +19,7 @@ const S = {
   peopleCollapsed: true,
   albums: [],
   sort: "newest",
+  group: "date",           // "date" or "folder" — how the grid sections itself
   photos: [],
   view: [],              // filtered/sorted photos currently on screen
   lbIndex: -1,
@@ -39,6 +40,14 @@ const S = {
 };
 
 const TRASH = "Trash";
+
+/* A folder contains everything beneath it (ADR-0009). Compared segment-wise, so
+   `Trip2` is not read as living inside `Trip` — the same rule as `in_folder` in the
+   backend, and the two must agree or the grid and the counts disagree. */
+function inFolder(path, folder) {
+  if (!folder) return true;
+  return path === folder || path.startsWith(folder + "/");
+}
 
 const $ = s => document.querySelector(s);
 const el = (t, a = {}, ...kids) => {
@@ -177,14 +186,88 @@ function renderSidebar() {
       }, el("span", { class: "grow", style: "color:var(--text-faint)" }, "Empty…")));
   }
 
-  const folders = src.folders.filter(f => f.path !== "" && f.path !== TRASH);
+  const folders = src.folders.filter(f =>
+    f.path !== "" && f.path !== TRASH && !f.path.startsWith(TRASH + "/"));
   fb.hidden = folders.length === 0;
-  $("#folders").replaceChildren(...folders.map(f => el("button", {
-    class: `row indent-${Math.min(f.depth, 2)}`, "aria-current": String(S.folder === f.path),
-    onclick: () => selectFolder(f.path)
-  },
-    el("span", { class: "grow" }, f.name),
-    el("span", { class: "n num" }, String(f.count)))));
+  renderFolderTree(folders);
+}
+
+/* ---------------- folder tree ----------------
+   Folders are the only way photographs are grouped (ADR-0009), so the tree is the
+   main way around the library. Collapsed by default and expanded along the path to
+   wherever you are, because a photo library is wide — many sibling day folders —
+   and showing every level at once is noise, not information. */
+
+/** Expanded folder paths. Remembered per library, since it is a property of that
+    library's shape rather than a global preference. */
+function expandedSet() {
+  S.expanded ||= {};
+  return (S.expanded[S.source] ||= new Set([""]));
+}
+
+/** Expansion is a view preference, not library data — it belongs in the browser,
+    not in a file that travels with the photographs. */
+function saveFolderState() {
+  try {
+    const out = {};
+    for (const [src, set] of Object.entries(S.expanded || {})) out[src] = [...set];
+    localStorage.setItem("openfoto.expanded", JSON.stringify(out));
+  } catch { /* private window, or storage disabled — the tree still works */ }
+}
+
+function loadFolderState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("openfoto.expanded") || "{}");
+    S.expanded = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, new Set(v)]));
+  } catch { S.expanded = {}; }
+}
+
+function isExpanded(path) {
+  return expandedSet().has(path);
+}
+
+function toggleFolder(path) {
+  const ex = expandedSet();
+  if (ex.has(path)) ex.delete(path); else ex.add(path);
+  saveFolderState();
+  renderSidebar();
+}
+
+/** A folder is visible when every ancestor above it is expanded. */
+function folderVisible(path) {
+  const parts = path.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    if (!isExpanded(parts.slice(0, i).join("/"))) return false;
+  }
+  return true;
+}
+
+function renderFolderTree(folders) {
+  // Expand the path to the current folder, so selecting one always reveals it.
+  if (S.folder) {
+    const parts = S.folder.split("/");
+    for (let i = 1; i < parts.length; i++) expandedSet().add(parts.slice(0, i).join("/"));
+  }
+  const rows = folders.filter(f => folderVisible(f.path)).map(f => {
+    const open = isExpanded(f.path);
+    const twisty = f.has_children
+      ? el("button", {
+          class: "twisty" + (open ? " open" : ""), tabindex: "-1",
+          "aria-label": open ? `Collapse ${f.name}` : `Expand ${f.name}`,
+          onclick: e => { e.stopPropagation(); toggleFolder(f.path); }
+        }, "\u203A")
+      : el("span", { class: "twisty blank" });
+    return el("button", {
+      class: `row folderrow indent-${Math.min(f.depth - 1, 4)}`,
+      "aria-current": String(S.folder === f.path),
+      title: f.own && f.own !== f.count ? `${f.count} in total, ${f.own} directly here` : "",
+      onclick: () => selectFolder(f.path)
+    },
+      twisty,
+      el("span", { class: "grow" }, f.name),
+      el("span", { class: "n num" }, String(f.count)));
+  });
+  $("#folders").replaceChildren(...rows);
 }
 
 /* ---------------- justified grid ----------------
@@ -224,16 +307,33 @@ const io = new IntersectionObserver(entries => {
 let LAYOUT = { blocks: [], height: 0, width: 0 };
 const ROW_H = 200, GAP = 3, HEAD_H = 46, OVERSCAN = 900;
 
+/* Which section a photograph falls under when grouping by folder.
+   Sections are the immediate children of wherever you are, not full paths: standing in
+   `Trip`, the useful headings are `Greece Day1` and `Swiss Day1`, not the same prefix
+   repeated on every row. Photographs sitting loose in the selected folder get their own
+   section so they are not silently absent. */
+function sectionFor(p) {
+  const base = S.folder || "";
+  const rel = base ? p.folder.slice(base.length).replace(/^\//, "") : p.folder;
+  if (!rel) return base ? base.split("/").pop() : "Loose photos";
+  return rel.split("/")[0];
+}
+
 function computeLayout(width) {
   const blocks = [];
   let y = 0;
   const groups = new Map();
   for (const p of S.view) {
-    const key = p.taken_at ? DAY(p.taken_at) : "Undated";
+    const key = S.group === "folder" ? sectionFor(p) : (p.taken_at ? DAY(p.taken_at) : "Undated");
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(p);
   }
-  for (const [day, items] of groups) {
+  // Grouped by folder, sections read alphabetically: a folder ordering that follows
+  // capture date puts `Swiss Day1` above `Greece Day1` and looks arbitrary.
+  const ordered = S.group === "folder"
+    ? [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    : groups.entries();
+  for (const [day, items] of ordered) {
     blocks.push({ kind: "head", y, h: HEAD_H, day, n: items.length });
     y += HEAD_H;
     for (const r of justify(items, width, ROW_H, GAP)) {
@@ -916,7 +1016,7 @@ function applyFilter() {
     // Trash is a real folder, but it should not appear in the library view unless
     // the user deliberately opens it.
     (S.folder === TRASH || p.folder !== TRASH) &&
-    (!S.folder || p.folder === S.folder) &&
+    (!S.folder || inFolder(p.folder, S.folder)) &&
     (!S.person || p.people.includes(S.person)) &&
     (!S.clusterHashes || S.clusterHashes.has(p.hash)) &&
     (!parsed || matchesQuery(p, parsed)));
@@ -1556,6 +1656,16 @@ function renderFilters() {
   const types = ["photos", "videos"];
   $("#f-type").replaceChildren(...types.map(t => opt(t.replace(/^./, c => c.toUpperCase()), t, types)));
 
+  const groups = [["date", "By date"], ["folder", "By folder"]];
+  const gEl = $("#f-group");
+  if (gEl) {
+    gEl.replaceChildren(...groups.map(([k, label]) =>
+      el("button", {
+        class: "fopt", "aria-pressed": String(S.group === k),
+        onclick: () => { S.group = k; renderGrid(); renderFilters(); }
+      }, label)));
+  }
+
   const sorts = [["newest", "Newest"], ["oldest", "Oldest"], ["name", "Name"],
                  ["rating", "Rating"], ["size", "Size"]];
   $("#f-sort").replaceChildren(...sorts.map(([k, label]) =>
@@ -1824,6 +1934,7 @@ $("#main").addEventListener("scroll", () => paintViewport(), { passive: true });
 
 (async function init() {
   renderWelcome();
+  loadFolderState();
   await refreshSources();
   if (S.sources.length) {
     const first = S.sources.find(s => !s.missing);

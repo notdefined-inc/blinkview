@@ -125,6 +125,10 @@ exactly on others, suspect quantisation before suspecting your code.**
   explicit `[hidden]{display:none!important}`.
 - `backdrop-filter` on a full-screen container can stop WKWebView painting its children
   altogether — the element measures correctly and never appears.
+- Theme overrides can outweigh state selectors. `:root[data-theme="light"] .fopt` is
+  (0,3,0) and beats `.fopt[aria-pressed="true"]` at (0,2,0), so every selected filter
+  chip rendered as white-on-white. **A theme rule that sets `background` must exclude
+  the states that also set one** — `:not([aria-pressed="true"])`.
 - `replaceChildren` stringifies `null` children into literal "null" text nodes — filter
   arrays before spreading them in (the `el()` helper already skips nulls).
 - The Tauri app embeds `dist/` at compile time; editing frontend files needs
