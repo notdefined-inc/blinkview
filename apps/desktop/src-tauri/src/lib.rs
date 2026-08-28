@@ -1136,6 +1136,23 @@ async fn rename_photo(
 }
 
 /// Remove a person from photos, and move them out of that person's folder.
+/// Forget a person entirely: their name and the references behind it.
+///
+/// The photographs are untouched — this removes only the claim that they are this
+/// person. Needed because a name can end up matching nothing (every photo untagged, or
+/// a mistaken second spelling) and a name that matches nothing is not information.
+#[tauri::command]
+async fn forget_person(state: tauri::State<'_, AppState>, path: String, person: String) -> R<String> {
+    with(&state, &path, |lib| {
+        let mut people = People::load(lib.root())?;
+        if !people.remove(&person) {
+            return Ok(format!("{person} was not a known person"));
+        }
+        people.save(lib.root())?;
+        Ok(format!("Forgot {person}"))
+    })
+}
+
 #[tauri::command]
 async fn untag_person(
     state: tauri::State<'_, AppState>,
@@ -1168,12 +1185,34 @@ async fn untag_person(
         if !plan.is_empty() {
             plan.apply(lib)?;
         }
+
+        // If nothing is left for this person, forget them. A name matching zero
+        // photographs is not information, and the sidebar would otherwise keep offering
+        // it forever.
+        let opt = assign::Options::default();
+        let still_has = lib.all_faces()?.into_iter().any(|f| {
+            f.embedding.as_ref().is_some_and(|e| {
+                assign::assign(e, &people, &opt).person() == Some(person.as_str())
+                    && !people.is_excluded(&person, &f.hash)
+            })
+        });
+        let forgotten = if still_has {
+            false
+        } else {
+            let removed = people.remove(&person);
+            if removed {
+                people.save(lib.root())?;
+            }
+            removed
+        };
+
         Ok(format!(
-            "Removed {} from {} photo{}{}",
+            "Removed {} from {} photo{}{}{}",
             person,
             want.len(),
             if want.len() == 1 { "" } else { "s" },
-            if moved > 0 { format!(", {moved} moved back to root") } else { String::new() }
+            if moved > 0 { format!(", {moved} moved back to root") } else { String::new() },
+            if forgotten { format!(" — no photos left, so {person} was forgotten") } else { String::new() }
         ))
     })
 }
@@ -1516,7 +1555,7 @@ pub fn run() {
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,
-            plan_move, apply_move
+            plan_move, apply_move, forget_person
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

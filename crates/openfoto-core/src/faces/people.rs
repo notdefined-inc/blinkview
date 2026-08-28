@@ -89,6 +89,17 @@ impl People {
         }
     }
 
+    /// Forget a person entirely.
+    ///
+    /// Used when the last photograph is untagged: a name that matches nothing is not
+    /// information, and leaving it in the sidebar claiming zero photographs is worse
+    /// than removing what the user has just finished disowning.
+    pub fn remove(&mut self, name: &str) -> bool {
+        let before = self.people.len();
+        self.people.retain(|p| p.name != name);
+        self.people.len() != before
+    }
+
     pub fn add_references(&mut self, name: &str, refs: Vec<Vec<f32>>) {
         match self.people.iter_mut().find(|p| p.name == name) {
             Some(p) => p.references.extend(refs),

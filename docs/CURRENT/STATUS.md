@@ -177,6 +177,26 @@ the file rows that referenced them, so a photograph that disappears and comes ba
 not re-analysed. Orphans are only reaped on an explicit vacuum — automatic reaping would
 destroy exactly that property.
 
+### Selection and people
+Selection works the way a file manager's does: click, shift-click for a range, ⌘A for
+everything, and **shift with the arrow keys** to extend from the last photograph touched
+— stepping up or down crosses the row the cursor is actually in, which varies, since a
+day holding two photographs is a two-wide row. A **date or folder heading selects its
+whole group**, and selects it off again.
+
+A selection can be moved straight into a folder from its context menu, existing folders
+offered first, previewed and undoable like every other move.
+
+People are listed only while they match photographs. A name matching nothing cannot be
+browsed to anything, so it is collapsed into one removable row rather than sitting in
+the list claiming zero — and untagging a person's last photograph forgets them outright,
+since the user has just finished saying none of these are them. Any person can be
+forgotten deliberately; the photographs are untouched.
+
+Naming an unrecognised face offers the people already known, one click each. Retyping a
+name risks a second spelling of someone who is already there, and merging is usually
+what was meant.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in

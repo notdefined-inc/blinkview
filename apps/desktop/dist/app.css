@@ -287,6 +287,37 @@ kbd{
 .ask-step + .ask-step{margin-top:var(--s3);padding-top:var(--s3);border-top:1px solid var(--stroke)}
 .asub{font-size:12px;color:var(--ink-faint);margin-top:4px}
 .ask-act.danger{background:#ef4444;color:#fff}
+/* Clear affordance inside the search field. */
+.clearbtn{
+  position:absolute;right:38px;top:50%;transform:translateY(-50%);
+  width:20px;height:20px;display:grid;place-items:center;padding:0;
+  border:0;border-radius:50%;background:rgba(128,128,128,.22);
+  color:var(--ink-dim);font-size:11px;line-height:1;cursor:pointer;
+}
+.clearbtn:hover{background:rgba(128,128,128,.4);color:var(--ink)}
+/* A heading selects its whole group; the tick appears on hover so the row stays calm. */
+.dayhead{cursor:pointer}
+.headpick{opacity:0;margin-left:8px;font-size:11px;color:var(--ink-faint);transition:opacity .12s}
+.dayhead:hover .headpick{opacity:1}
+.searchrow{position:relative}
+.rowacts{display:flex;gap:2px;opacity:0;transition:opacity .12s}
+.searchrow:hover .rowacts,.searchrow:focus-within .rowacts{opacity:1}
+.rowact{
+  width:20px;height:20px;display:grid;place-items:center;padding:0;border:0;
+  border-radius:5px;background:none;color:var(--ink-faint);font-size:11px;cursor:pointer;
+}
+.rowact:hover{background:rgba(128,128,128,.25);color:var(--ink)}
+.prow{display:flex;align-items:center;gap:4px}
+.prow .prun{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left;min-width:0}
+.pact{opacity:0;transition:opacity .12s}
+.prow:hover .pact,.prow:focus-within .pact{opacity:1}
+.row.faint{color:var(--ink-faint);font-size:12px}
+.srow{display:flex;align-items:center;gap:2px}
+.srow .srun{flex:1;text-align:left;background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0}
+.sact{opacity:0;transition:opacity .12s}
+.srow:hover .sact,.srow:focus-within .sact{opacity:1}
+.movepicks{display:flex;flex-wrap:wrap;gap:6px;margin:0 var(--s3)}
+.movepicks .fface{width:16px;height:16px;border-radius:50%;object-fit:cover;margin-right:5px;vertical-align:-3px}
 .qc-save{cursor:pointer;font:inherit;font-size:12px;font-weight:600;color:var(--ink-dim)}
 .qc-save:hover{color:var(--ink);background:rgba(255,255,255,.12)}
 .morelink{

@@ -143,10 +143,25 @@ function renderSidebar() {
     ? el("img", { class: "avatar", src: photoUrl(p.cover), alt: "", loading: "lazy" })
     : el("span", { class: "avatar blank" });
 
-  const rows = named.map(p => el("button", {
-    class: "row", "aria-current": String(S.person === p.name),
-    onclick: () => selectPerson(p.name)
-  }, face(p), el("span", { class: "grow" }, p.name), el("span", { class: "n num" }, String(p.photos))));
+  // A name matching nothing cannot be browsed to anything, so it is not listed as if
+  // it could be. It stays removable through the person it duplicates, or by untagging.
+  const rows = named.filter(p => p.photos > 0).map(p => el("div", {
+    class: "row prow", "aria-current": String(S.person === p.name),
+  },
+    el("button", { class: "grow prun", onclick: () => selectPerson(p.name) },
+      face(p), el("span", { class: "grow" }, p.name)),
+    el("span", { class: "n num" }, String(p.photos)),
+    el("button", { class: "mini pact", title: `Forget ${p.name}`,
+      onclick: () => forgetPerson(p.name) }, "\u2715")));
+
+  const empties = named.filter(p => p.photos === 0);
+  if (empties.length) {
+    rows.push(el("button", { class: "row faint", title: empties.map(p => p.name).join(", "),
+      onclick: () => forgetEmptyPeople(empties.map(p => p.name)) },
+      el("span", { class: "grow" },
+        `${empties.length} name${empties.length === 1 ? "" : "s"} matching no photos`),
+      el("span", { class: "n num" }, "\u2715")));
+  }
 
   // Unnamed groups are shown too. Detection finding 243 faces and the sidebar still
   // reading "None named yet" is what made face detection look broken.
@@ -336,7 +351,8 @@ function computeLayout(width) {
     ? [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
     : groups.entries();
   for (const [day, items] of ordered) {
-    blocks.push({ kind: "head", y, h: HEAD_H, day, n: items.length });
+    blocks.push({ kind: "head", y, h: HEAD_H, day, n: items.length,
+                  hashes: items.map(p => p.hash) });
     y += HEAD_H;
     for (const r of justify(items, width, ROW_H, GAP)) {
       blocks.push({ kind: "row", y, h: r.h, items: r.items });
@@ -392,8 +408,11 @@ function paintViewport() {
     wanted.add(i);
     if (stage.querySelector(`[data-b="${i}"]`)) return;
     const node = b.kind === "head"
-      ? el("div", { class: "dayhead", "data-b": i, style: `top:${b.y}px` },
-          el("b", {}, b.day), el("span", { class: "num" }, String(b.n)))
+      ? el("div", { class: "dayhead", "data-b": i, style: `top:${b.y}px`,
+          title: `Select these ${b.n}`,
+          onclick: () => selectGroup(b.hashes) },
+          el("b", {}, b.day), el("span", { class: "num" }, String(b.n)),
+          el("span", { class: "headpick" }, "\u2713"))
       : el("div", { class: "jrow", "data-b": i, style: `top:${b.y}px;height:${b.h}px` },
           b.items.map(({ p, r }) => cellFor(p, r * b.h, b.h)));
     frag.append(node);
@@ -458,6 +477,44 @@ function rangeSel(p) {
   paintSel();
 }
 function clearSel() { S.sel.clear(); paintSel(); }
+
+/** Select or deselect a whole day or folder section by its heading. */
+function selectGroup(hashes) {
+  const all = hashes.every(h => S.sel.has(h));
+  for (const h of hashes) all ? S.sel.delete(h) : S.sel.add(h);
+  // Anchor further shift-selection at the end of the group just handled.
+  S.lastIndex = S.view.findIndex(x => x.hash === hashes[hashes.length - 1]);
+  paintSel();
+}
+
+/* Shift+arrows extend the selection from the last touched photo, the way a file
+   manager does. Plain arrows move the anchor without selecting, so you can walk to a
+   starting point and then extend. */
+function moveSel(delta, extend) {
+  if (!S.view.length) return;
+  const from = S.lastIndex < 0 ? 0 : S.lastIndex;
+  // Up/down should cross the row the cursor is actually in. Rows vary — a day with two
+  // photographs is a two-wide row — so taking the width of the first row moves by the
+  // wrong amount everywhere else.
+  const here = S.view[from];
+  const row = LAYOUT.blocks.find(b => b.kind === "row" && b.items.some(x => x.p.hash === here.hash));
+  const per = row?.items.length || 1;
+  const step = Math.abs(delta) === 2 ? per * (delta / 2) : delta;
+  const to = Math.max(0, Math.min(S.view.length - 1, from + step));
+  if (extend) {
+    const [a, b] = to > from ? [from, to] : [to, from];
+    for (let k = a; k <= b; k++) S.sel.add(S.view[k].hash);
+  }
+  S.lastIndex = to;
+  paintSel();
+  // Keep the moving edge on screen.
+  const cell = document.querySelector(`.cell[data-hash="${S.view[to].hash}"]`);
+  if (cell) cell.scrollIntoView({ block: "nearest" });
+  else {
+    const blk = LAYOUT.blocks.find(b => b.kind === "row" && b.items.some(x => x.p.hash === S.view[to].hash));
+    if (blk) $("#main").scrollTop = Math.max(0, blk.y - 120);
+  }
+}
 function paintSel() {
   // Only mounted cells exist; the rest pick up their state when they scroll in.
   for (const c of document.querySelectorAll(".cell"))
@@ -486,6 +543,7 @@ function showCtx(x, y) {
   if (one) items.push(item("Rename…", "", () => renamePhoto(one)));
   if (S.person) items.push(item(`Not ${S.person}`, "", untagSelected));
   items.push(el("hr"));
+  items.push(item(`Move ${n} to\u2026`, "", moveSelectedPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
   else items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
@@ -527,19 +585,58 @@ function renderSearches() {
   if (!block) return;
   block.hidden = !S.searches.length;
   if (!S.searches.length) return;
-  list.replaceChildren(...S.searches.map(sv => el("button", {
-    class: "row", "aria-current": String($("#search").value.trim() === sv.query),
-    title: sv.query,
-    onclick: () => { $("#search").value = sv.query; applyFilter(); renderFilters(); renderSearches(); },
-    oncontextmenu: async e => {
-      e.preventDefault();
-      const ok = await confirmDialog("Forget this search?",
-        `\u201C${sv.name}\u201D will be removed. The photographs are untouched.`, "Forget");
-      if (!ok) return;
-      await invoke("save_search", { path: S.source, name: sv.name, query: "" });
-      await refreshSearches();
-    }
-  }, el("span", { class: "grow" }, sv.name))));
+  list.replaceChildren(...S.searches.map(sv => {
+    const row = el("div", { class: "row srow", "aria-current": String($("#search").value.trim() === sv.query) },
+      el("button", { class: "grow srun", title: sv.query,
+        onclick: () => { $("#search").value = sv.query; applyFilter(); renderFilters(); renderSearches(); syncClear(); } },
+        sv.name),
+      // Editing and removing are visible actions rather than a right-click nobody
+      // discovers; they appear on hover so the list stays quiet.
+      el("button", { class: "mini sact", title: "Edit this search",
+        onclick: () => editSearchPrompt(sv) }, "\u270E"),
+      el("button", { class: "mini sact", title: "Delete this search",
+        onclick: () => deleteSearch(sv) }, "\u2715"));
+    return row;
+  }));
+}
+
+async function deleteSearch(sv) {
+  const ok = await confirmDialog("Forget this search?",
+    `\u201C${sv.name}\u201D will be removed. The photographs are untouched.`, "Forget");
+  if (!ok) return;
+  await invoke("save_search", { path: S.source, name: sv.name, query: "" });
+  await refreshSearches();
+  toast(`Forgot \u201C${sv.name}\u201D`, "ok");
+}
+
+/** Edit a saved search's name and its query. Renaming replaces the old entry. */
+function editSearchPrompt(sv) {
+  document.querySelector(".namebar")?.remove();
+  const name = el("input", { class: "nameinput", type: "text", value: sv.name,
+    "aria-label": "Search name" });
+  const query = el("input", { class: "nameinput grow", type: "text", value: sv.query,
+    "aria-label": "Search query" });
+  const save = async () => {
+    const n = name.value.trim(), q = query.value.trim();
+    if (!n || !q) { toast("A name and a query are both needed", "info"); return; }
+    if (n !== sv.name) await invoke("save_search", { path: S.source, name: sv.name, query: "" });
+    await invoke("save_search", { path: S.source, name: n, query: q });
+    bar.remove();
+    await refreshSearches();
+    toast(`Saved \u201C${n}\u201D`, "ok");
+  };
+  const bar = el("div", { class: "namebar" },
+    el("span", {}, "Saved search"), name, query,
+    el("button", { class: "btn sm", onclick: save }, "Save"),
+    el("button", { class: "mini", onclick: () => bar.remove(), title: "Cancel" }, "\u2715"));
+  for (const i of [name, query]) {
+    i.onkeydown = e => {
+      if (e.key === "Escape") bar.remove();
+      if (e.key === "Enter") save();
+    };
+  }
+  $("#main").prepend(bar);
+  setTimeout(() => name.focus(), 60);
 }
 
 /** Keep the current query under a name. */
@@ -561,6 +658,51 @@ function saveSearchPrompt() {
         await invoke("save_search", { path: S.source, name: v, query: q });
         await refreshSearches();
         toast(`Saved \u201C${v}\u201D`, "ok");
+      }
+    }),
+    el("button", { class: "mini", onclick: () => bar.remove(), title: "Cancel" }, "\u2715"));
+  $("#main").prepend(bar);
+  setTimeout(() => bar.querySelector("input")?.focus(), 60);
+}
+
+/* Move a selection into a folder. Existing folders first — typing a name every time is
+   how a library grows three spellings of the same trip. */
+function moveSelectedPrompt() {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  document.querySelector(".namebar")?.remove();
+
+  const go = async dest => {
+    document.querySelector(".namebar")?.remove();
+    const view = await invoke("plan_move", { path: S.source, hashes, dest });
+    if (!view.moves.length) {
+      toast(view.skipped.length ? `Nothing moved: ${view.skipped[0][1]}` : "Already there", "info");
+      return;
+    }
+    const extra = view.skipped.length ? `  ${view.skipped.length} left alone (name already taken).` : "";
+    const ok = await confirmDialog("Move these photos?",
+      `${view.moves.length} will move into \u201C${dest}\u201D.${extra}`, "Move");
+    if (!ok) return;
+    const msg = await busy("Moving\u2026", () => invoke("apply_move", { path: S.source, hashes, dest }));
+    toast(msg + " \u2014 \u2318Z to undo", "ok");
+    clearSel();
+    await refreshSources(); await loadPhotos();
+  };
+
+  const folders = (S.sources.find(x => x.path === S.source)?.folders || [])
+    .filter(f => f.path && f.path !== TRASH && f.path !== S.folder);
+  const bar = el("div", { class: "namebar" },
+    el("span", { class: "grow" }, `Move ${hashes.length} photo${hashes.length === 1 ? "" : "s"} to`),
+    el("div", { class: "movepicks" }, folders.slice(0, 8).map(f =>
+      el("button", { class: "sugg-pill", title: f.path, onclick: () => go(f.path) }, f.name))),
+    el("input", {
+      class: "nameinput", type: "text", placeholder: "or a new folder name",
+      "aria-label": "Destination folder",
+      onkeydown: e => {
+        if (e.key === "Escape") { bar.remove(); return; }
+        if (e.key !== "Enter") return;
+        const v = e.target.value.trim();
+        if (v) go(v);
       }
     }),
     el("button", { class: "mini", onclick: () => bar.remove(), title: "Cancel" }, "\u2715"));
@@ -1157,6 +1299,29 @@ async function selectSource(path) {
   }
 }
 function selectFolder(f) { S.folder = (S.folder === f ? null : f); S.person = null; renderSidebar(); applyFilter(); }
+/** Remove a person. The photographs stay; only the claim about who is in them goes. */
+async function forgetPerson(name) {
+  const ok = await confirmDialog(`Forget ${name}?`,
+    "The photographs are untouched — only the name and the faces learned for it are removed.",
+    "Forget");
+  if (!ok) return;
+  const msg = await invoke("forget_person", { path: S.source, person: name });
+  toast(msg, "ok");
+  if (S.person === name) S.person = null;
+  await refreshPeople(); await loadPhotos();
+}
+
+async function forgetEmptyPeople(names) {
+  const ok = await confirmDialog(
+    `Forget ${names.length} unused name${names.length === 1 ? "" : "s"}?`,
+    `${names.join(", ")} — none of them match any photograph. Nothing else changes.`,
+    "Forget");
+  if (!ok) return;
+  for (const n of names) await invoke("forget_person", { path: S.source, person: n });
+  toast(`Forgot ${names.length}`, "ok");
+  await refreshPeople(); await loadPhotos();
+}
+
 function selectPerson(p) {
   S.person = (S.person === p ? null : p);
   S.folder = null; S.cluster = null; S.clusterHashes = null;
@@ -1175,23 +1340,36 @@ async function selectCluster(id) {
   namePrompt(id);
 }
 
+/** Assign a face cluster to a name, new or existing. Existing merges into that person. */
+async function nameAs(id, name) {
+  const known = S.people.some(p => p.name === name);
+  await busy(known ? `Adding to ${name}\u2026` : `Learning ${name}\u2026`,
+    () => invoke("name_cluster", { path: S.source, distance: 0.55, cluster: id, name }));
+  toast(known ? `Added to ${name}` : `Named ${name}`, "ok");
+  S.cluster = null; S.clusterHashes = null;
+  document.querySelector(".namebar")?.remove();
+  await refreshPeople(); await loadPhotos();
+}
+
 function namePrompt(id) {
   const u = S.people.find(p => p.cluster === id);
   const bar = el("div", { class: "namebar" },
     u?.cover ? el("img", { class: "avatar lg", src: photoUrl(u.cover), alt: "" }) : null,
     el("span", { class: "grow" }, "Who is this?"),
+    // Existing people first: retyping a name risks a second spelling of someone who
+    // is already known, and merging into them is usually what is meant.
+    el("div", { class: "movepicks" }, S.people.filter(p => p.name).slice(0, 8).map(p =>
+      el("button", { class: "sugg-pill", title: `Add to ${p.name}`, onclick: () => nameAs(id, p.name) },
+        p.cover ? el("img", { class: "fface", src: photoUrl(p.cover), alt: "" }) : null,
+        p.name))),
     el("input", {
-      class: "nameinput", type: "text", placeholder: u?.suggestion || "Add a name",
+      class: "nameinput", type: "text", placeholder: u?.suggestion || "Or a new name",
       "aria-label": "Person name",
       onkeydown: async e => {
+        if (e.key === "Escape") { bar.remove(); return; }
         if (e.key !== "Enter") return;
         const v = e.target.value.trim() || u?.suggestion;
-        if (!v) return;
-        await busy(`Learning ${v}…`,
-          () => invoke("name_cluster", { path: S.source, distance: 0.55, cluster: id, name: v }));
-        toast(`Named ${v}`, "ok");
-        S.cluster = null; S.clusterHashes = null;
-        await refreshPeople(); await loadPhotos();
+        if (v) await nameAs(id, v);
       }
     }),
     el("button", { class: "btn ghost sm", onclick: () => { S.cluster = null; S.clusterHashes = null; renderSidebar(); applyFilter(); } }, "Skip"));
@@ -1676,6 +1854,7 @@ function toggleTerm(term, group = []) {
   $("#search").value = next.join(" ");
   applyFilter();
   renderFilters();
+  syncClear();
 }
 
 /* ---------------- search suggestions ----------------
@@ -1730,6 +1909,7 @@ function pickSuggestion(term) {
   $("#suggest").hidden = true;
   applyFilter();
   renderFilters();
+  syncClear();
 }
 
 function renderFilters() {
@@ -2001,7 +2181,23 @@ $("#sel-untag").onclick = untagSelected;
 addEventListener("click", e => { if (!e.target.closest("#ctx")) hideCtx(); });
 $("#lb-prev").onclick = () => step(-1);
 $("#lb-next").onclick = () => step(1);
-$("#search").oninput = () => { applyFilter(); renderSuggest(); };
+$("#search").oninput = () => { applyFilter(); renderSuggest(); syncClear(); };
+
+/* The native clear affordance on <input type=search> does not survive the restyle, and
+   a query with no visible way out is a dead end for anyone who did not think to select
+   all and delete. */
+function syncClear() {
+  const b = $("#search-clear");
+  if (b) b.hidden = !$("#search").value;
+}
+$("#search-clear").onclick = () => {
+  const i = $("#search");
+  i.value = "";
+  applyFilter();
+  renderFilters();
+  syncClear();
+  i.focus();
+};
 $("#search").onfocus = renderSuggest;
 $("#search").onblur = () => setTimeout(() => { $("#suggest").hidden = true; }, 120);
 document.addEventListener("keydown", e => {
@@ -2030,6 +2226,16 @@ addEventListener("keydown", e => {
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "");
   if (typing) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); S.view.forEach(p => S.sel.add(p.hash)); paintSel(); }
+  // Arrow keys walk the grid; holding shift extends the selection as it goes.
+  const arrows = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 2, ArrowUp: -2 };
+  if (e.key in arrows && $("#lightbox").hidden) {
+    e.preventDefault();
+    moveSel(arrows[e.key], e.shiftKey);
+  }
+  if (e.key === " " && S.lastIndex >= 0 && $("#lightbox").hidden) {
+    e.preventDefault();
+    toggleSel(S.view[S.lastIndex]);
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); doUndo(); }
   if ((e.key === "Backspace" || e.key === "Delete") && S.sel.size) {
     e.preventDefault();
@@ -2785,6 +2991,7 @@ function showInLibrary(q) {
   $("#search").value = q;
   applyFilter();
   renderFilters();
+  syncClear();
 }
 
 $("#btn-ask").onclick = () => toggleAsk();
