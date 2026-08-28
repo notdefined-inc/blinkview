@@ -11,10 +11,10 @@
 
 use openfoto_core::{
     dedupe,
-    userdata::{PhotoMeta, UserData},
+    userdata::{PhotoMeta, UserDataSet},
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
-    rename, scan, scenery, semantic, thumbs, Library,
+    plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -99,7 +99,32 @@ pub struct FolderInfo {
     path: String,
     name: String,
     depth: usize,
+    /// Photographs in this folder *and every folder beneath it*. A parent showing only
+    /// its own loose files is useless once nesting is the organisational model.
     count: usize,
+    /// Photographs sitting directly in this folder, so the tree can tell a container
+    /// apart from a folder that also holds photographs of its own.
+    own: usize,
+    /// Whether any folder nests inside this one, so the tree knows to draw a twisty
+    /// without searching for children.
+    has_children: bool,
+}
+
+/// Every ancestor of a folder path, nearest first, ending with the library root ("").
+///
+/// `Trip/Greece Day3` yields `Trip` then ``. Used for rolling counts up the tree and
+/// for resolving the metadata cascade (ADR-0010).
+pub fn ancestors(path: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = path;
+    while let Some((parent, _)) = cur.rsplit_once('/') {
+        out.push(parent.to_string());
+        cur = parent;
+    }
+    if !path.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 #[derive(Serialize)]
@@ -153,15 +178,37 @@ fn with<T>(state: &AppState, root: &str, f: impl FnOnce(&mut Library) -> anyhow:
     f(lib).map_err(err)
 }
 
+/// True when `path` sits in `folder` or anywhere beneath it.
+///
+/// Compared segment-wise so `Trip2/x.jpg` is not treated as living in `Trip`.
+pub fn in_folder(path: &str, folder: &str) -> bool {
+    if folder.is_empty() {
+        return true;
+    }
+    path.strip_prefix(folder)
+        .and_then(|r| r.strip_prefix('/'))
+        .is_some()
+}
+
 fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
     let rows = lib.index.all()?;
     let (mut photos, mut videos) = (0, 0);
-    let mut folders: BTreeMap<String, usize> = BTreeMap::new();
+    // Two tallies per folder: what sits directly in it, and what sits anywhere beneath.
+    // Ancestors are walked so a folder holding only subfolders still gets a row.
+    let mut own: BTreeMap<String, usize> = BTreeMap::new();
+    let mut total: BTreeMap<String, usize> = BTreeMap::new();
+    let mut has_children: BTreeMap<String, bool> = BTreeMap::new();
     for r in &rows {
         if r.kind == "photo" { photos += 1 } else { videos += 1 }
         let d = r.path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-        *folders.entry(d).or_default() += 1;
+        *own.entry(d.clone()).or_default() += 1;
+        *total.entry(d.clone()).or_default() += 1;
+        for a in ancestors(&d) {
+            *total.entry(a.clone()).or_default() += 1;
+            has_children.insert(a, true);
+        }
     }
+    let folders = total;
     let analysed = rows.iter().filter(|r| lib.faces_done(&r.hash).unwrap_or(false)).count();
     let ready = rows
         .iter()
@@ -214,8 +261,10 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
                 } else {
                     path.rsplit('/').next().unwrap_or(&path).to_string()
                 },
-                path,
+                own: own.get(&path).copied().unwrap_or(0),
+                has_children: has_children.get(&path).copied().unwrap_or(false),
                 count,
+                path,
             })
             .collect(),
         people,
@@ -309,7 +358,7 @@ async fn photos(
 ) -> R<Vec<PhotoInfo>> {
     with(&state, &path, |lib| {
         let people_file = People::load(lib.root())?;
-        let user = UserData::load(lib.root())?;
+        let user = UserDataSet::load(lib.root())?;
         let opt = assign::Options::default();
         let mut who: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut nfaces: BTreeMap<String, usize> = BTreeMap::new();
@@ -332,9 +381,9 @@ async fn photos(
             .all()?
             .into_iter()
             .filter(|r| {
-                folder.as_ref().is_none_or(|f| {
-                    r.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("") == f.as_str()
-                })
+                // Prefix, not exact parent: selecting `Trip` must show `Trip/Greece Day3`
+                // too. An empty folder is the library root and matches everything.
+                folder.as_ref().is_none_or(|f| in_folder(&r.path, f))
             })
             .filter(|r| {
                 person.as_ref().is_none_or(|p| {
@@ -343,7 +392,7 @@ async fn photos(
             })
             .map(|r| {
                 let sig = lib.index.get_signature(&r.hash).ok().flatten();
-                let meta = user.get(&r.hash);
+                let meta = user.get(&r.hash, folder_of(&r.path));
                 PhotoInfo {
                     kind: r.kind.clone(),
                     rating: meta.rating,
@@ -705,43 +754,57 @@ async fn models_fetch(app: tauri::AppHandle) -> R<String> {
 
 // ---------------------------------------------------------------- ratings and labels
 
+/// Apply an edit to each photograph, writing into the folder that holds it.
+///
+/// The folder comes from the index rather than the caller, so the frontend never has to
+/// know where a photograph lives for its rating to land in the right file (ADR-0010).
+fn edit_each(
+    lib: &mut Library,
+    hashes: &[String],
+    mut f: impl FnMut(&mut openfoto_core::userdata::UserData, &str),
+) -> anyhow::Result<()> {
+    let folders: BTreeMap<String, String> = lib
+        .index
+        .all()?
+        .into_iter()
+        .map(|r| (r.hash, folder_of(&r.path).to_string()))
+        .collect();
+    let mut set = UserDataSet::load(lib.root())?;
+    for h in hashes {
+        let folder = folders.get(h).cloned().unwrap_or_default();
+        set.edit(h, &folder, |u| f(u, h));
+    }
+    set.save(lib.root())
+}
+
 #[tauri::command]
 async fn set_rating(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, rating: u8) -> R<()> {
     with(&state, &path, |lib| {
-        let mut u = UserData::load(lib.root())?;
-        for h in &hashes {
-            u.set_rating(h, rating);
-        }
-        u.save(lib.root())
+        edit_each(lib, &hashes, |u, h| u.set_rating(h, rating))
     })
 }
 
 #[tauri::command]
 async fn set_label(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, label: Option<String>) -> R<()> {
     with(&state, &path, |lib| {
-        let mut u = UserData::load(lib.root())?;
-        for h in &hashes {
-            u.set_label(h, label.clone());
-        }
-        u.save(lib.root())
+        edit_each(lib, &hashes, |u, h| u.set_label(h, label.clone()))
     })
 }
 
 #[tauri::command]
 async fn set_album(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, album: String, member: bool) -> R<()> {
     with(&state, &path, |lib| {
-        let mut u = UserData::load(lib.root())?;
-        for h in &hashes {
-            u.set_album(h, album.trim(), member);
-        }
-        u.save(lib.root())
+        // Albums are on the way out (ADR-0009); this keeps existing ones editable
+        // until the migration to folders ships.
+        let album = album.trim().to_string();
+        edit_each(lib, &hashes, |u, h| u.set_album(h, &album, member))
     })
 }
 
 #[tauri::command]
 async fn list_albums(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(String, usize)>> {
     with(&state, &path, |lib| {
-        Ok(UserData::load(lib.root())?.albums().into_iter().collect())
+        Ok(UserDataSet::load(lib.root())?.albums().into_iter().collect())
     })
 }
 
@@ -798,7 +861,7 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             kind: row.kind.clone(),
             faces,
             people,
-            meta: UserData::load(lib.root())?.get(&hash),
+            meta: UserDataSet::load(lib.root())?.get(&hash, folder_of(&row.path)),
             hash,
         })
     })
@@ -1288,4 +1351,39 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_contains_everything_beneath_it() {
+        assert!(in_folder("Trip/a.jpg", "Trip"));
+        assert!(in_folder("Trip/Greece Day3/a.jpg", "Trip"));
+        assert!(in_folder("Trip/Greece Day3/a.jpg", "Trip/Greece Day3"));
+        // The library root holds everything.
+        assert!(in_folder("a.jpg", ""));
+        assert!(in_folder("Trip/a.jpg", ""));
+    }
+
+    #[test]
+    fn a_folder_does_not_contain_its_name_prefixed_siblings() {
+        // The bug this guards: a plain starts_with would put Trip2 inside Trip.
+        assert!(!in_folder("Trip2/a.jpg", "Trip"));
+        assert!(!in_folder("Tripoli/a.jpg", "Trip"));
+        // A photograph in the parent is not in the child.
+        assert!(!in_folder("Trip/a.jpg", "Trip/Greece"));
+        // The folder itself is not a photograph in it.
+        assert!(!in_folder("Trip", "Trip"));
+    }
+
+    #[test]
+    fn ancestors_walk_to_the_root() {
+        assert_eq!(ancestors("Trip/Greece Day3"), vec!["Trip".to_string(), String::new()]);
+        assert_eq!(ancestors("Trip"), vec![String::new()]);
+        // The root has no ancestors, and must not report itself as one or counts
+        // would be doubled at the top of the tree.
+        assert!(ancestors("").is_empty());
+    }
 }

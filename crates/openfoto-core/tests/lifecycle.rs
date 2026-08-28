@@ -279,3 +279,63 @@ fn user_data_is_rescued_from_the_old_location() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// ADR-0010: a rating lives beside its photograph, so moving the photograph has to
+/// carry the rating with it — and undoing the move has to carry it back.
+///
+/// Without this the rating is not corrupted, it simply stops being found, which looks
+/// exactly like losing it.
+#[test]
+fn a_move_carries_metadata_and_undo_brings_it_back() {
+    use openfoto_core::plan::{Op, Plan};
+    use openfoto_core::userdata::UserDataSet;
+
+    let dir = fixture("meta-move", &["Day1/a.jpg", "Day3/keep.jpg"]);
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+
+    let hash = lib
+        .index
+        .all()
+        .unwrap()
+        .into_iter()
+        .find(|r| r.path == "Day1/a.jpg")
+        .expect("scanned")
+        .hash;
+
+    let mut set = UserDataSet::load(&dir).unwrap();
+    set.edit(&hash, "Day1", |u| {
+        u.set_rating(&hash, 5);
+        u.set_label(&hash, Some("red".into()));
+    });
+    set.save(&dir).unwrap();
+    assert!(dir.join("Day1/openfoto.json").exists());
+
+    let mut p = Plan::new("move");
+    p.ops.push(Op::Move {
+        hash: hash.clone(),
+        from: "Day1/a.jpg".into(),
+        to: "Day3/a.jpg".into(),
+    });
+    let journal = p.apply(&mut lib).unwrap();
+
+    let after = UserDataSet::load(&dir).unwrap();
+    let m = after.get(&hash, "Day3");
+    assert_eq!(m.rating, 5, "the rating did not follow the photograph");
+    assert_eq!(m.label.as_deref(), Some("red"), "the label did not follow");
+    assert!(
+        !dir.join("Day1/openfoto.json").exists(),
+        "the old folder kept a stale entry"
+    );
+
+    journal.undo(&mut lib).unwrap();
+    let back = UserDataSet::load(&dir).unwrap();
+    assert_eq!(back.get(&hash, "Day1").rating, 5, "undo did not bring the rating back");
+    assert_eq!(
+        back.get(&hash, "Day3").rating,
+        0,
+        "undo left the rating in the folder the photograph no longer occupies"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

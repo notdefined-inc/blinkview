@@ -54,11 +54,17 @@ impl Journal {
                 bail!("cannot undo: {} is no longer where we left it", op.to());
             }
         }
+        // Metadata follows the file back, or undoing a move would strand a rating in
+        // the folder the photograph no longer lives in. Computed before anything moves.
+        let mut meta = crate::plan::relocations(&self.ops, lib, true)?;
         let mut n = 0;
         for op in self.ops.iter().rev() {
             fsops::move_file(&lib.abs(op.to()), &lib.abs(op.from()))?;
             lib.index.repath(op.to(), op.from())?;
             n += 1;
+        }
+        if let Some(set) = meta.as_mut() {
+            set.save(lib.root())?;
         }
         let path = lib.journal_dir().join(format!("{}.json", self.id));
         std::fs::remove_file(path).ok();
