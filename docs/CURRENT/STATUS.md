@@ -14,7 +14,7 @@ docs/SPECS/done/2026-08-28-aurora-glass-ui.md): an ambient cyan/violet/amber gra
 canvas under frosted panels, the lens mark as inline SVG, and the **Ask panel** (✨ in
 the titlebar or ⌘K) — natural-language questions parsed like the omnibar, answered with
 intent chips, people faces, a thumbnail strip and one-tap actions (Show in library,
-Select results, Add to album…). It composes the existing commands only; the thread is
+Select results, Save this search…). It composes the existing commands only; the thread is
 per-session and nothing is persisted. Native `prompt()`/`confirm()` are gone — glass
 dialogs instead.
 
@@ -30,8 +30,11 @@ Videos are indexed, get poster frames via ffmpeg when it is installed, and play 
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
 ### Where your data lives
-`openfoto.json` (ratings, labels, albums) and `openfoto-people.json` (names) sit at the
-library root, not in `.openfoto/`. Deleting the cache loses nothing you authored — there
+`openfoto.json` (ratings, labels, saved searches) and `openfoto-people.json` (names) sit
+at the library root, not in `.openfoto/` — and since ADR-0010 an `openfoto.json` may
+also sit in **any folder**, with the nearest one winning. Writes land in the folder that
+holds the photograph, which is what makes copying a folder in Finder carry its ratings
+with it. Deleting the cache loses nothing you authored — there
 is a test that writes a name and a rating, deletes `.openfoto/` outright, and asserts
 both survive. Libraries written by an earlier version are migrated when opened.
 
@@ -79,7 +82,7 @@ pair sitting exactly on the threshold. Real photos give identical results.
 
 ### Search
 The search field parses a query into filters that combine: a date in any combination
-("august", "23 aug 2026", "2026-08-23"), a person, an album, a rating, a colour label,
+("august", "23 aug 2026", "2026-08-23"), a person, a rating, a colour label,
 a type, and free text. Chips under the field show how the query was read, so a search
 that matches nothing is never a black box.
 
@@ -104,15 +107,42 @@ Embedding runs once per photo, is resumable, and costs about 100 ms per photo. T
 text encoder is held open for the life of the window: loading it costs ~270 ms against
 ~15 ms to embed a phrase, so a fresh load per keystroke would dominate the search.
 
-### Albums
-A photo can be in several albums without being copied — albums are the one grouping
-that is not a folder. Right-click a selection to add it to an existing album (a tick
-marks the ones it is already in) or to name a new one; the sidebar lists albums with
-counts and filters on click. Membership lives in `openfoto.json` at the library root,
-so it survives deleting the cache.
+### Folders are the only grouping
+There are no albums (ADR-0009). A folder is where a photograph lives, nested folders are
+what albums were trying to be — `Trip/Greece Day3/` is how people organise photographs
+without any app at all — and cross-cutting views are saved searches.
 
-Album and person names are matched as whole phrases before the query is tokenised, so
-"Greece 2026" is one album rather than a year and a stray word.
+Selecting a folder shows everything beneath it. The sidebar is a tree with recursive
+counts and remembered expansion; the grid can section by subfolder as well as by date,
+so standing in `Trip` gives `Greece Day1`, `Greece Day2` and `Swiss Day1` in one scroll.
+
+A library that still has albums is offered a migration: each album becomes a folder,
+previewed first and undoable afterwards. Album names were free text and folder names are
+not, so reserved characters are replaced and the change is reported. A photograph in two
+albums can only live in one folder, so it goes to the first and the rest are listed
+rather than guessed at.
+
+**Saved searches** replace what albums were used for across folders. Only the query is
+stored, so they stay current as photographs are added. They live in the root
+`openfoto.json`; a folder describes its photographs, not how the library is searched.
+
+Person names are matched as whole phrases before the query is tokenised, so a person
+called "Anna Maria" is one name rather than two stray words.
+
+### The cache looks after itself
+`.openfoto/` is disposable *and* self-correcting (ADR-0011). Libraries scan on open, so
+photographs added or reorganised in Finder appear without anyone pressing anything — the
+size and mtime fast path keeps that cheap. A corrupt index is detected and rebuilt
+silently, because nothing user-authored is in it.
+
+The check is `PRAGMA quick_check` plus a count of each table. `quick_check` alone is not
+enough, and measurably so: scribbling 512 bytes over a page body still returns "ok",
+since it validates b-tree structure rather than page contents.
+
+Embeddings and face detections are keyed by content hash in their own tables and outlive
+the file rows that referenced them, so a photograph that disappears and comes back is
+not re-analysed. Orphans are only reaped on an explicit vacuum — automatic reaping would
+destroy exactly that property.
 
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate

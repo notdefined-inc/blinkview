@@ -62,7 +62,7 @@ the natural-language verb layer (its own spec, unblocked by this one).
 - [x] 6. Roll-up grid with subfolder sections and grouping toggle (app) — 3
 - [x] 7. Saved searches replacing the albums panel (core, app) — 13
 - [x] 8. Album migration command and prompt (core, app) — 12
-- [ ] 9. Doc sync: STATUS.md, DESIGN.md, remove albums from the search grammar
+- [x] 9. Doc sync: STATUS.md, DESIGN.md, remove albums from the search grammar
 
 ## Risks
 
@@ -75,3 +75,34 @@ open files per photograph.
 
 **Album removal is user-visible loss** if someone has albums and no migration. Task 8
 ships before the albums panel is removed.
+
+## Outcome
+
+Shipped. All thirteen acceptance criteria met, verified against a purpose-built nested
+library (`Trip/Greece Day1`, `Greece Day2`, `Swiss Day1`, plus two loose files) and the
+280-photo demo library.
+
+The criterion the design exists for — copy a folder out and it is still self-describing
+— was verified literally: two photographs were rated and one labelled inside
+`Trip/Greece Day1`, the folder was copied out on its own with `cp -R`, opened as a
+library in its own right, and both ratings and the label were still there. No cache came
+along, and none was needed.
+
+Three things surfaced only in the running app:
+
+- The frontend kept its own exact-match folder filter, so the roll-up half worked until
+  both ends used the same segment-wise rule.
+- `:root[data-theme="light"] .fopt` outweighs `.fopt[aria-pressed="true"]` on
+  specificity, so every selected filter chip was invisible in light mode — a pre-existing
+  bug in the Aurora Glass overhaul, found by adding one more control to that row.
+- `4stars+` fell through to semantic search, because the star regex allowed a leading
+  `+` but not a trailing one, while the chip it draws reads `★★★★+`.
+
+One honest asymmetry, surfaced in the migration dialog rather than left to be
+discovered: undo restores the moved photographs but not the cleared album names.
+
+## Not done here
+
+The filesystem watcher (FSEvents) is still out of scope — it needs a new dependency.
+Scanning on open covers the common case; the watcher would cover photographs arriving
+while the window is already open.
