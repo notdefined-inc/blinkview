@@ -1,9 +1,10 @@
 //! Named identities and their reference faces.
 //!
-//! Lives in `.openfoto/people.json`. It is the one part of the vault that is not
-//! recomputable — a machine cannot know a cluster is called "Nikhil". It is small,
-//! plain JSON, and re-derivable in a couple of minutes through `faces review`, which
-//! is the tradeoff ADR-0001 accepts.
+//! Lives at the **library root**, not in `.openfoto/`. Clustering is recomputable;
+//! knowing a cluster is called "Nikhil" is not. Keeping the names inside a cache the
+//! documentation calls disposable would mean `rm -rf .openfoto` throws away work no
+//! machine can reproduce. At the root it survives that, and travels with the folder.
+//! See ADR-0007.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -35,23 +36,36 @@ pub struct People {
 }
 
 impl People {
-    pub fn path(vault: &Path) -> std::path::PathBuf {
-        vault.join("people.json")
+    /// The visible file at the library root.
+    pub fn path(root: &Path) -> std::path::PathBuf {
+        root.join("openfoto-people.json")
     }
 
-    pub fn load(vault: &Path) -> Result<Self> {
-        let p = Self::path(vault);
-        if !p.exists() {
-            return Ok(Self::default());
-        }
-        let data = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
-        serde_json::from_slice(&data).with_context(|| format!("parsing {}", p.display()))
+    /// Where names used to live, inside the disposable cache.
+    fn legacy_path(root: &Path) -> std::path::PathBuf {
+        root.join(crate::library::VAULT_DIR).join("people.json")
     }
 
-    pub fn save(&self, vault: &Path) -> Result<()> {
-        let p = Self::path(vault);
+    pub fn load(root: &Path) -> Result<Self> {
+        let p = Self::path(root);
+        let from = if p.exists() {
+            p
+        } else {
+            let legacy = Self::legacy_path(root);
+            if !legacy.exists() {
+                return Ok(Self::default());
+            }
+            legacy
+        };
+        let data = std::fs::read(&from).with_context(|| format!("reading {}", from.display()))?;
+        serde_json::from_slice(&data).with_context(|| format!("parsing {}", from.display()))
+    }
+
+    pub fn save(&self, root: &Path) -> Result<()> {
+        let p = Self::path(root);
         std::fs::write(&p, serde_json::to_vec_pretty(self)?)
             .with_context(|| format!("writing {}", p.display()))?;
+        let _ = std::fs::remove_file(Self::legacy_path(root));
         Ok(())
     }
 
@@ -134,6 +148,13 @@ mod tests {
         let p: People = serde_json::from_str(json).expect("legacy people.json must parse");
         assert_eq!(p.people[0].name, "Sam");
         assert!(p.people[0].excluded.is_empty());
+    }
+
+    #[test]
+    fn names_are_stored_outside_the_disposable_cache() {
+        let p = People::path(std::path::Path::new("/lib"));
+        assert!(!p.to_string_lossy().contains(".openfoto"),
+            "names cannot be recomputed and must survive deleting the cache");
     }
 
     #[test]

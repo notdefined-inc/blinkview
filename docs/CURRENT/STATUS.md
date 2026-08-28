@@ -20,6 +20,12 @@ explicit and confirms first.
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
+### Where your data lives
+`openfoto.json` (ratings, labels, albums) and `openfoto-people.json` (names) sit at the
+library root, not in `.openfoto/`. Deleting the cache loses nothing you authored — there
+is a test that writes a name and a rating, deletes `.openfoto/` outright, and asserts
+both survive. Libraries written by an earlier version are migrated when opened.
+
 ### Editing
 Rotate, flip, straighten (with auto-trim of the blank corners), crop with handles and
 aspect presets, and brightness/contrast/saturation. Nothing is written until Save, which

@@ -1,51 +1,62 @@
-# ADR-0007: Ratings and labels are user-authored data
+# ADR-0007: User-authored data lives at the library root
 
 Date: 2026-08-28
-Status: Accepted
+Status: Accepted (supersedes the first draft of this ADR, see Correction)
 
 ## Context
 
-Ratings, colour labels and album membership cannot be recomputed. A star exists nowhere
-but in someone's head until they record it. That puts them in direct tension with
-ADR-0001, which promises `.openfoto/` is disposable and rebuildable by rescanning.
+Two things in this project cannot be recomputed from the photographs:
 
-`people.json` already carries the same problem: a machine can cluster faces but cannot
-know a cluster is called "Nikhil".
+- **Names.** Clustering faces is derivable; knowing a cluster is called "Nikhil" is not.
+- **Ratings, labels, albums.** A star exists nowhere but in someone's head until it is
+  recorded.
 
-Options considered:
+Everything else — the index, thumbnails, signatures, face embeddings, transcodes — is
+derived, and ADR-0001 promises `.openfoto/` can be deleted and rebuilt.
 
-- **XMP written into the photo.** Genuinely portable — Finder, Lightroom and Bridge all
-  read `xmp:Rating` and `xmp:Label`. But it means rewriting every photo the user rates,
-  which re-encodes JPEGs and changes their content hash, invalidating the caches keyed to
-  it. Rating a photo should not modify the photograph.
-- **Sidecar files beside each photo.** Portable and non-destructive, but scatters
-  `IMG_1234.jpg.openfoto.json` through folders the user browses in Finder.
-- **A file in the vault.** Not recomputable, so it contradicts the disposability
-  promise — unless the promise is stated more precisely.
+Options:
+
+- **XMP inside the photo.** Portable; Finder, Lightroom and Bridge all read
+  `xmp:Rating`. But rating a photo would rewrite it, re-encoding the JPEG and changing
+  its content hash, which invalidates every cache keyed to it. Rating a photograph
+  should not modify the photograph.
+- **Sidecar files beside each photo.** Non-destructive, but scatters
+  `IMG_1234.jpg.openfoto.json` through folders people browse in Finder.
+- **Inside `.openfoto/`.** Contradicts the disposability promise outright.
+- **At the library root.** Survives deleting the cache, travels with the folder when it
+  is copied, visible in Finder, and modifies no photograph.
 
 ## Decision
 
-`.openfoto/user.json`, keyed by content hash, holding rating, label and albums.
+`openfoto.json` (ratings, labels, albums) and `openfoto-people.json` (names and
+reference faces) sit at the **library root**, beside `Trash/` and `Originals/` — visible
+files the user can see, copy and back up.
 
-The ADR-0001 promise is restated as: **everything derived from the photographs is
-disposable.** Two files are not derived and are the only things worth backing up —
-`people.json` and `user.json`. Both are small, plain, human-readable JSON.
+`.openfoto/` therefore contains only derived data and is genuinely disposable, exactly as
+ADR-0001 says. There are no exceptions to that promise.
 
-Keying by content hash rather than path means a rating survives renaming or moving a
-photo, including when the user does it in Finder — the same property that makes the rest
-of the index survive external edits.
+Both files are keyed by content hash, so a rating survives renaming or moving a photo,
+including in Finder. `Library::open` moves either file out of `.openfoto/` if an older
+version left it there, on open rather than on next save — a library upgraded today and
+cleaned tomorrow must not lose work.
 
-Entries that carry no information are pruned, so a star set and then cleared leaves
-nothing behind.
+Two tests hold the line: one writes a name and a rating, deletes `.openfoto/` entirely,
+and asserts both survive; the other asserts the paths do not contain `.openfoto`.
+
+## Correction
+
+The first version of this ADR put both files *inside* `.openfoto/` and restated
+ADR-0001 as "everything **derived** is disposable, and two files are not". That was
+weakening a guarantee to fit an implementation rather than fixing the implementation.
+The user challenged it, and they were right: a promise that `rm -rf .openfoto` is safe
+must be true without a footnote.
 
 ## Consequences
 
-Good: rating a photo never modifies the photograph. Nothing is scattered through the
-user's folders. The two exception files are small enough to copy anywhere.
+Good: the disposability promise is unqualified again. Deleting the cache costs only
+recomputation. Copying the folder carries names and ratings with it. No photograph is
+modified. Two visible files, no scattering.
 
-Costly: ratings are invisible to other applications, unlike XMP. Deleting `.openfoto/`
-now does lose something, which weakens a promise the project has made loudly — the
-mitigation is that it is two small files, and both are named here and in STATUS.md.
-
-Exporting to XMP on demand would give portability without making every rating a
-re-encode, and is the obvious next step if this becomes a real limitation.
+Costly: two files appear in the user's photo folder. Ratings remain invisible to other
+applications, unlike XMP — exporting to XMP on demand would give portability without
+making every rating a re-encode, and is the obvious next step if that matters.

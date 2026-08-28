@@ -222,3 +222,60 @@ fn destructive_editing_keeps_nothing() {
     assert!(!dir.join(ORIGINALS).exists(), "nothing should be kept");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The promise ADR-0001 makes, tested rather than asserted: deleting the cache must
+/// lose nothing the user authored.
+#[test]
+fn deleting_the_cache_preserves_names_and_ratings() {
+    use openfoto_core::faces::people::People;
+    use openfoto_core::userdata::UserData;
+
+    let dir = fixture("disposable-userdata", &["20260101_100000.jpg"]);
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let hash = lib.index.all().unwrap()[0].hash.clone();
+
+    let mut people = People::default();
+    people.add_references("Nikhil", vec![vec![1.0, 0.0, 0.0]]);
+    people.save(lib.root()).unwrap();
+
+    let mut user = UserData::default();
+    user.set_rating(&hash, 5);
+    user.set_label(&hash, Some("red".into()));
+    user.save(lib.root()).unwrap();
+    drop(lib);
+
+    // The thing the documentation invites the user to do.
+    std::fs::remove_dir_all(dir.join(".openfoto")).unwrap();
+
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    assert_eq!(
+        People::load(lib.root()).unwrap().people[0].name,
+        "Nikhil",
+        "names must survive deleting the cache"
+    );
+    let back = UserData::load(lib.root()).unwrap();
+    assert_eq!(back.get(&hash).rating, 5, "ratings must survive deleting the cache");
+    assert_eq!(back.get(&hash).label.as_deref(), Some("red"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A library written by an older version keeps its data when opened by this one.
+#[test]
+fn user_data_is_rescued_from_the_old_location() {
+    let dir = fixture("rescue", &["20260101_110000.jpg"]);
+    let vault = dir.join(".openfoto");
+    std::fs::create_dir_all(&vault).unwrap();
+    std::fs::write(vault.join("people.json"),
+        br#"{"people":[{"name":"Old","references":[[1.0]]}]}"#).unwrap();
+
+    let lib = Library::open(&dir).unwrap();
+    assert!(dir.join("openfoto-people.json").exists(), "moved to the root on open");
+    assert!(!vault.join("people.json").exists(), "no stale copy left behind");
+    assert_eq!(
+        openfoto_core::faces::people::People::load(lib.root()).unwrap().people[0].name,
+        "Old"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

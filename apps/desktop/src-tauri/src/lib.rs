@@ -163,7 +163,7 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         .filter(|r| r.kind == "photo" && thumbs::thumb_path(lib, &r.hash).exists())
         .count();
 
-    let people_file = People::load(&lib.vault())?;
+    let people_file = People::load(lib.root())?;
     let opt = assign::Options::default();
     let mut claimed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for f in lib.all_faces()? {
@@ -303,8 +303,8 @@ async fn photos(
     person: Option<String>,
 ) -> R<Vec<PhotoInfo>> {
     with(&state, &path, |lib| {
-        let people_file = People::load(&lib.vault())?;
-        let user = UserData::load(&lib.vault())?;
+        let people_file = People::load(lib.root())?;
+        let user = UserData::load(lib.root())?;
         let opt = assign::Options::default();
         let mut who: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut nfaces: BTreeMap<String, usize> = BTreeMap::new();
@@ -410,7 +410,7 @@ async fn clusters(
 ) -> R<Vec<ClusterView>> {
     let sink = emitter(&app, "clusters");
     with(&state, &path, |lib| {
-        let people = People::load(&lib.vault())?;
+        let people = People::load(lib.root())?;
         let p = review::build_with_progress(lib, &people, &assign::Options::default(), distance, &sink)?;
         Ok(p.clusters
             .into_iter()
@@ -435,7 +435,7 @@ async fn name_clusters(
     assignments: BTreeMap<usize, String>,
 ) -> R<usize> {
     with(&state, &path, |lib| {
-        let mut people = People::load(&lib.vault())?;
+        let mut people = People::load(lib.root())?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         let mut learned = 0;
         for (id, name) in &assignments {
@@ -445,7 +445,7 @@ async fn name_clusters(
                 people.add_references(name, refs);
             }
         }
-        people.save(&lib.vault())?;
+        people.save(lib.root())?;
         Ok(learned)
     })
 }
@@ -476,7 +476,7 @@ async fn people_overview(
     distance: f32,
 ) -> R<Vec<PersonEntry>> {
     with(&state, &path, |lib| {
-        let people = People::load(&lib.vault())?;
+        let people = People::load(lib.root())?;
         let opt = assign::Options::default();
         let root = lib.root().to_path_buf();
 
@@ -554,13 +554,13 @@ async fn name_cluster(
     name: String,
 ) -> R<usize> {
     with(&state, &path, |lib| {
-        let mut people = People::load(&lib.vault())?;
+        let mut people = People::load(lib.root())?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
         let refs: Vec<Vec<f32>> = g.iter().filter_map(|f| f.embedding.clone()).collect();
         let n = refs.len();
         people.add_references(name.trim(), refs);
-        people.save(&lib.vault())?;
+        people.save(lib.root())?;
         Ok(n)
     })
 }
@@ -574,7 +574,7 @@ async fn cluster_photos(
     cluster: usize,
 ) -> R<Vec<String>> {
     with(&state, &path, |lib| {
-        let people = People::load(&lib.vault())?;
+        let people = People::load(lib.root())?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         Ok(groups
             .get(cluster)
@@ -625,40 +625,40 @@ async fn models_fetch(app: tauri::AppHandle) -> R<String> {
 #[tauri::command]
 async fn set_rating(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, rating: u8) -> R<()> {
     with(&state, &path, |lib| {
-        let mut u = UserData::load(&lib.vault())?;
+        let mut u = UserData::load(lib.root())?;
         for h in &hashes {
             u.set_rating(h, rating);
         }
-        u.save(&lib.vault())
+        u.save(lib.root())
     })
 }
 
 #[tauri::command]
 async fn set_label(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, label: Option<String>) -> R<()> {
     with(&state, &path, |lib| {
-        let mut u = UserData::load(&lib.vault())?;
+        let mut u = UserData::load(lib.root())?;
         for h in &hashes {
             u.set_label(h, label.clone());
         }
-        u.save(&lib.vault())
+        u.save(lib.root())
     })
 }
 
 #[tauri::command]
 async fn set_album(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, album: String, member: bool) -> R<()> {
     with(&state, &path, |lib| {
-        let mut u = UserData::load(&lib.vault())?;
+        let mut u = UserData::load(lib.root())?;
         for h in &hashes {
             u.set_album(h, album.trim(), member);
         }
-        u.save(&lib.vault())
+        u.save(lib.root())
     })
 }
 
 #[tauri::command]
 async fn list_albums(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(String, usize)>> {
     with(&state, &path, |lib| {
-        Ok(UserData::load(&lib.vault())?.albums().into_iter().collect())
+        Ok(UserData::load(lib.root())?.albums().into_iter().collect())
     })
 }
 
@@ -688,7 +688,7 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             .find(|r| r.hash == hash)
             .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
         let sig = lib.index.get_signature(&hash)?;
-        let people_file = People::load(&lib.vault())?;
+        let people_file = People::load(lib.root())?;
         let opt = assign::Options::default();
         let mut people = Vec::new();
         let mut faces = 0;
@@ -715,7 +715,7 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             kind: row.kind.clone(),
             faces,
             people,
-            meta: UserData::load(&lib.vault())?.get(&hash),
+            meta: UserData::load(lib.root())?.get(&hash),
             hash,
         })
     })
@@ -831,9 +831,9 @@ async fn untag_person(
     hashes: Vec<String>,
 ) -> R<String> {
     with(&state, &path, |lib| {
-        let mut people = People::load(&lib.vault())?;
+        let mut people = People::load(lib.root())?;
         people.exclude(&person, &hashes);
-        people.save(&lib.vault())?;
+        people.save(lib.root())?;
 
         // Anything sitting in that person's folder goes back to the library root.
         let want: BTreeSet<String> = hashes.iter().cloned().collect();
@@ -961,7 +961,7 @@ fn build_plan(
         }
         "rename" => rename::plan(lib, rename::DEFAULT_FORMAT)?,
         "file" => {
-            let people = People::load(&lib.vault())?;
+            let people = People::load(lib.root())?;
             if mkdirs {
                 for n in people.people.iter().map(|p| &p.name) {
                     std::fs::create_dir_all(lib.abs(n))?;

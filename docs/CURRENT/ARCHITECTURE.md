@@ -27,6 +27,19 @@ own disposable `.openfoto/`. The list lives in the app config directory and is t
 app-level state; losing it costs nothing but re-adding folders. There is deliberately no
 global database — that is the whole premise (ADR-0001).
 
+## What lives where
+
+    <library>/
+      openfoto.json          ratings, labels, albums      user-authored
+      openfoto-people.json   names + reference faces      user-authored
+      Trash/  Originals/     deleted and pre-edit photos  visible, journalled
+      .openfoto/             index, thumbs, faces, …      100% derived, disposable
+
+The split is the point. Only the two JSON files and the two folders hold anything a
+machine cannot reproduce, and all four are visible in Finder and travel with the folder
+when it is copied. `.openfoto/` can be deleted at any time and costs only recomputation —
+without qualification. See ADR-0007.
+
 ## The vault
 
     <library>/              any folder; photos live in ordinary subfolders

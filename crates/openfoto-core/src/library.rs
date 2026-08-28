@@ -30,7 +30,27 @@ impl Library {
                 .with_context(|| format!("creating {}", vault.join(sub).display()))?;
         }
         let index = Index::open(&vault.join("index.sqlite"))?;
-        Ok(Self { root, index })
+        let lib = Self { root, index };
+        lib.rescue_user_data();
+        Ok(lib)
+    }
+
+    /// Move user-authored files out of the cache if an older version left them there.
+    ///
+    /// Done on open rather than on next save: a library upgraded today and then cleaned
+    /// with `rm -rf .openfoto` tomorrow would otherwise lose names and ratings that no
+    /// machine can reproduce, without the user ever having done anything wrong.
+    fn rescue_user_data(&self) {
+        for (legacy, current) in [
+            ("people.json", "openfoto-people.json"),
+            ("user.json", "openfoto.json"),
+        ] {
+            let from = self.root.join(VAULT_DIR).join(legacy);
+            let to = self.root.join(current);
+            if from.exists() && !to.exists() && std::fs::rename(&from, &to).is_ok() {
+                eprintln!("[openfoto] moved {legacy} out of the cache to {current}");
+            }
+        }
     }
 
     pub fn root(&self) -> &Path {

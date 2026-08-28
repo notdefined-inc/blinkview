@@ -200,7 +200,7 @@ fn main() -> Result<()> {
             }
             FacesCmd::People => {
                 let lib = open(&cli)?;
-                let people = People::load(&lib.vault())?;
+                let people = People::load(lib.root())?;
                 if people.is_empty() {
                     println!("no people yet — run `openfoto faces review`");
                 }
@@ -210,7 +210,7 @@ fn main() -> Result<()> {
             }
             FacesCmd::File { apply } => {
                 let mut lib = open(&cli)?;
-                let people = People::load(&lib.vault())?;
+                let people = People::load(lib.root())?;
                 if people.is_empty() {
                     println!("no people known yet — run `openfoto faces review` first.");
                     return Ok(());
@@ -239,7 +239,7 @@ fn main() -> Result<()> {
             }
             FacesCmd::Review { distance, dump } => {
                 let lib = open(&cli)?;
-                let mut people = People::load(&lib.vault())?;
+                let mut people = People::load(lib.root())?;
                 let opt = assign::Options::default();
                 println!("building review…");
                 let payload = review::build(&lib, &people, &opt, *distance)?;
@@ -272,7 +272,7 @@ fn main() -> Result<()> {
                         people.add_references(name, refs);
                     }
                 }
-                people.save(&lib.vault())?;
+                people.save(lib.root())?;
                 println!(
                     "\nlearned {learned} reference faces across {} people.",
                     result.assignments.len()
