@@ -132,7 +132,12 @@ called "Anna Maria" is one name rather than two stray words.
 ### The cache looks after itself
 `.openfoto/` is disposable *and* self-correcting (ADR-0011). Libraries scan on open, so
 photographs added or reorganised in Finder appear without anyone pressing anything — the
-size and mtime fast path keeps that cheap. A corrupt index is detected and rebuilt
+size and mtime fast path keeps that cheap.
+
+Open libraries are also **watched** (FSEvents via `notify`), so photographs arriving
+while the window is open show up on their own. Events are debounced: pasting 40 files
+produces one rescan, not forty. Anything inside `.openfoto/` is ignored, since reacting
+to our own thumbnail and index writes would rescan in a loop. A corrupt index is detected and rebuilt
 silently, because nothing user-authored is in it.
 
 The check is `PRAGMA quick_check` plus a count of each table. `quick_check` alone is not

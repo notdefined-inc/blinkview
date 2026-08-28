@@ -1994,6 +1994,17 @@ addEventListener("keydown", e => {
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderGrid, 120); });
 $("#main").addEventListener("scroll", () => paintViewport(), { passive: true });
 
+/* A library changed underneath us — someone dropped photographs into a folder in
+   Finder. Reload only the library actually on screen: rescanning one nobody is looking
+   at should not move the grid they are looking at. */
+listen("library-changed", async ({ payload }) => {
+  const [root, n] = payload;
+  if (root !== S.source) return;
+  await refreshSources();
+  await loadPhotos();
+  toast(`${n} change${n === 1 ? "" : "s"} on disk — updated`, "ok");
+});
+
 (async function init() {
   renderWelcome();
   loadFolderState();

@@ -16,8 +16,10 @@ use openfoto_core::{
     journal::Journal,
     plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
 };
+mod watch;
+
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Mutex;
 
@@ -44,6 +46,9 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 pub struct AppState {
     libs: Mutex<HashMap<String, Library>>,
     sources: Mutex<Vec<String>>,
+    /// One filesystem watcher per open library, so photographs dropped into a folder
+    /// in Finder appear without the window being touched.
+    watchers: watch::Watchers,
     /// Held open for the life of the window. Loading the text tower costs ~270 ms
     /// against ~15 ms to embed a phrase, so a fresh load per keystroke would dominate
     /// the search. Built on first use, not at startup — a library nobody searches
@@ -154,6 +159,34 @@ pub struct PhotoInfo {
     people: Vec<String>,
     width: u32,
     height: u32,
+}
+
+/// Begin watching a library, so changes made in Finder reach the window.
+///
+/// The rescan runs on the watcher's own thread and emits `library-changed`; the
+/// frontend decides whether to reload, since a rescan of a library nobody is looking at
+/// should not disturb the view.
+fn start_watching(app: &tauri::AppHandle, state: &AppState, root: &str) {
+    let (app, root_owned) = (app.clone(), root.to_string());
+    let res = state.watchers.watch(root, move || {
+        let Some(state) = app.try_state::<AppState>() else { return };
+        let changed = with(&state, &root_owned, |lib| {
+            let st = scan::scan(lib, false)?;
+            Ok(st.hashed + st.moved + st.removed)
+        });
+        match changed {
+            Ok(0) => {}
+            Ok(n) => {
+                let _ = app.emit("library-changed", (root_owned.clone(), n));
+            }
+            Err(e) => eprintln!("[openfoto] rescan after a change failed: {e}"),
+        }
+    });
+    if let Err(e) = res {
+        // Not fatal: without a watcher the library is merely as current as its last
+        // open, which is how it behaved before.
+        eprintln!("[openfoto] could not watch {root}: {e}");
+    }
 }
 
 fn open_lib(state: &AppState, root: &str) -> R<()> {
@@ -298,7 +331,10 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
             continue;
         }
         match with(&state, &root, describe) {
-            Ok(info) => out.push(info),
+            Ok(info) => {
+                start_watching(&app, &state, &root);
+                out.push(info);
+            }
             Err(_) => continue,
         }
     }
@@ -344,6 +380,8 @@ fn remove_source(app: tauri::AppHandle, state: tauri::State<'_, AppState>, path:
     let list: Vec<String> = load_sources(&app).into_iter().filter(|p| p != &path).collect();
     save_sources(&app, &list);
     state.libs.lock().map_err(err)?.remove(&path);
+    // Stop watching, or a removed source keeps rescanning a library nothing displays.
+    state.watchers.unwatch(&path);
     Ok(())
 }
 

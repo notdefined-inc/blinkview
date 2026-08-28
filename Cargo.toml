@@ -28,6 +28,9 @@ sha2 = "0.10"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 ort = "2.0.0-rc.10"
 ndarray = "0.17"
+# Filesystem watching, so photographs dropped into a folder in Finder appear without
+# the window being touched. 8.2 is the stable line; 9.x is still a release candidate.
+notify = { version = "8.2", default-features = false, features = ["macos_fsevent"] }
 
 # Debug builds keep debug_assertions on (the MCP UI-verification bridge needs it) but
 # image decoding and ONNX inference are unusable unoptimized. Optimizing dependencies
