@@ -59,12 +59,58 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 }
 /* Shows how the query was read — "23 aug" becomes a visible date rather than
    silently matching nothing. */
-.qchip{
-  position:absolute;right:8px;top:50%;transform:translateY(-50%);
-  font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill);
-  background:color-mix(in srgb,var(--accent) 20%,transparent);color:var(--accent);
-  border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);pointer-events:none;
+/* Query chips: the parsed query made visible, so the search is never a black box. */
+.qchips{display:flex;flex-wrap:wrap;gap:var(--s2);padding:var(--s3) var(--s6) 0}
+.qc{
+  font-size:12px;font-weight:600;padding:4px 10px;border-radius:var(--r-pill);
+  border:1px solid var(--glass-line);color:var(--text-dim);background:rgba(255,255,255,.05);
 }
+.qc-date{color:#9ec1ff;border-color:#9ec1ff44;background:#9ec1ff14}
+.qc-person{color:#4ade80;border-color:#4ade8044;background:#4ade8014}
+.qc-album{color:#c4b5fd;border-color:#c4b5fd44;background:#c4b5fd14}
+.qc-rating{color:#fbbf24;border-color:#fbbf2444;background:#fbbf2414}
+.qc-label{color:#f87171;border-color:#f8717144;background:#f8717114}
+.qc-type{color:#67e8f9;border-color:#67e8f944;background:#67e8f914}
+
+/* Filter panel: every filter as a tap target, for anyone who would rather not type. */
+.filters{
+  margin:var(--s3) var(--s6) 0;padding:var(--s3) var(--s4);
+  background:rgba(255,255,255,.035);border:1px solid var(--glass-line);border-radius:var(--r-lg);
+  display:flex;flex-direction:column;gap:var(--s2);
+}
+.frow{display:flex;align-items:center;gap:var(--s3);min-height:28px}
+.flab{width:56px;flex:0 0 auto;font-size:11px;text-transform:uppercase;
+  letter-spacing:.07em;color:var(--text-faint)}
+.fopts{display:flex;flex-wrap:wrap;gap:var(--s1)}
+.fopt{
+  font-size:12px;padding:4px 10px;border-radius:var(--r-pill);color:var(--text-dim);
+  border:1px solid var(--glass-line);background:rgba(255,255,255,.04);
+}
+.fopt:hover{color:var(--text);background:rgba(255,255,255,.1)}
+.fopt[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
+.fopt .fface{width:18px;height:18px;border-radius:var(--r-pill);object-fit:cover;
+  margin-right:6px;vertical-align:-4px}
+.swatch{width:14px;height:14px;border-radius:var(--r-pill);display:inline-block;vertical-align:-2px}
+
+/* Stars and labels in the lightbox chrome. */
+.stars{display:flex;gap:1px}
+.star{font-size:15px;line-height:1;color:var(--text-faint);padding:2px}
+.star:hover,.star[data-on="1"]{color:#fbbf24}
+.labels{display:flex;gap:3px;align-items:center}
+.labeldot{width:13px;height:13px;border-radius:var(--r-pill);border:1px solid rgba(255,255,255,.25)}
+.labeldot[aria-pressed="true"]{outline:2px solid #fff;outline-offset:1px}
+
+/* Info panel. */
+.infopanel{
+  position:absolute;right:var(--s4);top:76px;width:280px;z-index:5;
+  background:rgba(24,24,30,.92);backdrop-filter:saturate(180%) blur(24px);
+  border:1px solid var(--glass-line);border-radius:var(--r-lg);padding:var(--s4);
+  box-shadow:0 18px 50px rgba(0,0,0,.55);font-size:12px;
+}
+.infopanel h3{margin:0 0 var(--s3);font-size:13px;font-weight:600}
+.inforow{display:flex;justify-content:space-between;gap:var(--s3);padding:3px 0;color:var(--text-dim)}
+.inforow b{font-weight:500;color:var(--text-faint)}
+.inforow span{text-align:right;word-break:break-word}
 .morelink{
   display:block;width:100%;text-align:left;padding:5px var(--s2);margin-top:var(--s1);
   font-size:12px;color:var(--text-faint);border-radius:var(--r);

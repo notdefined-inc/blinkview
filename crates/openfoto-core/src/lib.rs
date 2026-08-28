@@ -25,6 +25,7 @@ pub mod rename;
 pub mod scan;
 pub mod scenery;
 pub mod thumbs;
+pub mod userdata;
 pub mod timesource;
 
 pub use library::Library;

@@ -11,6 +11,7 @@
 
 use openfoto_core::{
     dedupe,
+    userdata::{PhotoMeta, UserData},
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
     rename, scan, scenery, thumbs, Library,
@@ -107,6 +108,12 @@ pub struct PersonInfo {
 #[derive(Serialize, Clone)]
 pub struct PhotoInfo {
     kind: String,
+    rating: u8,
+    label: Option<String>,
+    albums: Vec<String>,
+    /// Uppercase extension, for filtering by type.
+    ext: String,
+    bytes: u64,
     hash: String,
     path: String,
     name: String,
@@ -297,6 +304,7 @@ async fn photos(
 ) -> R<Vec<PhotoInfo>> {
     with(&state, &path, |lib| {
         let people_file = People::load(&lib.vault())?;
+        let user = UserData::load(&lib.vault())?;
         let opt = assign::Options::default();
         let mut who: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut nfaces: BTreeMap<String, usize> = BTreeMap::new();
@@ -330,8 +338,14 @@ async fn photos(
             })
             .map(|r| {
                 let sig = lib.index.get_signature(&r.hash).ok().flatten();
+                let meta = user.get(&r.hash);
                 PhotoInfo {
                     kind: r.kind.clone(),
+                    rating: meta.rating,
+                    label: meta.label.clone(),
+                    albums: meta.albums.clone(),
+                    ext: r.path.rsplit('.').next().unwrap_or("").to_uppercase(),
+                    bytes: r.size.max(0) as u64,
                     name: r.path.rsplit('/').next().unwrap_or(&r.path).to_string(),
                     folder: r.path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
                     thumb: thumbs::thumb_path(lib, &r.hash).display().to_string(),
@@ -603,6 +617,107 @@ async fn models_fetch(app: tauri::AppHandle) -> R<String> {
         "All models already installed".into()
     } else {
         format!("Installed {}", got.join(" and "))
+    })
+}
+
+// ---------------------------------------------------------------- ratings and labels
+
+#[tauri::command]
+async fn set_rating(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, rating: u8) -> R<()> {
+    with(&state, &path, |lib| {
+        let mut u = UserData::load(&lib.vault())?;
+        for h in &hashes {
+            u.set_rating(h, rating);
+        }
+        u.save(&lib.vault())
+    })
+}
+
+#[tauri::command]
+async fn set_label(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, label: Option<String>) -> R<()> {
+    with(&state, &path, |lib| {
+        let mut u = UserData::load(&lib.vault())?;
+        for h in &hashes {
+            u.set_label(h, label.clone());
+        }
+        u.save(&lib.vault())
+    })
+}
+
+#[tauri::command]
+async fn set_album(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, album: String, member: bool) -> R<()> {
+    with(&state, &path, |lib| {
+        let mut u = UserData::load(&lib.vault())?;
+        for h in &hashes {
+            u.set_album(h, album.trim(), member);
+        }
+        u.save(&lib.vault())
+    })
+}
+
+#[tauri::command]
+async fn list_albums(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(String, usize)>> {
+    with(&state, &path, |lib| {
+        Ok(UserData::load(&lib.vault())?.albums().into_iter().collect())
+    })
+}
+
+/// Everything worth showing about one photo, for the info panel.
+#[derive(Serialize)]
+pub struct PhotoDetail {
+    path: String,
+    bytes: u64,
+    width: u32,
+    height: u32,
+    taken_at: Option<i64>,
+    taken_from: Option<String>,
+    kind: String,
+    faces: usize,
+    people: Vec<String>,
+    meta: PhotoMeta,
+    hash: String,
+}
+
+#[tauri::command]
+async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: String) -> R<PhotoDetail> {
+    with(&state, &path, |lib| {
+        let row = lib
+            .index
+            .all()?
+            .into_iter()
+            .find(|r| r.hash == hash)
+            .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
+        let sig = lib.index.get_signature(&hash)?;
+        let people_file = People::load(&lib.vault())?;
+        let opt = assign::Options::default();
+        let mut people = Vec::new();
+        let mut faces = 0;
+        for f in lib.all_faces()? {
+            if f.hash != hash {
+                continue;
+            }
+            faces += 1;
+            if let Some(e) = f.embedding.as_ref() {
+                if let Some(n) = assign::assign(e, &people_file, &opt).person() {
+                    if !people_file.is_excluded(n, &hash) && !people.iter().any(|x| x == n) {
+                        people.push(n.to_string());
+                    }
+                }
+            }
+        }
+        Ok(PhotoDetail {
+            path: row.path.clone(),
+            bytes: row.size.max(0) as u64,
+            width: sig.as_ref().map(|s| s.width).unwrap_or(0),
+            height: sig.as_ref().map(|s| s.height).unwrap_or(0),
+            taken_at: row.taken_at,
+            taken_from: row.taken_src.clone(),
+            kind: row.kind.clone(),
+            faces,
+            people,
+            meta: UserData::load(&lib.vault())?.get(&hash),
+            hash,
+        })
     })
 }
 
@@ -1085,7 +1200,7 @@ pub fn run() {
             delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
             models_status, models_fetch,
             people_overview, name_cluster, cluster_photos, autodetect_faces,
-            edit_photo
+            edit_photo, set_rating, set_label, set_album, list_albums, photo_detail
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

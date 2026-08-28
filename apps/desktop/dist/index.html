@@ -16,8 +16,8 @@
   <div class="tb-right">
     <div class="searchwrap">
       <input id="search" class="search" type="search"
-             placeholder="Search photos, people, or a date" aria-label="Search photos">
-      <span class="qchip" id="qchip" hidden></span>
+             placeholder="Try: sam august 2026" aria-label="Search photos">
+      <button class="icon-btn" id="btn-filter" title="Filters" aria-label="Filters">⚟</button>
     </div>
     <button class="icon-btn" id="btn-tools" title="Organize" aria-label="Organize">◈</button>
   </div>
@@ -45,6 +45,15 @@
   </aside>
 
   <main id="main">
+    <div class="qchips" id="qchips" hidden></div>
+    <div class="filters" id="filters" hidden>
+      <div class="frow"><span class="flab">People</span><span class="fopts" id="f-people"></span></div>
+      <div class="frow"><span class="flab">When</span><span class="fopts" id="f-when"></span></div>
+      <div class="frow"><span class="flab">Rating</span><span class="fopts" id="f-rating"></span></div>
+      <div class="frow"><span class="flab">Label</span><span class="fopts" id="f-label"></span></div>
+      <div class="frow"><span class="flab">Type</span><span class="fopts" id="f-type"></span></div>
+      <div class="frow"><span class="flab">Sort</span><span class="fopts" id="f-sort"></span></div>
+    </div>
     <div id="stage"></div>
   </main>
 </div>
@@ -63,6 +72,9 @@
       <button class="icon-btn" id="lb-adjust" title="Adjust light and colour" aria-label="Adjust">◑</button>
       <button class="btn btn-primary sm" id="lb-save" hidden>Save</button>
       <button class="btn ghost sm" id="lb-revert" hidden>Discard</button>
+      <span class="stars" id="lb-stars" role="group" aria-label="Rating"></span>
+      <span class="labels" id="lb-labels" role="group" aria-label="Colour label"></span>
+      <button class="icon-btn" id="lb-info" title="Info" aria-label="Info">ⓘ</button>
       <button class="icon-btn" id="lb-rename" title="Rename" aria-label="Rename">✎</button>
       <button class="icon-btn danger" id="lb-delete" title="Move to Trash" aria-label="Move to Trash">🗑</button>
     </div>
@@ -111,6 +123,7 @@
     <button class="btn btn-primary sm" id="adj-done">Done</button>
   </div>
   <button class="lb-nav next" id="lb-next" aria-label="Next">›</button>
+  <aside class="infopanel" id="infopanel" hidden></aside>
   <div class="lb-strip" id="lb-strip"></div>
 </div>
 

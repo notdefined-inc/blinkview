@@ -17,6 +17,8 @@ const S = {
   clusterHashes: null,
   people: [],              // named + unnamed, from people_overview
   peopleCollapsed: true,
+  albums: [],
+  sort: "newest",
   photos: [],
   view: [],              // filtered/sorted photos currently on screen
   lbIndex: -1,
@@ -473,6 +475,8 @@ function paintLightbox() {
     });
   }));
   strip.querySelector('[aria-current="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
+  paintStars();
+  if (!$("#infopanel").hidden) { $("#infopanel").hidden = true; toggleInfo(); }
 }
 function closeLightbox() {
   $("#lightbox").hidden = true;
@@ -482,6 +486,7 @@ function closeLightbox() {
   S.edit = null;
   if (S.cropping) endCrop(false);
   $("#adjustbar").hidden = true;
+  $("#infopanel").hidden = true;
   $("#straighten").value = 0;
   $("#straighten-val").textContent = "0\u00B0";
   for (const k of ["brightness", "contrast", "saturation"]) {
@@ -558,6 +563,7 @@ async function refreshPeople() {
   try {
     S.people = await invoke("people_overview", { path: S.source, distance: 0.55 });
   } catch { S.people = []; }
+  try { S.albums = await invoke("list_albums", { path: S.source }); } catch { S.albums = []; }
   await refreshSources();
 }
 async function loadPhotos() {
@@ -572,14 +578,32 @@ async function loadPhotos() {
 
 const MONTHS = ["january","february","march","april","may","june",
                 "july","august","september","october","november","december"];
+const LABEL_NAMES = ["red","orange","yellow","green","blue","purple","grey"];
 
-function parseQuery(q) {
-  const want = { year: null, month: null, day: null };
+function parseQuery(q, people = [], albums = []) {
+  const want = {
+    year: null, month: null, day: null,
+    person: null, album: null, kind: null, ext: null,
+    minRating: null, label: null, fav: false,
+  };
   const text = [];
   const tokens = q.toLowerCase().split(/[\s,]+/).filter(Boolean);
+  const names = people.filter(Boolean).map(n => n.toLowerCase());
+  const albumNames = albums.map(a => a.toLowerCase());
 
   for (const raw of tokens) {
-    // ISO-ish: 2026-08-23, 2026/08, 23.08.2026
+    // Explicit field:value always wins, for people who want precision.
+    const [field, ...rest] = raw.split(":");
+    const val = rest.join(":");
+    if (val) {
+      if (field === "person" || field === "who") { want.person = val; continue; }
+      if (field === "album") { want.album = val; continue; }
+      if (field === "type") { want.kind = val === "video" ? "video" : "photo"; continue; }
+      if (field === "ext") { want.ext = val.toUpperCase(); continue; }
+      if (field === "label" || field === "colour" || field === "color") { want.label = val; continue; }
+      if (field === "rating" || field === "stars") { want.minRating = parseInt(val, 10) || 0; continue; }
+    }
+
     const iso = raw.match(/^(\d{4})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/);
     if (iso) {
       want.year = +iso[1]; want.month = +iso[2];
@@ -591,55 +615,85 @@ function parseQuery(q) {
 
     const m = MONTHS.findIndex(n => n.startsWith(raw) && raw.length >= 3);
     if (m >= 0) { want.month = m + 1; continue; }
-
     if (/^\d{4}$/.test(raw)) { want.year = +raw; continue; }
-    // A bare 1-2 digit number is a day; "23rd" and "3rd" count too.
     const d = raw.match(/^(\d{1,2})(?:st|nd|rd|th)?$/);
     if (d && +d[1] >= 1 && +d[1] <= 31) { want.day = +d[1]; continue; }
 
+    // Bare words that happen to be a person, an album, a colour or a type are
+    // recognised as such, so "sam august 2026" needs no syntax at all.
+    if (names.includes(raw)) { want.person = raw; continue; }
+    if (albumNames.includes(raw)) { want.album = raw; continue; }
+    if (LABEL_NAMES.includes(raw)) { want.label = raw; continue; }
+    if (raw === "video" || raw === "videos") { want.kind = "video"; continue; }
+    if (raw === "photo" || raw === "photos") { want.kind = "photo"; continue; }
+    if (raw === "fav" || raw === "favourite" || raw === "favorite") { want.fav = true; continue; }
+    const stars = raw.match(/^(\d)\+?(?:star|stars)$/);
+    if (stars) { want.minRating = +stars[1]; continue; }
+
     text.push(raw);
   }
-  const hasDate = want.year !== null || want.month !== null || want.day !== null;
-  return { want, text, hasDate };
+  const hasFilter = Object.entries(want).some(([k, v]) =>
+    k === "fav" ? v : v !== null);
+  return { want, text, hasFilter };
 }
 
-/** Human description of a parsed date query, for the chip in the search bar. */
-function describeQuery({ want }) {
-  const parts = [];
-  if (want.day !== null) parts.push(String(want.day));
-  if (want.month !== null) parts.push(MONTHS[want.month - 1].replace(/^./, c => c.toUpperCase()));
-  if (want.year !== null) parts.push(String(want.year));
-  return parts.join(" ");
+/** The chips shown under the search field, so the query is legible at a glance. */
+function queryChips({ want, text }) {
+  const out = [];
+  const date = [];
+  if (want.day !== null) date.push(String(want.day));
+  if (want.month !== null) date.push(MONTHS[want.month - 1].replace(/^./, c => c.toUpperCase()));
+  if (want.year !== null) date.push(String(want.year));
+  if (date.length) out.push({ kind: "date", text: date.join(" ") });
+  if (want.person) out.push({ kind: "person", text: want.person });
+  if (want.album) out.push({ kind: "album", text: want.album });
+  if (want.kind) out.push({ kind: "type", text: want.kind === "video" ? "Videos" : "Photos" });
+  if (want.ext) out.push({ kind: "type", text: want.ext });
+  if (want.label) out.push({ kind: "label", text: want.label });
+  if (want.minRating) out.push({ kind: "rating", text: "★".repeat(want.minRating) + "+" });
+  if (want.fav) out.push({ kind: "rating", text: "★★★★★" });
+  for (const t of text) out.push({ kind: "text", text: t });
+  return out;
+}
+
+/* Show what the query was understood to mean. Someone typing "sam august 2026" should
+   see it become a person and a date, not wonder why nothing matched. */
+function showQueryChips(parsed) {
+  const bar = $("#qchips");
+  if (!parsed || (!parsed.hasFilter && !parsed.text.length)) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.replaceChildren(...queryChips(parsed).map(c =>
+    el("span", { class: `qc qc-${c.kind}` }, c.text)));
 }
 
 function matchesQuery(p, parsed) {
-  const { want, text, hasDate } = parsed;
-  if (hasDate) {
+  const { want, text } = parsed;
+  if (want.year !== null || want.month !== null || want.day !== null) {
     if (!p.taken_at) return false;
     const d = new Date(p.taken_at * 1000);
     if (want.year !== null && d.getFullYear() !== want.year) return false;
     if (want.month !== null && d.getMonth() + 1 !== want.month) return false;
     if (want.day !== null && d.getDate() !== want.day) return false;
   }
+  if (want.person && !p.people.some(n => n.toLowerCase() === want.person)) return false;
+  if (want.album && !(p.albums || []).some(a => a.toLowerCase() === want.album)) return false;
+  if (want.kind && p.kind !== want.kind) return false;
+  if (want.ext && p.ext !== want.ext) return false;
+  if (want.label && (p.label || "") !== want.label) return false;
+  if (want.minRating && (p.rating || 0) < want.minRating) return false;
+  if (want.fav && (p.rating || 0) < 5) return false;
   if (!text.length) return true;
   const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
   return text.every(t => hay.includes(t));
 }
 
-/* Show what the query was understood to mean, so "23 aug" visibly becomes a date
-   rather than silently matching nothing. */
-function showQueryChip(parsed) {
-  const chip = $("#qchip");
-  if (!parsed || !parsed.hasDate) { chip.hidden = true; return; }
-  chip.hidden = false;
-  chip.textContent = describeQuery(parsed);
-}
-
 function applyFilter() {
   document.querySelector(".namebar")?.remove();
   const q = $("#search").value.trim();
-  const parsed = q ? parseQuery(q) : null;
-  showQueryChip(parsed);
+  const parsed = q
+    ? parseQuery(q, S.people.filter(p => p.name).map(p => p.name), S.albums.map(a => a[0]))
+    : null;
+  showQueryChips(parsed);
   S.view = S.photos.filter(p =>
     // Trash is a real folder, but it should not appear in the library view unless
     // the user deliberately opens it.
@@ -648,6 +702,7 @@ function applyFilter() {
     (!S.person || p.people.includes(S.person)) &&
     (!S.clusterHashes || S.clusterHashes.has(p.hash)) &&
     (!parsed || matchesQuery(p, parsed)));
+  sortView();
   const src = S.sources.find(s => s.path === S.source);
   $("#crumb").textContent = [
     src?.name, S.folder,
@@ -656,6 +711,7 @@ function applyFilter() {
   ].filter(Boolean).join("  \u203A  ") + `   \u00B7   ${S.view.length} photos`;
   renderGrid();
   paintSel();
+  renderFilters();
 }
 async function selectSource(path) {
   S.source = path; S.folder = null; S.person = null;
@@ -1171,6 +1227,137 @@ function askKeepOriginal() {
   });
 }
 
+/* ---------------- filter panel ----------------
+   Every filter also exists as a search term, and the panel writes into the search box
+   rather than keeping a parallel state. One source of truth means a filter chosen by
+   tapping and one typed by hand can never disagree. */
+
+function queryHas(term) {
+  return $("#search").value.toLowerCase().split(/\s+/).includes(term.toLowerCase());
+}
+
+function toggleTerm(term, group = []) {
+  const cur = $("#search").value.split(/\s+/).filter(Boolean);
+  const lower = term.toLowerCase();
+  const had = cur.some(t => t.toLowerCase() === lower);
+  // Drop anything from the same group, so picking a month replaces the last one.
+  let next = cur.filter(t => !group.some(g => g.toLowerCase() === t.toLowerCase()));
+  if (!had) next.push(term);
+  $("#search").value = next.join(" ");
+  applyFilter();
+  renderFilters();
+}
+
+function renderFilters() {
+  if ($("#filters").hidden) return;
+  const opt = (label, term, group, extra) =>
+    el("button", {
+      class: "fopt", "aria-pressed": String(queryHas(term)),
+      onclick: () => toggleTerm(term, group)
+    }, extra || null, label);
+
+  const names = S.people.filter(p => p.name);
+  $("#f-people").replaceChildren(...names.slice(0, 10).map(p =>
+    opt(p.name, p.name, names.map(x => x.name),
+      p.cover ? el("img", { class: "fface", src: photoUrl(p.cover), alt: "" }) : null)));
+  if (!names.length) $("#f-people").replaceChildren(el("span", { class: "meta" }, "No one named yet"));
+
+  const years = [...new Set(S.photos.map(p => p.taken_at && new Date(p.taken_at * 1000).getFullYear())
+    .filter(Boolean))].sort((a, b) => b - a);
+  const months = MONTHS.map(m => m.slice(0, 3));
+  $("#f-when").replaceChildren(
+    ...years.slice(0, 6).map(y => opt(String(y), String(y), years.map(String))),
+    ...months.map(m => opt(m.replace(/^./, c => c.toUpperCase()), m, months)));
+
+  const ratings = ["1star", "2star", "3star", "4star", "5star"];
+  $("#f-rating").replaceChildren(...ratings.map((r, i) =>
+    opt("★".repeat(i + 1) + (i < 4 ? "+" : ""), r, ratings)));
+
+  $("#f-label").replaceChildren(...LABEL_NAMES.map(l =>
+    opt(l, l, LABEL_NAMES, el("span", { class: "swatch", style: `background:${labelColour(l)}` }))));
+
+  const types = ["photos", "videos"];
+  $("#f-type").replaceChildren(...types.map(t => opt(t.replace(/^./, c => c.toUpperCase()), t, types)));
+
+  const sorts = [["newest", "Newest"], ["oldest", "Oldest"], ["name", "Name"],
+                 ["rating", "Rating"], ["size", "Size"]];
+  $("#f-sort").replaceChildren(...sorts.map(([k, label]) =>
+    el("button", {
+      class: "fopt", "aria-pressed": String(S.sort === k),
+      onclick: () => { S.sort = k; applyFilter(); renderFilters(); }
+    }, label)));
+}
+
+function labelColour(l) {
+  return { red: "#f87171", orange: "#fb923c", yellow: "#fbbf24", green: "#4ade80",
+           blue: "#60a5fa", purple: "#c4b5fd", grey: "#9ca3af" }[l] || "#888";
+}
+
+function sortView() {
+  const by = {
+    newest: (a, b) => (b.taken_at || 0) - (a.taken_at || 0),
+    oldest: (a, b) => (a.taken_at || 0) - (b.taken_at || 0),
+    name: (a, b) => a.name.localeCompare(b.name),
+    rating: (a, b) => (b.rating || 0) - (a.rating || 0) || (b.taken_at || 0) - (a.taken_at || 0),
+    size: (a, b) => (b.bytes || 0) - (a.bytes || 0),
+  }[S.sort] || null;
+  if (by) S.view.sort(by);
+}
+
+/* ---------------- rating, label, info ---------------- */
+
+function paintStars() {
+  const p = S.lbList[S.lbIndex];
+  const box = $("#lb-stars");
+  if (!p) return;
+  box.replaceChildren(...[1, 2, 3, 4, 5].map(n =>
+    el("button", {
+      class: "star", "data-on": (p.rating || 0) >= n ? "1" : "0",
+      "aria-label": `${n} star${n > 1 ? "s" : ""}`,
+      onclick: async () => {
+        const next = p.rating === n ? 0 : n;
+        await invoke("set_rating", { path: S.source, hashes: [p.hash], rating: next });
+        p.rating = next;
+        paintStars(); renderGrid();
+      }
+    }, "\u2605")));
+  $("#lb-labels").replaceChildren(...LABEL_NAMES.map(l =>
+    el("button", {
+      class: "labeldot", style: `background:${labelColour(l)}`,
+      "aria-pressed": String(p.label === l), "aria-label": l,
+      onclick: async () => {
+        const next = p.label === l ? null : l;
+        await invoke("set_label", { path: S.source, hashes: [p.hash], label: next });
+        p.label = next;
+        paintStars(); renderGrid();
+      }
+    })));
+}
+
+async function toggleInfo() {
+  const panel = $("#infopanel");
+  if (!panel.hidden) { panel.hidden = true; return; }
+  const p = S.lbList[S.lbIndex];
+  if (!p) return;
+  const d = await invoke("photo_detail", { path: S.source, hash: p.hash });
+  const mb = (d.bytes / 1048576).toFixed(1);
+  const row = (k, v) => v ? el("div", { class: "inforow" }, el("b", {}, k), el("span", {}, String(v))) : null;
+  panel.replaceChildren(
+    el("h3", {}, "Info"),
+    row("File", d.path),
+    row("Size", `${mb} MB`),
+    row("Pixels", d.width ? `${d.width} × ${d.height}` : null),
+    row("Taken", d.taken_at ? `${DAY(d.taken_at)} · ${TIME(d.taken_at)}` : "Unknown"),
+    row("Date from", d.taken_from),
+    row("Kind", d.kind),
+    row("Faces", d.faces || null),
+    row("People", d.people.join(", ") || null),
+    row("Rating", d.meta.rating ? "\u2605".repeat(d.meta.rating) : null),
+    row("Label", d.meta.label),
+    row("Albums", (d.meta.albums || []).join(", ") || null));
+  panel.hidden = false;
+}
+
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
 $("#btn-tools").onclick = openSheet;
@@ -1178,6 +1365,12 @@ $("#btn-review").onclick = openReview;
 $("#sheet-close").onclick = () => ($("#sheet").hidden = true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") $("#sheet").hidden = true; };
 $("#lb-close").onclick = closeLightbox;
+$("#lb-info").onclick = toggleInfo;
+$("#btn-filter").onclick = () => {
+  const f = $("#filters");
+  f.hidden = !f.hidden;
+  renderFilters();
+};
 {
   const stage = document.querySelector(".lb-stage");
   stage.addEventListener("wheel", e => {
