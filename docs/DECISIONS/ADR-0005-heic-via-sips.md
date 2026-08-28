@@ -27,8 +27,12 @@ already the durable artefact. Full-size viewing writes a JPEG to
 `.openfoto/derived/<hash>.jpg`, produced on first view rather than by a pre-pass, so
 opening a HEIC library costs nothing until a photo is actually opened.
 
-`sips` applies EXIF orientation during the transcode, so `load_rgb` must **not** apply
-it again for these files — doing so rotates them twice.
+**`sips` does not bake orientation into the pixels — it carries the EXIF tag across.**
+Measured: a 4032x3024 HEIC tagged orientation 6 becomes a 4032x3024 JPEG still tagged 6.
+Browsers honour the tag, so a full-size view looks correct while anything decoding the
+pixels directly gets a sideways image. `load_rgb` therefore reads the tag off the
+converted file and applies it. An earlier version of this ADR asserted the opposite and
+shipped rotated thumbnails.
 
 ## Consequences
 

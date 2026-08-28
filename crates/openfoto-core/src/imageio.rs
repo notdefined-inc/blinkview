@@ -114,9 +114,14 @@ pub fn load_rgb(path: &Path) -> Result<RgbImage> {
         ));
         convert_to_jpeg(path, &tmp)?;
         let img: DynamicImage = image::ImageReader::open(&tmp)?.with_guessed_format()?.decode()?;
+        // `sips` *carries the EXIF orientation tag across* rather than baking the
+        // rotation into the pixels — verified: a 4032x3024 HEIC with tag 6 converts to
+        // a 4032x3024 JPEG still tagged 6. Browsers honour the tag, so the full-size
+        // view looked right while our thumbnails came out rotated. Read it from the
+        // converted file and apply it ourselves.
+        let o = orientation(&tmp);
         let _ = std::fs::remove_file(&tmp);
-        // sips applies orientation during the transcode, so do not apply it twice.
-        return Ok(img.to_rgb8());
+        return Ok(apply_rgb(img.to_rgb8(), o));
     }
     let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
     Ok(apply_rgb(img.to_rgb8(), orientation(path)))

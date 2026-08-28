@@ -43,6 +43,10 @@ pub struct Edit {
     #[serde(default = "default_rotate")]
     pub rotate: Rotate,
     #[serde(default)]
+    pub flip_h: bool,
+    #[serde(default)]
+    pub flip_v: bool,
+    #[serde(default)]
     pub crop: Option<Crop>,
     /// Keep the original in `Originals/`. Default, and what the UI offers first.
     #[serde(default = "default_true")]
@@ -58,7 +62,7 @@ fn default_true() -> bool {
 
 impl Edit {
     pub fn is_noop(&self) -> bool {
-        self.rotate == Rotate::None && self.crop.is_none()
+        self.rotate == Rotate::None && self.crop.is_none() && !self.flip_h && !self.flip_v
     }
 }
 
@@ -77,6 +81,22 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
     let src = lib.abs(rel_path);
     let mut img = imageio::load_rgb(&src).with_context(|| format!("reading {rel_path}"))?;
 
+    // Order matters and is not arbitrary: rotate and flip first, then crop. The user
+    // draws the crop rectangle on the *transformed* preview, so its fractions are in
+    // that space. Cropping first would apply their rectangle to the untransformed
+    // image and cut the wrong region.
+    img = match edit.rotate {
+        Rotate::None => img,
+        Rotate::Cw90 => image::imageops::rotate90(&img),
+        Rotate::Cw180 => image::imageops::rotate180(&img),
+        Rotate::Cw270 => image::imageops::rotate270(&img),
+    };
+    if edit.flip_h {
+        img = image::imageops::flip_horizontal(&img);
+    }
+    if edit.flip_v {
+        img = image::imageops::flip_vertical(&img);
+    }
     if let Some(c) = edit.crop {
         let (w, h) = (img.width() as f32, img.height() as f32);
         let x = (c.x.clamp(0.0, 1.0) * w) as u32;
@@ -85,12 +105,6 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
         let ch = ((c.h.clamp(0.0, 1.0) * h) as u32).min(img.height().saturating_sub(y)).max(1);
         img = image::imageops::crop_imm(&img, x, y, cw, ch).to_image();
     }
-    img = match edit.rotate {
-        Rotate::None => img,
-        Rotate::Cw90 => image::imageops::rotate90(&img),
-        Rotate::Cw180 => image::imageops::rotate180(&img),
-        Rotate::Cw270 => image::imageops::rotate270(&img),
-    };
 
     // Preserve the original before anything is overwritten.
     let mut original = None;
@@ -126,10 +140,41 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
 mod tests {
     use super::*;
 
+    fn edit(rotate: Rotate) -> Edit {
+        Edit { rotate, flip_h: false, flip_v: false, crop: None, keep_original: true }
+    }
+
     #[test]
     fn a_noop_edit_is_rejected() {
-        let e = Edit { rotate: Rotate::None, crop: None, keep_original: true };
-        assert!(e.is_noop());
+        assert!(edit(Rotate::None).is_noop());
+    }
+
+    #[test]
+    fn a_flip_alone_is_an_edit() {
+        let mut e = edit(Rotate::None);
+        e.flip_h = true;
+        assert!(!e.is_noop());
+    }
+
+    /// The crop the user drew is in the space they saw, so transforms come first.
+    /// A 90-degree rotation swaps the axes; cropping first would cut the wrong region.
+    #[test]
+    fn crop_applies_after_rotation() {
+        let dir = std::env::temp_dir().join(format!("of-edit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 40x10 landscape, so orientation is unambiguous after rotating.
+        let img = image::RgbImage::from_fn(40, 10, |x, _| image::Rgb([(x * 6) as u8, 0, 0]));
+        let path = dir.join("20260101_000000.jpg");
+        img.save(&path).unwrap();
+
+        let lib = crate::Library::open(&dir).unwrap();
+        let mut e = edit(Rotate::Cw90);
+        e.keep_original = false;
+        // Left half of the rotated (10x40) image.
+        e.crop = Some(Crop { x: 0.0, y: 0.0, w: 1.0, h: 0.5 });
+        let out = apply(&lib, "20260101_000000.jpg", &e).unwrap();
+        assert_eq!((out.width, out.height), (10, 20), "rotate then crop");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -388,3 +388,45 @@ body.dropping::after{
   border-radius:var(--r-xl);background:rgba(11,11,14,.55);
   backdrop-filter:blur(6px);
 }
+
+/* ---------- crop ----------
+   The overlay tracks the image's rendered rect rather than the stage, so it stays
+   aligned after a rotation changes the displayed aspect. */
+.cropper{position:absolute;inset:0;z-index:3;cursor:crosshair}
+.crop-rect{
+  position:absolute;box-sizing:border-box;
+  border:1px solid rgba(255,255,255,.95);
+  /* Everything outside the rectangle is dimmed by one enormous shadow. */
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.62);
+  cursor:move;
+}
+/* Rule-of-thirds guides, drawn with gradients so there are no extra nodes. */
+.crop-rect::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(to right,transparent 33.33%,rgba(255,255,255,.28) 33.33%,rgba(255,255,255,.28) calc(33.33% + 1px),transparent calc(33.33% + 1px)),
+    linear-gradient(to right,transparent 66.66%,rgba(255,255,255,.28) 66.66%,rgba(255,255,255,.28) calc(66.66% + 1px),transparent calc(66.66% + 1px)),
+    linear-gradient(to bottom,transparent 33.33%,rgba(255,255,255,.28) 33.33%,rgba(255,255,255,.28) calc(33.33% + 1px),transparent calc(33.33% + 1px)),
+    linear-gradient(to bottom,transparent 66.66%,rgba(255,255,255,.28) 66.66%,rgba(255,255,255,.28) calc(66.66% + 1px),transparent calc(66.66% + 1px));
+}
+.ch{position:absolute;width:14px;height:14px;background:#fff;border-radius:3px;
+  box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.ch.nw{left:-7px;top:-7px;cursor:nwse-resize}
+.ch.ne{right:-7px;top:-7px;cursor:nesw-resize}
+.ch.sw{left:-7px;bottom:-7px;cursor:nesw-resize}
+.ch.se{right:-7px;bottom:-7px;cursor:nwse-resize}
+.ch.n{left:50%;top:-7px;margin-left:-7px;cursor:ns-resize}
+.ch.s{left:50%;bottom:-7px;margin-left:-7px;cursor:ns-resize}
+.ch.w{left:-7px;top:50%;margin-top:-7px;cursor:ew-resize}
+.ch.e{right:-7px;top:50%;margin-top:-7px;cursor:ew-resize}
+
+.cropbar{
+  position:fixed;left:50%;bottom:110px;transform:translateX(-50%);z-index:62;
+  display:flex;align-items:center;gap:var(--s2);padding:var(--s2) var(--s3);
+  background:rgba(24,24,30,.9);backdrop-filter:saturate(180%) blur(24px);
+  border:1px solid var(--glass-line);border-radius:var(--r-pill);
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+}
+.croplabel{font-size:12px;color:var(--text-faint);padding:0 var(--s2)}
+.cropbar .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
+.cropdims{font-size:12px;color:var(--text-dim);min-width:92px;text-align:center}

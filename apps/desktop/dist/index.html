@@ -58,6 +58,7 @@
       <span class="lb-folder" id="lb-folder"></span>
       <button class="icon-btn" id="lb-rot-l" title="Rotate left" aria-label="Rotate left">⟲</button>
       <button class="icon-btn" id="lb-rot-r" title="Rotate right" aria-label="Rotate right">⟳</button>
+      <button class="icon-btn" id="lb-flip" title="Flip horizontally" aria-label="Flip horizontally">⇋</button>
       <button class="icon-btn" id="lb-crop" title="Crop" aria-label="Crop">⛶</button>
       <button class="btn btn-primary sm" id="lb-save" hidden>Save</button>
       <button class="btn ghost sm" id="lb-revert" hidden>Discard</button>
@@ -66,7 +67,27 @@
     </div>
   </div>
   <button class="lb-nav prev" id="lb-prev" aria-label="Previous">‹</button>
-  <div class="lb-stage"><img id="lb-img" alt=""></div>
+  <div class="lb-stage">
+    <img id="lb-img" alt="">
+    <div class="cropper" id="cropper" hidden>
+      <div class="crop-rect" id="crop-rect">
+        <span class="ch nw" data-h="nw"></span><span class="ch n" data-h="n"></span><span class="ch ne" data-h="ne"></span>
+        <span class="ch w" data-h="w"></span><span class="ch e" data-h="e"></span>
+        <span class="ch sw" data-h="sw"></span><span class="ch s" data-h="s"></span><span class="ch se" data-h="se"></span>
+      </div>
+    </div>
+  </div>
+  <div class="cropbar" id="cropbar" hidden>
+    <span class="croplabel">Crop</span>
+    <button class="chip" data-ar="free" aria-pressed="true">Free</button>
+    <button class="chip" data-ar="1">1:1</button>
+    <button class="chip" data-ar="0.8">4:5</button>
+    <button class="chip" data-ar="1.3333">4:3</button>
+    <button class="chip" data-ar="1.7778">16:9</button>
+    <span class="cropdims num" id="cropdims"></span>
+    <button class="btn ghost sm" id="crop-cancel">Cancel</button>
+    <button class="btn btn-primary sm" id="crop-done">Done</button>
+  </div>
   <button class="lb-nav next" id="lb-next" aria-label="Next">›</button>
   <div class="lb-strip" id="lb-strip"></div>
 </div>

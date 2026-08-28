@@ -25,6 +25,9 @@ const S = {
   lastIndex: -1,           // anchor for shift-range selection
   zoom: 1, panX: 0, panY: 0,
   edit: null,              // pending, unsaved edit on the open photo
+  cropping: false,
+  crop: null,              // {x,y,w,h} fractions of the displayed image
+  cropAR: null,            // locked aspect ratio, or null for free
   keepOriginal: true,      // safe editing, remembered per session
 };
 
@@ -477,6 +480,7 @@ function closeLightbox() {
   document.querySelector(".lb-stage")?.querySelector("video")?.remove();
   resetZoom();
   S.edit = null;
+  if (S.cropping) endCrop(false);
   applyEditPreview();
 }
 
@@ -933,8 +937,87 @@ listen("tauri://drag-drop", async ({ payload }) => {
    touches a photo until the user commits. */
 
 function editState() {
-  if (!S.edit) S.edit = { rotate: 0, crop: null };
+  if (!S.edit) S.edit = { rotate: 0, flipH: false, crop: null };
   return S.edit;
+}
+
+/* ---------------- crop ----------------
+   The rectangle is kept in fractions of the *displayed* image, which is also the space
+   the backend crops in (it rotates and flips before cropping, so the two agree). */
+
+function imgRect() {
+  return $("#lb-img").getBoundingClientRect();
+}
+
+function startCrop() {
+  if (!S.lbList[S.lbIndex]) return;
+  S.cropping = true;
+  S.crop = S.edit?.crop ? { ...S.edit.crop } : { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
+  resetZoom();
+  $("#cropper").hidden = false;
+  $("#cropbar").hidden = false;
+  drawCrop();
+}
+
+function endCrop(commit) {
+  if (commit) {
+    const c = S.crop;
+    // A crop that covers everything is not a crop.
+    editState().crop = (c && (c.w < 0.995 || c.h < 0.995)) ? { ...c } : null;
+  }
+  S.cropping = false;
+  $("#cropper").hidden = true;
+  $("#cropbar").hidden = true;
+  applyEditPreview();
+}
+
+function drawCrop() {
+  if (!S.cropping) return;
+  const r = imgRect();
+  const stage = document.querySelector(".lb-stage").getBoundingClientRect();
+  const box = $("#crop-rect");
+  box.style.left = (r.left - stage.left + S.crop.x * r.width) + "px";
+  box.style.top = (r.top - stage.top + S.crop.y * r.height) + "px";
+  box.style.width = (S.crop.w * r.width) + "px";
+  box.style.height = (S.crop.h * r.height) + "px";
+
+  // Report the pixel size that will actually be written, not the on-screen size.
+  const p = S.lbList[S.lbIndex];
+  const quarter = (S.edit?.rotate || 0) % 180 !== 0;
+  const srcW = quarter ? p.height : p.width;
+  const srcH = quarter ? p.width : p.height;
+  if (srcW && srcH) {
+    $("#cropdims").textContent =
+      `${Math.round(S.crop.w * srcW)} × ${Math.round(S.crop.h * srcH)}`;
+  }
+}
+
+/** Resize from a handle, honouring a locked aspect ratio and staying inside the image. */
+function resizeCrop(handle, fx, fy) {
+  const c = S.crop;
+  let { x, y, w, h } = c;
+  const MIN = 0.04;
+  if (handle.includes("w")) { const nx = Math.min(fx, x + w - MIN); w += x - nx; x = nx; }
+  if (handle.includes("e")) { w = Math.max(MIN, Math.min(fx - x, 1 - x)); }
+  if (handle.includes("n")) { const ny = Math.min(fy, y + h - MIN); h += y - ny; y = ny; }
+  if (handle.includes("s")) { h = Math.max(MIN, Math.min(fy - y, 1 - y)); }
+
+  if (S.cropAR) {
+    // Keep the ratio in *pixel* space, which is not the same as fraction space.
+    const r = imgRect();
+    const px = w * r.width, py = h * r.height;
+    if (px / py > S.cropAR) w = (py * S.cropAR) / r.width;
+    else h = (px / S.cropAR) / r.height;
+    if (handle.includes("n")) y = c.y + c.h - h;
+    if (handle.includes("w")) x = c.x + c.w - w;
+  }
+  S.crop = {
+    x: Math.max(0, Math.min(x, 1 - MIN)),
+    y: Math.max(0, Math.min(y, 1 - MIN)),
+    w: Math.max(MIN, Math.min(w, 1 - Math.max(0, x))),
+    h: Math.max(MIN, Math.min(h, 1 - Math.max(0, y))),
+  };
+  drawCrop();
 }
 
 function rotateBy(deg) {
@@ -945,11 +1028,12 @@ function rotateBy(deg) {
 
 function applyEditPreview() {
   const img = $("#lb-img");
-  const dirty = S.edit && (S.edit.rotate !== 0 || S.edit.crop);
+  const dirty = S.edit && (S.edit.rotate !== 0 || S.edit.crop || S.edit.flipH);
   $("#lb-save").hidden = !dirty;
   $("#lb-revert").hidden = !dirty;
   if (!img) return;
   const r = S.edit?.rotate || 0;
+  const flip = S.edit?.flipH ? " scaleX(-1)" : "";
   // Rotating a landscape photo into portrait needs the preview scaled to fit.
   const stage = document.querySelector(".lb-stage");
   const quarter = r === 90 || r === 270;
@@ -960,7 +1044,8 @@ function applyEditPreview() {
     if (shown.height > 0) fit = Math.min(availW / shown.height, availH / shown.width, 1);
   }
   img.style.transform =
-    `translate(${S.panX}px, ${S.panY}px) scale(${S.zoom * fit}) rotate(${r}deg)`;
+    `translate(${S.panX}px, ${S.panY}px) scale(${S.zoom * fit}) rotate(${r}deg)${flip}`;
+  if (S.cropping) drawCrop();
 }
 
 function discardEdit() {
@@ -978,7 +1063,7 @@ async function saveEdit() {
   const rotate = { 0: "none", 90: "cw90", 180: "cw180", 270: "cw270" }[S.edit.rotate] || "none";
   const msg = await busy("Saving…", () => invoke("edit_photo", {
     path: S.source, hash: p.hash,
-    edit: { rotate, crop: S.edit.crop, keep_original: keep }
+    edit: { rotate, flip_h: !!S.edit.flipH, flip_v: false, crop: S.edit.crop, keep_original: keep }
   }));
   toast(msg, "ok");
   S.edit = null;
@@ -1059,7 +1144,50 @@ $("#lb-rot-l").onclick = () => rotateBy(-90);
 $("#lb-rot-r").onclick = () => rotateBy(90);
 $("#lb-save").onclick = saveEdit;
 $("#lb-revert").onclick = discardEdit;
-$("#lb-crop").onclick = () => toast("Crop is coming next — rotate works now", "info");
+$("#lb-crop").onclick = () => (S.cropping ? endCrop(true) : startCrop());
+$("#lb-flip").onclick = () => { const e = editState(); e.flipH = !e.flipH; applyEditPreview(); };
+$("#crop-done").onclick = () => endCrop(true);
+$("#crop-cancel").onclick = () => endCrop(false);
+for (const b of document.querySelectorAll(".cropbar .chip")) {
+  b.onclick = () => {
+    for (const o of document.querySelectorAll(".cropbar .chip")) o.setAttribute("aria-pressed", "false");
+    b.setAttribute("aria-pressed", "true");
+    S.cropAR = b.dataset.ar === "free" ? null : parseFloat(b.dataset.ar);
+    if (S.cropAR) resizeCrop("se", S.crop.x + S.crop.w, S.crop.y + S.crop.h);
+  };
+}
+{
+  // Drag the rectangle to move it, a handle to resize it.
+  const cropper = $("#cropper");
+  let drag = null;
+  const frac = e => {
+    const r = imgRect();
+    return { fx: (e.clientX - r.left) / r.width, fy: (e.clientY - r.top) / r.height };
+  };
+  cropper.addEventListener("pointerdown", e => {
+    if (!S.cropping) return;
+    const h = e.target.dataset?.h;
+    const { fx, fy } = frac(e);
+    drag = h ? { handle: h } : { move: true, fx, fy, start: { ...S.crop } };
+    cropper.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  cropper.addEventListener("pointermove", e => {
+    if (!drag || !S.cropping) return;
+    const { fx, fy } = frac(e);
+    if (drag.handle) { resizeCrop(drag.handle, fx, fy); return; }
+    const c = drag.start;
+    S.crop = {
+      ...c,
+      x: Math.max(0, Math.min(c.x + (fx - drag.fx), 1 - c.w)),
+      y: Math.max(0, Math.min(c.y + (fy - drag.fy), 1 - c.h)),
+    };
+    drawCrop();
+  });
+  const stop = () => { drag = null; };
+  cropper.addEventListener("pointerup", stop);
+  cropper.addEventListener("pointercancel", stop);
+}
 $("#lb-delete").onclick = async () => {
   const p = S.lbList[S.lbIndex]; if (!p) return;
   S.sel = new Set([p.hash]); closeLightbox(); await deleteSelected();
@@ -1075,6 +1203,11 @@ $("#lb-next").onclick = () => step(1);
 $("#search").oninput = applyFilter;
 addEventListener("keydown", e => {
   if (!$("#lightbox").hidden) {
+    if (S.cropping) {
+      if (e.key === "Escape") { endCrop(false); return; }
+      if (e.key === "Enter") { endCrop(true); return; }
+      return;
+    }
     if (e.key === "Escape") S.zoom > 1 ? resetZoom() : closeLightbox();
     // Arrows pan while zoomed in, and step between photos otherwise.
     if (e.key === "ArrowRight") { if (S.zoom > 1) { S.panX -= 60; applyZoom(); } else step(1); }

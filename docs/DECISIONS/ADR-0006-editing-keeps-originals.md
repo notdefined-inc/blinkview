@@ -33,6 +33,13 @@ disposable. Rejected: **sidecar edit files**, which are invisible to every other
 application and so break the premise that a folder organised by openfoto is just a
 folder of photographs.
 
+## Order of operations
+
+Rotate and flip run **before** crop. The crop rectangle is drawn by the user on the
+transformed preview, so its fractions are in that space; cropping first would apply
+their rectangle to the untransformed image and cut the wrong region. A test asserts
+rotate-then-crop on a 40x10 image yields 10x20.
+
 ## Consequences
 
 Good: the guarantee those three products offer, without inventing a database. Finder
