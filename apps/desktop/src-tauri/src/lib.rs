@@ -759,9 +759,16 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     // immediately on a large library: the virtualised viewport only ever requests the
     // few dozen images actually on screen, so thumbnails are produced in view order
     // instead of by a pre-pass that has to finish before anything is visible.
-    let thumb_hash = request.uri().query().and_then(|q| {
-        q.split('&').find_map(|kv| kv.strip_prefix("t=").map(|v| v.to_string()))
-    });
+    let param = |k: &str| {
+        request.uri().query().and_then(|q| {
+            q.split('&').find_map(|kv| kv.strip_prefix(k).map(|v| v.to_string()))
+        })
+    };
+    let thumb_hash = param("t=");
+    // `?full=<hash>` asks for the full-size image. HEIC is the reason this exists:
+    // WKWebView cannot decode it (verified), so it is transcoded once and cached
+    // rather than converted on every view.
+    let full_hash = param("full=");
 
     // Boundary: the file must live inside a source the user added.
     let sources = load_sources(app);
@@ -775,15 +782,37 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     if !allowed {
         return deny(403);
     }
+    let source_root = |canon: &std::path::Path| {
+        sources
+            .iter()
+            .map(std::path::PathBuf::from)
+            .find(|r| r.canonicalize().map(|c| canon.starts_with(c)).unwrap_or(false))
+    };
+
+    // Full-size request for a format the webview cannot decode: serve a cached JPEG.
+    if thumb_hash.is_none() && openfoto_core::imageio::needs_conversion(&canon) {
+        if let (Some(hash), Some(root)) = (full_hash, source_root(&canon)) {
+            let derived = root
+                .join(openfoto_core::library::VAULT_DIR)
+                .join("derived")
+                .join(format!("{hash}.jpg"));
+            if !derived.exists()
+                && openfoto_core::imageio::convert_to_jpeg(&canon, &derived).is_err()
+            {
+                return deny(500);
+            }
+            return match std::fs::read(&derived) {
+                Ok(b) => ok_response(b, &derived),
+                Err(_) => deny(404),
+            };
+        }
+    }
+
     // Resolve to a thumbnail path, rendering it if this is the first request.
     let serve = match &thumb_hash {
         None => canon.clone(),
         Some(hash) => {
-            let root = sources
-                .iter()
-                .map(std::path::PathBuf::from)
-                .find(|r| r.canonicalize().map(|c| canon.starts_with(c)).unwrap_or(false));
-            match root {
+            match source_root(&canon) {
                 None => canon.clone(),
                 Some(root) => {
                     let t = openfoto_core::thumbs::thumb_path_at(&root, hash);

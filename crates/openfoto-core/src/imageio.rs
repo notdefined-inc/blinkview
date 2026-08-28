@@ -9,7 +9,7 @@
 //! faces, so sideways input dropped detection from ~120 faces across 120 person photos
 //! to 22. Every decode in this crate goes through here.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use image::{DynamicImage, GrayImage, RgbImage};
 use std::path::Path;
 
@@ -53,9 +53,48 @@ pub fn apply_luma(img: GrayImage, o: u16) -> GrayImage {
     }
 }
 
+/// Formats the `image` crate cannot decode, which macOS can.
+pub fn needs_conversion(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "heic" | "heif"))
+}
+
+/// Decode a HEIC/HEIF by asking macOS to transcode it first.
+///
+/// iPhones shoot HEIC by default, so a photo tool that cannot read it is missing most
+/// of a modern camera roll. There is no pure-Rust decoder worth depending on, and
+/// libheif would add a system library; `sips` ships with macOS and handles it. The
+/// cost is a process per image, which is why callers cache the result rather than
+/// converting on every view.
+pub fn convert_to_jpeg(src: &Path, dst: &Path) -> Result<()> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let out = std::process::Command::new("sips")
+        .args(["-s", "format", "jpeg", "-s", "formatOptions", "90"])
+        .arg(src)
+        .arg("--out")
+        .arg(dst)
+        .output()
+        .context("running sips")?;
+    if !out.status.success() || !dst.exists() {
+        anyhow::bail!(
+            "sips could not convert {}: {}",
+            src.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 /// Read image dimensions from the header without decoding pixels, with EXIF
 /// orientation applied. Cheap enough to call per face.
 pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
+    if needs_conversion(path) {
+        // No cheap header path for HEIC; fall back to a full load.
+        return load_rgb(path).ok().map(|i| (i.width(), i.height()));
+    }
     let file = std::fs::File::open(path).ok()?;
     let mut dec = jpeg_decoder::Decoder::new(std::io::BufReader::new(file));
     dec.read_info().ok()?;
@@ -64,8 +103,21 @@ pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
     Some(if matches!(orientation(path), 5..=8) { (h, w) } else { (w, h) })
 }
 
-/// Decode to RGB with EXIF orientation applied.
+/// Decode to RGB with EXIF orientation applied, transcoding first when the format
+/// needs it (HEIC/HEIF).
 pub fn load_rgb(path: &Path) -> Result<RgbImage> {
+    if needs_conversion(path) {
+        let tmp = std::env::temp_dir().join(format!(
+            "openfoto-heic-{}-{}.jpg",
+            std::process::id(),
+            path.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
+        ));
+        convert_to_jpeg(path, &tmp)?;
+        let img: DynamicImage = image::ImageReader::open(&tmp)?.with_guessed_format()?.decode()?;
+        let _ = std::fs::remove_file(&tmp);
+        // sips applies orientation during the transcode, so do not apply it twice.
+        return Ok(img.to_rgb8());
+    }
     let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
     Ok(apply_rgb(img.to_rgb8(), orientation(path)))
 }
@@ -90,6 +142,14 @@ mod tests {
         let r = apply_rgb(img, 6); // rotate 90 CW: (0,0) -> (height-1, 0)
         assert_eq!(r.dimensions(), (2, 4));
         assert_eq!(*r.get_pixel(1, 0), image::Rgb([255, 0, 0]));
+    }
+
+    #[test]
+    fn recognises_formats_needing_conversion() {
+        assert!(needs_conversion(Path::new("/x/IMG_1234.HEIC")));
+        assert!(needs_conversion(Path::new("/x/a.heif")));
+        assert!(!needs_conversion(Path::new("/x/a.jpg")));
+        assert!(!needs_conversion(Path::new("/x/a.png")));
     }
 
     #[test]

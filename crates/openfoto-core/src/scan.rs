@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
 
-pub const PHOTO_EXT: &[&str] = &["jpg", "jpeg", "png"];
+pub const PHOTO_EXT: &[&str] = &["jpg", "jpeg", "png", "heic", "heif"];
 pub const VIDEO_EXT: &[&str] = &["mp4", "mov", "m4v"];
 
 #[derive(Debug, Default, PartialEq)]

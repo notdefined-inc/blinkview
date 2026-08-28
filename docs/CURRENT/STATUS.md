@@ -20,6 +20,16 @@ explicit and confirms first.
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
+### Formats
+JPEG, PNG and **HEIC** for photos; MP4/MOV/M4V for video. HEIC is transcoded by macOS
+`sips` and cached — thumbnails to the usual cache, full-size views to
+`.openfoto/derived/<hash>.jpg` on first open. Verified against 12 real iPhone files:
+they scan, thumbnail and display. WKWebView genuinely cannot show HEIC (an `<img>`
+reports `naturalWidth: 0`), which is why the transcode exists. See ADR-0005 — this is
+the project's only macOS-only dependency.
+
+Folders can be added by dragging them onto the window, or with the ＋ button.
+
 ### Scale (measured on 20,000 distinct photos, debug build)
 
 | Operation | Time |

@@ -405,7 +405,8 @@ function paintLightbox() {
     const v = el("video", { id: "lb-video", src: photoUrl(p.path), controls: true, autoplay: true });
     stage.append(v);
   } else {
-    img.src = photoUrl(p.path);
+    // Pass the hash so the handler can cache a transcode when the format needs one.
+    img.src = photoUrl(p.path) + "?full=" + p.hash;
   }
   resetZoom();
   $("#lb-name").textContent = p.name;
@@ -725,6 +726,29 @@ async function saveNames(cl) {
   $("#sheet").hidden = true;
   await refreshSources(); await loadPhotos();
 }
+
+/* ---------------- drag and drop ----------------
+   Tauri reports OS drops on the window itself; the webview never sees a real path in
+   a DOM drop event, so the listener is on the Tauri event rather than `ondrop`. */
+listen("tauri://drag-enter", () => document.body.classList.add("dropping"));
+listen("tauri://drag-leave", () => document.body.classList.remove("dropping"));
+listen("tauri://drag-drop", async ({ payload }) => {
+  document.body.classList.remove("dropping");
+  const paths = payload?.paths || [];
+  if (!paths.length) return;
+  let added = 0;
+  for (const p of paths) {
+    try {
+      await busy(`Adding ${p.split("/").pop()}…`, () => invoke("add_source", { path: p }));
+      added++;
+    } catch (e) { /* reported by busy */ }
+  }
+  if (added) {
+    await refreshSources();
+    await selectSource(paths[0]);
+    toast(`Added ${added} folder${added > 1 ? "s" : ""}`, "ok");
+  }
+});
 
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;

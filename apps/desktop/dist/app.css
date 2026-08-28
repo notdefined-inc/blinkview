@@ -317,3 +317,13 @@ main{overflow:auto;position:relative}
 .ctx button.danger:hover{background:color-mix(in srgb,var(--danger) 18%,transparent);color:var(--danger)}
 .ctx hr{border:0;border-top:1px solid var(--glass-line);margin:var(--s1) 0}
 .ctx .k{margin-left:auto;font-size:11px;color:var(--text-faint)}
+
+/* Drop target feedback. The whole window accepts a folder, so the cue is the window. */
+body.dropping::after{
+  content:"Drop a folder to add it";
+  position:fixed;inset:var(--s4);z-index:100;pointer-events:none;
+  display:grid;place-items:center;font-size:16px;font-weight:600;color:var(--accent);
+  border:2px dashed color-mix(in srgb,var(--accent) 60%,transparent);
+  border-radius:var(--r-xl);background:rgba(11,11,14,.55);
+  backdrop-filter:blur(6px);
+}

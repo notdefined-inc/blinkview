@@ -38,6 +38,23 @@ global database — that is the whole premise (ADR-0001).
 
 Rationale in docs/DECISIONS/ADR-0001-vault-format.md.
 
+## Image formats
+
+JPEG and PNG decode in-process. HEIC is transcoded by macOS `sips` and cached — see
+ADR-0005, which is also the project's only macOS-only dependency. Video thumbnails come
+from ffmpeg when it is installed, and simply do not exist when it is not.
+
+`imageio` is the single decode seam: everything goes through it, which is what makes
+EXIF orientation and HEIC handling uniform rather than per-caller.
+
+## Serving pixels to the UI
+
+The desktop app registers its own `photo://` scheme rather than using Tauri's asset
+protocol, so the security boundary is explicit: a file is served only if it resolves
+inside a folder the user added. The same handler produces thumbnails and HEIC
+transcodes on demand, which is what lets a large library paint immediately — the
+virtualised grid only ever requests the few dozen images actually on screen.
+
 ## Why Rust
 The end goal is a shippable desktop app; bundling a Python runtime into one is the usual
 route to slow and fragile. `ort` runs the same ONNX models the prototype validated.
