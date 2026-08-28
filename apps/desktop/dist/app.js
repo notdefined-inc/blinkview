@@ -513,8 +513,12 @@ async function deleteSelected() {
    remembering. */
 
 async function refreshSearches() {
-  if (!S.source) { S.searches = []; return; }
-  try { S.searches = await invoke("list_searches", { path: S.source }); } catch { S.searches = []; }
+  const t = beginLoad("searches");
+  if (!t.source) { S.searches = []; return; }
+  let searches;
+  try { searches = await invoke("list_searches", { path: t.source }); } catch { searches = []; }
+  if (!stillCurrent(t)) return;
+  S.searches = searches;
   renderSearches();
 }
 
@@ -743,17 +747,25 @@ async function refreshSources() {
 }
 
 async function refreshPeople() {
-  if (!S.source) return;
+  const t = beginLoad("people");
+  if (!t.source) return;
+  let people;
   try {
-    S.people = await invoke("people_overview", { path: S.source, distance: 0.55 });
-  } catch { S.people = []; }
+    people = await invoke("people_overview", { path: t.source, distance: 0.55 });
+  } catch { people = []; }
+  if (!stillCurrent(t)) return;
+  S.people = people;
   await refreshAlbums();
   await refreshSearches();
   await refreshSources();
 }
 async function refreshAlbums() {
-  if (!S.source) { S.albums = []; return; }
-  try { S.albums = await invoke("list_albums", { path: S.source }); } catch { S.albums = []; }
+  const t = beginLoad("albums");
+  if (!t.source) { S.albums = []; return; }
+  let albums;
+  try { albums = await invoke("list_albums", { path: t.source }); } catch { albums = []; }
+  if (!stillCurrent(t)) return;
+  S.albums = albums;
   renderAlbums();
 }
 
@@ -801,8 +813,36 @@ async function migrateAlbums() {
   await refreshSources(); await refreshAlbums(); await loadPhotos();
 }
 
+/* ---------------- load ordering ----------------
+   Async loads race, and whichever `invoke` returns last wins. That is how clicking one
+   library could leave another's photographs on screen: the filesystem watcher fires a
+   reload in the background while a source switch is in flight, and the slower result
+   overwrites the newer one.
+
+   Every load records which library it was started for and its position in that queue.
+   A result that is no longer current is discarded instead of painted, so what is shown
+   always belongs to the library named in the breadcrumb. */
+
+const loadSeq = {};
+
+function beginLoad(kind) {
+  loadSeq[kind] = (loadSeq[kind] || 0) + 1;
+  return { kind, seq: loadSeq[kind], source: S.source };
+}
+
+/** False once a newer load of the same kind started, or the source moved on. */
+function stillCurrent(t) {
+  return t.seq === loadSeq[t.kind] && t.source === S.source;
+}
+
 async function loadPhotos() {
-  S.photos = await invoke("photos", { path: S.source, folder: null, person: null });
+  const t = beginLoad("photos");
+  if (!t.source) return;
+  // Ask for the library this load is *for*, not whatever S.source happens to be by
+  // the time the request is built.
+  const photos = await invoke("photos", { path: t.source, folder: null, person: null });
+  if (!stillCurrent(t)) return;
+  S.photos = photos;
   applyFilter();
 }
 /* ---------------- search ----------------
@@ -1003,11 +1043,16 @@ async function runSemantic(phrase, seq) {
 
 /** Cheap enough to call on every source switch, and it decides whether to search at all. */
 async function refreshSemanticStatus() {
+  const t = beginLoad("semantic");
+  if (!t.source) { S.semanticReady = null; return; }
+  let ready;
   try {
-    S.semanticReady = await invoke("semantic_status", { path: S.source });
+    ready = await invoke("semantic_status", { path: t.source });
   } catch {
-    S.semanticReady = null;
+    ready = null;
   }
+  if (!stillCurrent(t)) return;
+  S.semanticReady = ready;
 }
 
 /* Show what the query was understood to mean. Someone typing "sam august 2026" should
