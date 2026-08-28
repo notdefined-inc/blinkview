@@ -25,6 +25,7 @@ rayon = "1"
 jpeg-decoder = "0.3"
 ureq = { version = "3", features = ["native-tls"] }
 sha2 = "0.10"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 ort = "2.0.0-rc.10"
 ndarray = "0.17"
 

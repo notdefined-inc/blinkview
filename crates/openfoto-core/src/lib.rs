@@ -23,6 +23,7 @@ pub mod plan;
 pub mod progress;
 pub mod rename;
 pub mod scan;
+pub mod semantic;
 pub mod scenery;
 pub mod thumbs;
 pub mod userdata;

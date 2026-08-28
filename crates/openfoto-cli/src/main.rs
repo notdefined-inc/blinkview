@@ -76,6 +76,18 @@ enum Cmd {
     History,
     /// Build the thumbnail cache.
     Thumbs,
+    /// Search photos by what is in them.
+    Find {
+        /// A phrase, e.g. "a dog on a beach".
+        query: Vec<String>,
+        #[arg(long, default_value_t = openfoto_core::semantic::DEFAULT_THRESHOLD)]
+        threshold: f32,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Embed any photos that do not have an embedding yet, first.
+        #[arg(long)]
+        index: bool,
+    },
     /// Download the face-detection models.
     Models {
         #[command(subcommand)]
@@ -351,6 +363,41 @@ fn main() -> Result<()> {
             }
             let j = plan.apply(&mut lib)?;
             println!("\napplied. undo with:  openfoto undo {} --apply", j.id);
+        }
+        Cmd::Find { query, threshold, limit, index } => {
+            use openfoto_core::semantic;
+            let lib = open(&cli)?;
+            if !semantic::Encoder::available() {
+                println!("the search models are not installed — run `openfoto models fetch`");
+                return Ok(());
+            }
+            if *index {
+                let st = semantic::analyze(&lib, &cli_progress("understanding"))?;
+                println!("embedded {} photos ({} already done)", st.embedded, st.skipped);
+                for e in st.errors.iter().take(3) {
+                    eprintln!("  error: {e}");
+                }
+            }
+            let q = query.join(" ");
+            if q.trim().is_empty() {
+                println!("nothing to search for");
+                return Ok(());
+            }
+            let indexed = lib.index.clip_count()?;
+            if indexed == 0 {
+                println!("no photos have been understood yet — run `openfoto find --index <query>`");
+                return Ok(());
+            }
+            let hits = semantic::search(&lib, &q, *threshold, *limit)?;
+            let by_hash: std::collections::BTreeMap<_, _> =
+                lib.index.all()?.into_iter().map(|r| (r.hash, r.path)).collect();
+            println!("{} of {indexed} photos match {q:?}", hits.len());
+            for h in &hits {
+                println!("  {:.3}  {}", h.score, by_hash.get(&h.hash).cloned().unwrap_or_default());
+            }
+            if hits.is_empty() {
+                println!("  (nothing above {threshold:.2} — the model is not confident enough to guess)");
+            }
         }
         Cmd::Thumbs => {
             let lib = open(&cli)?;

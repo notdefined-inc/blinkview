@@ -62,6 +62,13 @@ impl Index {
             -- Photos analysed but containing no usable face. Without this we would
             -- re-decode every landscape shot on each run.
             CREATE TABLE IF NOT EXISTS faces_done (hash TEXT PRIMARY KEY);
+            -- Semantic (CLIP) embeddings. Derived, so it belongs in the disposable
+            -- vault; keyed by content hash like everything else, so it survives
+            -- renaming and moving.
+            CREATE TABLE IF NOT EXISTS clip (
+                hash      TEXT PRIMARY KEY,
+                embedding BLOB NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS signatures (
                 hash      TEXT PRIMARY KEY,
                 dhash     INTEGER NOT NULL,
@@ -163,6 +170,40 @@ impl Index {
         &self.conn
     }
 
+    pub fn get_clip(&self, hash: &str) -> Result<Option<Vec<f32>>> {
+        let blob: Option<Vec<u8>> = self
+            .conn
+            .query_row("SELECT embedding FROM clip WHERE hash=?1", params![hash], |r| r.get(0))
+            .optional()?;
+        Ok(blob.as_deref().and_then(floats_from))
+    }
+
+    pub fn put_clip(&self, hash: &str, embedding: &[f32]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO clip (hash, embedding) VALUES (?1, ?2)",
+            params![hash, floats_to(embedding)],
+        )?;
+        Ok(())
+    }
+
+    pub fn all_clip(&self) -> Result<Vec<(String, Vec<f32>)>> {
+        let mut st = self.conn.prepare("SELECT hash, embedding FROM clip")?;
+        let rows = st.query_map([], |r| {
+            let h: String = r.get(0)?;
+            let b: Vec<u8> = r.get(1)?;
+            Ok((h, b))
+        })?;
+        Ok(rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|(h, b)| floats_from(&b).map(|e| (h, e)))
+            .collect())
+    }
+
+    pub fn clip_count(&self) -> Result<i64> {
+        Ok(self.conn.query_row("SELECT COUNT(*) FROM clip", [], |r| r.get(0))?)
+    }
+
     pub fn count(&self) -> Result<i64> {
         Ok(self
             .conn
@@ -175,6 +216,17 @@ impl Index {
         tx.commit()?;
         Ok(out)
     }
+}
+
+fn floats_to(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+fn floats_from(b: &[u8]) -> Option<Vec<f32>> {
+    if b.is_empty() || !b.len().is_multiple_of(4) {
+        return None;
+    }
+    Some(b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
 }
 
 fn row_to_file(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {

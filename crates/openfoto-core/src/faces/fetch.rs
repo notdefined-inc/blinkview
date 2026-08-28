@@ -24,6 +24,8 @@ pub struct ModelSpec {
 /// `media.githubusercontent.com` rather than `raw.` — these are Git LFS objects, and
 /// the raw endpoint returns a 133-byte pointer file that loads as a corrupt model.
 const BASE: &str = "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models";
+/// MobileCLIP-S0, for semantic search (ADR-0008). Separate host from the face models.
+const CLIP_BASE: &str = "https://huggingface.co/Xenova/mobileclip_s0/resolve/main";
 
 pub fn specs() -> Vec<ModelSpec> {
     vec![
@@ -40,6 +42,35 @@ pub fn specs() -> Vec<ModelSpec> {
             url: format!("{BASE}/face_recognition_sface/face_recognition_sface_2021dec.onnx"),
             sha256: "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
             bytes: 38_696_353,
+        },
+        ModelSpec {
+            name: crate::semantic::VISION,
+            // fp32, not the 11MB int8 build: quantisation measurably compressed the
+            // embedding space (mean pairwise 0.703 vs 0.566), and a compressed space
+            // discriminates less. See ADR-0008.
+            url: format!("{CLIP_BASE}/onnx/vision_model.onnx"),
+            sha256: "17d3c037b1d488c10c50e09f6009ea5a198caef4e0e8f4ea5617b7cb2d067ac0",
+            bytes: 45_543_630,
+        },
+        ModelSpec {
+            name: crate::semantic::TEXT,
+            // fp32, not the 40MB int8 build. Measured on 237 real photos against the
+            // fp32 reference: int8 text vectors diverge by cosine 0.89-0.94, inflate
+            // scores enough to double the matches clearing the relevance threshold
+            // (149 vs 78), and rank a desk scene above the actual church for "a church".
+            // It is also unstable across onnxruntime builds -- int8 in ort 1.22 differs
+            // from int8 in Python 1.23 by up to cosine 0.989, which silently moves
+            // photos across the threshold and makes ADR-0004 parity untestable.
+            // fp16 is not an option: onnxruntime crashes fusing it. See ADR-0008.
+            url: format!("{CLIP_BASE}/onnx/text_model.onnx"),
+            sha256: "f6e9bd5742bfc515889e901634d8a2ff2a57fab8564e4ad3760e800b1a51b77c",
+            bytes: 169_807_789,
+        },
+        ModelSpec {
+            name: crate::semantic::TOKENIZER,
+            url: format!("{CLIP_BASE}/tokenizer.json"),
+            sha256: "72ed5c96db5729294468543e4bc75fce14ca63f58e37300290189ba1c1e52b85",
+            bytes: 2_224_081,
         },
     ]
 }
@@ -143,10 +174,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn specs_use_the_lfs_media_endpoint() {
-        // raw.githubusercontent returns a 133-byte LFS pointer, not the model.
+    fn specs_never_fetch_lfs_pointers() {
+        // raw.githubusercontent returns a 133-byte LFS pointer rather than the model,
+        // which then fails to load as a corrupt file well after download.
         for s in specs() {
-            assert!(s.url.starts_with(BASE), "{} must come from the LFS endpoint", s.name);
+            assert!(
+                !s.url.contains("raw.githubusercontent.com"),
+                "{} would download an LFS pointer, not the model",
+                s.name
+            );
+            assert!(
+                s.url.starts_with(BASE) || s.url.starts_with(CLIP_BASE),
+                "{} comes from an unpinned host: {}",
+                s.name,
+                s.url
+            );
         }
     }
 

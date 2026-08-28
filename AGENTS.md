@@ -99,6 +99,23 @@ app was running corrupted the index. The vault is disposable so recovery was che
 source and obvious in a screenshot, including a CSS `display` rule silently overriding
 the `hidden` attribute. **Screenshot the running window; the DOM is not the paint.**
 
+**9. Applying a lesson to one half of a pair.** ADR-0008 rejected the quantised *vision*
+model because quantisation compressed the embedding space, then quantised the *text*
+model in the same document, reasoning it "runs once per query, where quantisation costs
+little". That conflated **cost** with **error**: running once per query makes it cheap in
+time and says nothing about whether the vector is right. int8 text diverged from fp32 by
+cosine 0.89, nearly doubled the matches clearing the threshold, and was not reproducible
+between onnxruntime builds. **When you reject a technique for one component, state
+explicitly why the sibling component is exempt — or apply it there too.**
+
+**10. Cross-runtime parity is a property of the model, not just the code.** A dynamically
+quantised graph (`MatMulInteger`, `DynamicQuantizeLinear`) derives its scale from each
+input's own activation range, so two onnxruntime builds give input-dependent differences
+— some inputs identical, others off by cosine 0.99. That pattern (a few exact matches
+mixed with near-misses) means a kernel or fusion difference, not float noise; uniform
+small error would mean float noise. **If a parity test fails on some inputs and passes
+exactly on others, suspect quantisation before suspecting your code.**
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.
