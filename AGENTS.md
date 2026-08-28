@@ -39,6 +39,9 @@ Global contract applies (~/.codex/AGENTS.md). Repo specifics below override it.
   **`--all-targets` is not optional.** Without it clippy skips test targets and will
   report a clean workspace while a test fails to compile.
 - `cargo run -p openfoto-cli -- <cmd>` · `cargo run -p openfoto-desktop`
+- `node apps/desktop/tests/grammar.test.mjs` — the command grammar. The frontend has no
+  build step, so this evaluates `dist/app.js` with browser globals stubbed rather than
+  importing it. **`cargo test` does not run it**; run it after touching the parser.
 
 ## Verifying
 Never report a check as passing from filtered output. `cmd | grep ...; echo "clean"`
@@ -47,6 +50,10 @@ failing clippy run here. Branch on the exit code:
 
     cargo clippy --workspace --all-targets -q -- -D warnings \
       && echo PASS || { echo FAIL; ... }
+
+Running the check and the commit in **one** shell command repeats the same mistake by a
+different route: the commit runs whatever the check reported. Gate it —
+`clippy && test && git commit`, never `clippy; git commit`.
 
 ## Mistakes already made here — do not repeat them
 
@@ -115,6 +122,17 @@ input's own activation range, so two onnxruntime builds give input-dependent dif
 mixed with near-misses) means a kernel or fusion difference, not float noise; uniform
 small error would mean float noise. **If a parity test fails on some inputs and passes
 exactly on others, suspect quantisation before suspecting your code.**
+
+**11. Recording the change after making it.** `Plan::apply` moved files and wrote the
+journal last, so when a plan label containing `/` made the journal filename invalid,
+twenty-three photographs moved with no journal entry — unreachable by undo, while the UI
+reported failure. The order now is files, journal, metadata, and any failure rolls the
+files back. **In a system whose contract is reversibility, the record is part of the
+operation, not a receipt printed afterwards.**
+
+**12. Values that become filenames.** Anything user- or code-supplied that ends up in a
+path needs sanitising at the point it becomes a path, not at every call site. The label
+was fine as a label; it was only wrong as a filename.
 
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only

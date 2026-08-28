@@ -380,3 +380,96 @@ fn a_corrupt_index_is_rebuilt_without_losing_user_data() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The primitive the command layer compiles to. A typed instruction has already chosen
+/// its photographs, so this must move exactly those and nothing else.
+#[test]
+fn move_into_plans_only_the_chosen_photographs() {
+    use openfoto_core::plan;
+
+    let dir = fixture("move-into", &["a.jpg", "b.jpg", "Trip/c.jpg", "Trip/a.jpg"]);
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let rows = lib.index.all().unwrap();
+    let by_path = |p: &str| rows.iter().find(|r| r.path == p).unwrap().hash.clone();
+
+    // b.jpg moves; c.jpg is already there; a.jpg collides with Trip/a.jpg.
+    let hashes = vec![by_path("b.jpg"), by_path("Trip/c.jpg"), by_path("a.jpg")];
+    let p = plan::move_into(&lib, &hashes, "Trip").unwrap();
+
+    assert_eq!(p.ops.len(), 1, "only b.jpg should move");
+    assert_eq!(p.ops[0].to(), "Trip/b.jpg");
+    assert_eq!(p.skipped.len(), 1, "the name collision must be reported, not overwritten");
+    assert!(p.skipped[0].1.contains("already exists"));
+
+    // Nothing outside the chosen set is touched.
+    assert!(!p.ops.iter().any(|o| o.from() == "Trip/c.jpg"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn move_into_refuses_a_destination_the_filesystem_would_reject() {
+    use openfoto_core::plan;
+    let dir = fixture("move-bad-dest", &["a.jpg"]);
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let h = vec![lib.index.all().unwrap()[0].hash.clone()];
+
+    assert!(plan::move_into(&lib, &h, "").is_err(), "an empty destination is not a folder");
+    assert!(plan::move_into(&lib, &h, "  ").is_err());
+    assert!(
+        plan::move_into(&lib, &h, "Trip: Greece").is_err(),
+        "a colon is reserved on exFAT and must be refused before anything moves"
+    );
+    assert!(plan::move_into(&lib, &h, "Trip/Greece Day3").is_ok(), "nesting is fine");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An operation that cannot be recorded must not stand.
+///
+/// This was a real failure, not a hypothetical: a plan labelled "move 12 to Trip/Alps"
+/// put a `/` into the journal filename, the write failed, and twenty-three photographs
+/// had already moved with no journal entry — unreachable by undo, while the app
+/// reported the operation as failed. Files first and journal last is the wrong order
+/// unless a journal failure rolls the files back.
+#[test]
+fn a_move_that_cannot_be_journalled_is_rolled_back() {
+    use openfoto_core::plan::{Op, Plan};
+
+    let dir = fixture("journal-fail", &["Day1/a.jpg", "Day1/b.jpg"]);
+    std::fs::create_dir_all(dir.join("Day3")).unwrap();
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let rows = lib.index.all().unwrap();
+
+    // Make the journal directory unwritable by replacing it with a file.
+    let jdir = dir.join(".openfoto/journal");
+    std::fs::remove_dir_all(&jdir).unwrap();
+    std::fs::write(&jdir, b"not a directory").unwrap();
+
+    let mut p = Plan::new("move");
+    for r in &rows {
+        p.ops.push(Op::Move {
+            hash: r.hash.clone(),
+            from: r.path.clone(),
+            to: format!("Day3/{}", r.path.rsplit('/').next().unwrap()),
+        });
+    }
+    let err = p.apply(&mut lib).expect_err("an unrecordable move must fail");
+    assert!(
+        format!("{err:#}").contains("could not be recorded"),
+        "unexpected error: {err:#}"
+    );
+
+    // The photographs must be exactly where they started.
+    assert!(dir.join("Day1/a.jpg").exists(), "a.jpg was left moved with no way back");
+    assert!(dir.join("Day1/b.jpg").exists(), "b.jpg was left moved with no way back");
+    assert!(!dir.join("Day3/a.jpg").exists());
+    // And the index must agree with the disk, or the next scan would report phantom moves.
+    let after = lib.index.all().unwrap();
+    assert!(after.iter().all(|r| r.path.starts_with("Day1/")), "index left pointing at Day3");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

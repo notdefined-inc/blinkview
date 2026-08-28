@@ -103,34 +103,49 @@ impl Plan {
     ///
     /// Metadata moves with the file. Since ADR-0010 a rating lives in the
     /// `openfoto.json` of the folder holding the photograph, so a move that did not
-    /// migrate the entry would look exactly like the rating being lost. The relocation
-    /// is computed in memory first — which cannot fail — and written only once every
-    /// file has moved; a failure to write it rolls the files back.
+    /// migrate the entry would look exactly like the rating being lost.
+    ///
+    /// The order is deliberate: **files, then the journal, then metadata**, and any
+    /// failure rolls the files back. An operation that cannot be recorded must not
+    /// stand — the whole contract of this app is that every mutation is reversible, and
+    /// a move with no journal entry is a move nobody can undo.
     pub fn apply(self, lib: &mut Library) -> Result<Journal> {
         self.validate(lib)?;
-        let mut done: Vec<Op> = Vec::with_capacity(self.ops.len());
         let mut meta = relocations(&self.ops, lib, false)?;
+        let mut done: Vec<Op> = Vec::with_capacity(self.ops.len());
 
         for op in &self.ops {
             let (from, to) = (op.from().to_string(), op.to().to_string());
             if let Err(e) = fsops::move_file(&lib.abs(&from), &lib.abs(&to)) {
                 // Roll back what we already did, so a partial application never
                 // survives. This is the failure the manual run hit mid-way.
-                for prev in done.iter().rev() {
-                    let _ = fsops::move_file(&lib.abs(prev.to()), &lib.abs(prev.from()));
-                    let _ = lib.index.repath(prev.to(), prev.from());
-                }
-                return Err(e.context(format!("applying {}; rolled back {} ops", self.label, done.len())));
+                rollback(lib, &done);
+                return Err(e.context(format!(
+                    "applying {}; rolled back {} ops",
+                    self.label,
+                    done.len()
+                )));
             }
             lib.index.repath(&from, &to)?;
             done.push(op.clone());
         }
+
+        let journal = match Journal::write(lib, &self.label, done.clone()) {
+            Ok(j) => j,
+            Err(e) => {
+                rollback(lib, &done);
+                return Err(e.context(format!(
+                    "applying {}: the change could not be recorded, so it was undone \
+                     rather than left with no way back",
+                    self.label
+                )));
+            }
+        };
+
         if let Some(set) = meta.as_mut() {
             if let Err(e) = set.save(lib.root()) {
-                for prev in done.iter().rev() {
-                    let _ = fsops::move_file(&lib.abs(prev.to()), &lib.abs(prev.from()));
-                    let _ = lib.index.repath(prev.to(), prev.from());
-                }
+                let _ = journal.discard(lib);
+                rollback(lib, &done);
                 return Err(e.context(format!(
                     "applying {}: files moved but their ratings could not follow, so \
                      nothing was applied",
@@ -138,8 +153,67 @@ impl Plan {
                 )));
             }
         }
-        Journal::write(lib, &self.label, done)
+        Ok(journal)
     }
+}
+
+/// Put every completed move back, ignoring errors: this runs on a path that is already
+/// failing, and reporting a second failure would bury the first.
+fn rollback(lib: &mut Library, done: &[Op]) {
+    for prev in done.iter().rev() {
+        let _ = fsops::move_file(&lib.abs(prev.to()), &lib.abs(prev.from()));
+        let _ = lib.index.repath(prev.to(), prev.from());
+    }
+}
+
+/// Plan moving a chosen set of photographs into `dest`.
+///
+/// The one primitive the command layer needed that did not exist: every other plan
+/// builder decides for itself which photographs it acts on, and a typed instruction
+/// has already decided.
+///
+/// A photograph already in `dest` is not an op, and one whose name is taken there is
+/// skipped with a reason rather than overwriting — `Plan::validate` would refuse the
+/// whole plan otherwise, which would be a worse answer than moving the rest.
+pub fn move_into(lib: &Library, hashes: &[String], dest: &str) -> Result<Plan> {
+    let dest = dest.trim().trim_matches('/');
+    if dest.is_empty() {
+        anyhow::bail!("no destination folder given");
+    }
+    if let Some(c) = dest.split('/').find_map(|seg| {
+        seg.chars().find(|c| crate::fsops::RESERVED.contains(c))
+    }) {
+        anyhow::bail!("folder name contains a reserved character {c:?}");
+    }
+
+    let rows = lib.index.all()?;
+    let taken: std::collections::HashSet<String> = rows
+        .iter()
+        .filter(|r| folder_of(&r.path) == dest)
+        .map(|r| r.path.rsplit('/').next().unwrap_or(&r.path).to_string())
+        .collect();
+
+    let mut plan = Plan::new(format!("move {} to {dest}", hashes.len()));
+    let wanted: std::collections::HashSet<&String> = hashes.iter().collect();
+    for r in rows.iter().filter(|r| wanted.contains(&r.hash)) {
+        let name = r.path.rsplit('/').next().unwrap_or(&r.path);
+        if folder_of(&r.path) == dest {
+            continue;
+        }
+        if taken.contains(name) {
+            plan.skipped.push((
+                r.path.clone(),
+                format!("{dest}/{name} already exists"),
+            ));
+            continue;
+        }
+        plan.ops.push(Op::Move {
+            hash: r.hash.clone(),
+            from: r.path.clone(),
+            to: format!("{dest}/{name}"),
+        });
+    }
+    Ok(plan)
 }
 
 /// The folder part of a library-relative path; `""` for the library root.

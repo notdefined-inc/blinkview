@@ -2086,14 +2086,243 @@ function promptDialog(title, value) {
   });
 }
 
+/* ---------------- the command grammar ----------------
+   Sentences that *act*, not only ask (ADR-0012). Deliberately a grammar rather than a
+   model: what a sentence selects is already resolved exactly by parseQuery, and what it
+   does is about eight verbs — small enough to enumerate, and enumerating beats guessing
+   when the output moves files.
+
+       utterance := clause (("and" | "then") clause)*
+       clause    := verb selector? target?
+
+   Nothing here touches the disk. Every clause compiles to a preview, and the preview is
+   the only route to a Plan. */
+
+const VERBS = {
+  move:   ["move", "put", "file", "shift", "relocate"],
+  rate:   ["rate", "star"],
+  label:  ["label", "colour", "color", "tag"],
+  delete: ["delete", "remove", "bin", "trash", "chuck"],
+  show:   ["show", "find", "search", "list", "open"],
+  save:   ["save"],
+};
+
+/** Words that mean "the photographs we were just talking about". */
+const REFERENTS = ["them", "these", "those", "it", "results", "there", "that"];
+
+/** Prepositions that introduce a destination. */
+const INTO = ["to", "into", "in", "under"];
+
+/* Words that are grammar rather than selection. "move all my august photos" selects
+   exactly what "move august photos" selects, and leaving them in sends "my" to the
+   scene search, where it means nothing and costs a confident wrong answer.
+
+   Stripped only in the command path: a *question* keeps its phrasing intact, because
+   "the beach" is a better phrase for the text encoder than "beach". */
+const FILLER = ["all", "my", "mine", "the", "a", "an", "any", "some", "every",
+                "please", "just", "of", "from", "with"];
+
+function stripFiller(text) {
+  const kept = text.split(/\s+/).filter(w => w && !FILLER.includes(w.toLowerCase()));
+  // If filler was all there was, keep the original rather than produce an empty
+  // selector that would be refused for the wrong reason.
+  return kept.length ? kept.join(" ") : text.trim();
+}
+
+function verbOf(word) {
+  const w = word.toLowerCase().replace(/[.,!?]+$/, "");
+  for (const [verb, words] of Object.entries(VERBS)) if (words.includes(w)) return verb;
+  return null;
+}
+
+/** The closest verb we know, for an error that helps rather than just refuses.
+    Edit distance rather than a shared prefix: the commonest typo is a transposition,
+    and "mvoe" shares exactly one letter of prefix with "move". */
+function editDistance(a, b) {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(
+        prev[j] + 1,                                   // deletion
+        prev[j - 1] + 1,                               // insertion
+        diag + (a[i - 1] === b[j - 1] ? 0 : 1),        // substitution
+      );
+      diag = tmp;
+    }
+  }
+  return prev[b.length];
+}
+
+function nearestVerb(word) {
+  const w = word.toLowerCase().replace(/[^a-z]/g, "");
+  if (w.length < 3) return null;
+  let best = null, bestD = Infinity;
+  for (const words of Object.values(VERBS)) {
+    for (const cand of words) {
+      const d = editDistance(w, cand);
+      if (d < bestD) { bestD = d; best = cand; }
+    }
+  }
+  // Two edits covers a transposition, which needs four letters to happen at all.
+  // Below that, two edits is most of the word and would "correct" real nouns.
+  const limit = w.length >= 4 ? 2 : 1;
+  return bestD <= limit ? best : null;
+}
+
+/** Split on "and"/"then", but not when "and" sits inside a destination name. */
+function splitClauses(text) {
+  return text
+    .split(/\s+(?:and then|then|and)\s+/i)
+    .map(t => t.trim())
+    .filter(Boolean);
+}
+
+/* Parse one clause into { verb, rest, target, referent }.
+   The verb must lead: "move august to X". A clause with no leading verb is a question,
+   which is what the panel did before this existed. */
+function parseClause(text) {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const verb = verbOf(words[0]);
+  if (!verb) return null;
+
+  let rest = words.slice(1);
+  let target = null;
+  // Scan from the right for the last preposition, so a destination containing one
+  // ("photos in Trip/Greece in 2026") still binds to the outermost.
+  for (let i = rest.length - 2; i >= 0; i--) {
+    if (INTO.includes(rest[i].toLowerCase())) {
+      target = rest.slice(i + 1).join(" ");
+      rest = rest.slice(0, i);
+      break;
+    }
+  }
+  // Verbs that carry a value hold it inside the selector — "rate them 5 stars". Lift
+  // it out here, so what remains is purely a selector and can be recognised as the
+  // referent it is. Doing this in the executor instead left "them 5 stars" to be
+  // searched for as a phrase.
+  let selector = stripFiller(rest.join(" "));
+  let value = null;
+  if (verb === "rate") {
+    const m = selector.match(/(\d)\s*\+?\s*(?:stars?)?\b/);
+    if (m) {
+      value = Math.min(5, +m[1]);
+      selector = (selector.slice(0, m.index) + " " + selector.slice(m.index + m[0].length)).trim();
+    }
+  } else if (verb === "label") {
+    const found = LABEL_NAMES.find(l => new RegExp(`\\b${l}\\b`, "i").test(selector));
+    if (found) {
+      value = found;
+      selector = selector.replace(new RegExp(`\\b${found}\\b`, "i"), " ").replace(/\s+/g, " ").trim();
+    }
+  }
+  const selWords = selector ? selector.split(/\s+/) : [];
+  // An *explicit* referent borrows the last answer. An *empty* selector does not:
+  // "move to Trip" must not quietly inherit whatever was on screen, or a stray
+  // sentence plans the whole library (criterion 5).
+  const referent = selWords.length === 1 && REFERENTS.includes(selWords[0].toLowerCase())
+    ? selWords[0].toLowerCase()
+    : null;
+
+  return { verb, rest: referent ? "" : selector, target, referent, value,
+           empty: !referent && !selWords.length, source: text };
+}
+
+/** Does this utterance ask for something to happen, or is it a question? */
+function isCommand(text) {
+  return splitClauses(text).some(c => parseClause(c) !== null);
+}
+
+/* Resolve a clause's selector into actual photographs.
+   Reuses answerQuestion so the command layer and the question layer can never disagree
+   about what "august 2026" means — there is one selector language (criterion 10). */
+async function resolveSelector(clause, ctx) {
+  if (clause.referent) {
+    if (!ctx.photos || !ctx.photos.length) {
+      return { error: "I do not know which photographs you mean — ask for some first." };
+    }
+    return { photos: ctx.photos, described: ctx.described || "those photographs" };
+  }
+  const answer = await answerQuestion(clause.rest);
+  if (answer.kind !== "results") return { error: null, answer };
+  if (!answer.photos.length) {
+    return { error: `Nothing matches \u201C${clause.rest}\u201D, so there is nothing to ${clause.verb}.` };
+  }
+  return { photos: answer.photos, described: clause.rest, parsed: answer.parsed };
+}
+
+/* Turn one clause into something previewable. Never acts. */
+async function planClause(clause, ctx) {
+  const sel = await resolveSelector(clause, ctx);
+  if (sel.answer) return { kind: "passthrough", answer: sel.answer };
+  if (sel.error) return { kind: "note", text: sel.error };
+
+  const photos = sel.photos;
+  const hashes = photos.map(p => p.hash);
+
+  switch (clause.verb) {
+    case "show":
+      return { kind: "results", ...(sel.parsed ? { parsed: sel.parsed } : {}), photos,
+               phrase: sel.described, semCount: 0, query: clause.rest };
+
+    case "move": {
+      const dest = clause.target || ctx.lastFolder;
+      if (!dest) {
+        // A missing slot is a question, not a guess (ADR-0012).
+        return { kind: "ask", slot: "destination", clause, photos,
+                 text: `Where should ${photos.length} photo${photos.length === 1 ? "" : "s"} go?` };
+      }
+      let view;
+      try {
+        view = await invoke("plan_move", { path: S.source, hashes, dest });
+      } catch (e) {
+        return { kind: "note", text: String(e) };
+      }
+      return { kind: "move", dest, view, photos, described: sel.described };
+    }
+
+    case "rate": {
+      const rating = clause.value;
+      if (rating === null || rating === undefined) {
+        return { kind: "ask", slot: "rating", clause, photos,
+                 text: "How many stars? (0 clears it)" };
+      }
+      return { kind: "rate", rating, photos, described: sel.described };
+    }
+
+    case "label": {
+      const colour = clause.value;
+      if (!colour) {
+        return { kind: "ask", slot: "label", clause, photos,
+                 text: `Which colour? ${LABEL_NAMES.join(", ")}` };
+      }
+      return { kind: "label", colour, photos, described: sel.described };
+    }
+
+    case "delete":
+      // Always a preview, whatever the phrasing (criterion 9).
+      return { kind: "delete", photos, described: sel.described };
+
+    case "save":
+      return { kind: "savequery", query: clause.rest || ctx.lastQuery || "" };
+
+    default:
+      return { kind: "note", text: `I do not know how to ${clause.verb} yet.` };
+  }
+}
+
 /* ---------------- ask panel ----------------
    The natural-language surface. Everything it does composes commands the app
    already shipped: the question is parsed exactly like the omnibar (dates, people,
    albums, field:value), leftover words go to the CLIP text encoder, and the answer
    is a card of real photos. The thread is per-session memory — nothing is stored. */
 
-const ASK_HINTS = ["sunset over the mountains", "photos of a dog", "videos from this year",
-                   "food on a plate", "a night sky"];
+const ASK_HINTS = ["sunset over the mountains", "photos of a dog",
+                   "move my august photos to Trip", "rate the night sky 5 stars",
+                   "food on a plate"];
 
 function toggleAsk(open) {
   const panel = $("#askpanel");
@@ -2129,13 +2358,85 @@ async function askSubmit() {
   thread.append(card);
   thread.scrollTop = thread.scrollHeight;
   try {
-    const answer = await answerQuestion(q);
+    const answer = await runUtterance(q);
     fillAskCard(card, q, answer);
   } catch (e) {
     card.classList.remove("pending");
     card.replaceChildren(el("p", { class: "asentence" }, `That went wrong: ${e}`));
   }
   thread.scrollTop = thread.scrollHeight;
+}
+
+/* Per-thread memory: what the last answer was about, so "them" and "there" mean
+   something. Nothing is stored on disk — it lives as long as the panel is open. */
+const CTX = { photos: null, described: null, lastFolder: null, lastQuery: null, pending: null };
+
+/* The entry point: a sentence is either a command or a question.
+   A command that names no photographs is refused rather than interpreted generously —
+   "move everything" is never what someone meant to type (criterion 5). */
+async function runUtterance(q) {
+  // A pending question from a previous turn takes the answer literally.
+  if (CTX.pending) {
+    const { clause, slot } = CTX.pending;
+    CTX.pending = null;
+    const filled = { ...clause };
+    if (slot === "destination") filled.target = q.trim();
+    else filled.rest = `${filled.rest} ${q.trim()}`.trim();
+    return await planClause(filled, CTX);
+  }
+
+  const clauses = splitClauses(q);
+  if (!clauses.some(c => parseClause(c))) {
+    // Not a command. Before answering it as a question, catch the near miss: a first
+    // word close to a verb *and* a destination is a mistyped instruction, not a search.
+    // The destination is what makes this safe — "movie night photos" has no "to", so it
+    // stays a search rather than being read as a broken "move".
+    const words = q.trim().split(/\s+/);
+    const near = words.length > 1 ? nearestVerb(words[0]) : null;
+    const shaped = words.slice(1, -1).some(w => INTO.includes(w.toLowerCase()));
+    if (near && shaped) {
+      return { kind: "note",
+        text: `I do not know \u201C${words[0]}\u201D. Did you mean \u201C${near} ` +
+              `${words.slice(1).join(" ")}\u201D?` };
+    }
+    return await answerQuestion(q);
+  }
+
+  const results = [];
+  for (const text of clauses) {
+    const clause = parseClause(text);
+    if (!clause) {
+      // Inside a command, a clause with no verb is a selector for the previous one
+      // rather than a fresh question.
+      const first = text.split(/\s+/)[0];
+      const near = nearestVerb(first);
+      results.push({ kind: "note",
+        text: near
+          ? `I do not know \u201C${first}\u201D. Did you mean \u201C${near}\u201D?`
+          : `I understood \u201C${text}\u201D as a search, not something to do.` });
+      continue;
+    }
+    if (clause.empty && clause.verb !== "save") {
+      const hint = CTX.photos && CTX.photos.length
+        ? ` Say \u201C${clause.verb} them${clause.target ? ` to ${clause.target}` : ""}\u201D if you mean the ${CTX.photos.length} just found.`
+        : "";
+      results.push({ kind: "note",
+        text: `\u201C${clause.verb}\u201D needs to know which photographs \u2014 a date, ` +
+              `a person, or what is in them.${hint}` });
+      continue;
+    }
+    const out = await planClause(clause, CTX);
+    // Advance the context *here*, not when the card renders: within one utterance the
+    // second clause runs before anything is drawn, and "rate them" has to see what
+    // "show ..." just found.
+    if (out.photos && out.photos.length) {
+      CTX.photos = out.photos;
+      CTX.described = out.described || clause.rest || CTX.described;
+    }
+    if (out.kind === "move" && out.dest) CTX.lastFolder = out.dest;
+    results.push(out);
+  }
+  return results.length === 1 ? results[0] : { kind: "multi", steps: results };
 }
 
 /* A question becomes an answer in three steps: parse it the way the omnibar would,
@@ -2153,8 +2454,20 @@ async function answerQuestion(q) {
 
   if (phrase && !S.semanticReady) await refreshSemanticStatus();
   const ready = S.semanticReady;
-  if (phrase && ready && !ready.available) return { kind: "models" };
-  if (phrase && ready && ready.embedded === 0) return { kind: "embed" };
+  // Whether the leftover words already match something by name. Checked *before*
+  // reporting that scenes are not indexed: "swiss" matches the Swiss Day1 folder
+  // literally, and offering to embed the library instead is a wrong answer to a
+  // question that had a right one.
+  const literalHay = p => {
+    const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
+    return text.every(t => hay.includes(t));
+  };
+  const literalHits = phrase
+    ? S.photos.filter(p => p.folder !== TRASH &&
+        (!parsed.hasFilter || matchesStructured(p, want)) && literalHay(p)).length
+    : 0;
+  if (phrase && !literalHits && ready && !ready.available) return { kind: "models" };
+  if (phrase && !literalHits && ready && ready.embedded === 0) return { kind: "embed" };
 
   let semScores = new Map();
   if (phrase) {
@@ -2166,10 +2479,7 @@ async function answerQuestion(q) {
     }
   }
 
-  const inHay = p => {
-    const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
-    return text.every(t => hay.includes(t));
-  };
+  const inHay = literalHay;
   const photos = S.photos.filter(p =>
     p.folder !== TRASH &&
     (!parsed.hasFilter || matchesStructured(p, want)) &&
@@ -2208,6 +2518,45 @@ function fillAskCard(card, q, answer) {
   card.classList.remove("pending");
   card.replaceChildren();
 
+  if (answer.kind === "multi") {
+    // Each clause of a compound instruction gets its own card, in order.
+    for (const step of answer.steps) {
+      const sub = el("div", { class: "ask-step" });
+      card.append(sub);
+      fillAskCard(sub, q, step);
+    }
+    return;
+  }
+  if (answer.kind === "passthrough") return fillAskCard(card, q, answer.answer);
+
+  if (answer.kind === "ask") {
+    // Hold the clause; the next thing typed answers this question (criterion 4).
+    CTX.pending = { clause: answer.clause, slot: answer.slot };
+    CTX.photos = answer.photos;
+    card.append(el("p", { class: "asentence" }, answer.text));
+    if (answer.slot === "destination") {
+      const folders = (S.sources.find(x => x.path === S.source)?.folders || [])
+        .filter(f => f.path && f.path !== TRASH).slice(0, 6);
+      if (folders.length) {
+        card.append(el("div", { class: "ask-acts" }, folders.map(f =>
+          el("button", { class: "ask-act", onclick: () => { $("#ask-input").value = f.path; askSubmit(); } },
+            f.name))));
+      }
+    }
+    return;
+  }
+
+  if (answer.kind === "move") return fillMoveCard(card, answer);
+  if (answer.kind === "rate" || answer.kind === "label" || answer.kind === "delete") {
+    return fillActionCard(card, answer);
+  }
+  if (answer.kind === "savequery") {
+    card.append(el("p", { class: "asentence" }, "Name it in the sidebar:"));
+    showInLibrary(answer.query);
+    saveSearchPrompt();
+    return;
+  }
+
   if (answer.kind === "note") {
     card.append(el("p", { class: "asentence" }, answer.text));
     return;
@@ -2240,6 +2589,10 @@ function fillAskCard(card, q, answer) {
   }
 
   const { parsed, phrase, semCount, photos } = answer;
+  // Remember this answer, so a following "rate them 5 stars" knows what "them" is.
+  CTX.photos = photos;
+  CTX.described = phrase || q;
+  CTX.lastQuery = answer.query || q;
   card.append(el("div", { class: "qchips" }, askChips(parsed, phrase, semCount)));
 
   // People named in the question get their faces into the answer — recognising a
@@ -2283,6 +2636,102 @@ function fillAskCard(card, q, answer) {
     } }, "Select results"),
     el("button", { class: "ask-act", onclick: () => { showInLibrary(q); saveSearchPrompt(); } },
       "Save this search\u2026")));
+}
+
+/* A move, previewed. Nothing has happened yet — this card is the only route to a
+   Plan, which is what makes acting on a sentence safe without a model's judgement. */
+function fillMoveCard(card, a) {
+  const n = a.view.moves.length;
+  CTX.photos = a.photos;
+  CTX.described = a.described;
+  CTX.lastFolder = a.dest;
+
+  card.append(el("p", { class: "asentence" },
+    n ? [el("b", {}, String(n)), ` photo${n === 1 ? "" : "s"} will move into `, el("b", {}, a.dest)]
+      : [`Nothing to move into `, el("b", {}, a.dest), " — they are already there."]));
+
+  if (a.view.skipped.length) {
+    card.append(el("p", { class: "asub" },
+      `${a.view.skipped.length} left alone: ${a.view.skipped.slice(0, 2).map(x => x[1]).join("; ")}` +
+      (a.view.skipped.length > 2 ? "\u2026" : "")));
+  }
+  if (!n) return;
+
+  card.append(el("div", { class: "askthumbs" },
+    a.photos.slice(0, 7).map((p, i) => el("img", {
+      src: photoUrl(p.path) + "?t=" + p.hash, alt: p.name, loading: "lazy",
+      onclick: () => openViewer(a.photos, i)
+    }))));
+
+  card.append(el("div", { class: "ask-acts" },
+    el("button", { class: "ask-act primary", onclick: async e => {
+      e.target.disabled = true;
+      // An exception in an async handler is an unhandled rejection and vanishes; for
+      // an action that moves files, silence is the worst possible report.
+      try {
+        const msg = await busy("Moving\u2026", () => invoke("apply_move", {
+          path: S.source, hashes: a.photos.map(p => p.hash), dest: a.dest }));
+        toast(msg + " \u2014 \u2318Z to undo", "ok");
+        await refreshSources(); await loadPhotos();
+        card.replaceChildren(el("p", { class: "asentence" }, msg));
+      } catch (err) {
+        e.target.disabled = false;
+        card.append(el("p", { class: "asub" }, `That failed: ${err}`));
+        console.error("apply_move failed:", err);
+      }
+    } }, `Move ${n}`),
+    el("button", { class: "ask-act", onclick: () => { S.folder = a.dest; applyFilter(); } },
+      "Show the destination")));
+}
+
+/* Rating, labelling and deleting. Deleting is a preview like everything else. */
+function fillActionCard(card, a) {
+  CTX.photos = a.photos;
+  CTX.described = a.described;
+  const n = a.photos.length;
+  const what = a.kind === "rate" ? (a.rating ? `${"\u2605".repeat(a.rating)}` : "no stars")
+             : a.kind === "label" ? a.colour
+             : "the Trash";
+  const verb = a.kind === "delete" ? "move to" : a.kind === "rate" ? "rate" : "label";
+
+  card.append(el("p", { class: "asentence" },
+    el("b", {}, String(n)), ` photo${n === 1 ? "" : "s"} will be ${verb === "move to" ? "moved to" : verb + "d"} `,
+    el("b", {}, what), a.kind === "delete" ? " (recoverable)" : ""));
+
+  card.append(el("div", { class: "askthumbs" },
+    a.photos.slice(0, 7).map((p, i) => el("img", {
+      src: photoUrl(p.path) + "?t=" + p.hash, alt: p.name, loading: "lazy",
+      onclick: () => openViewer(a.photos, i)
+    }))));
+
+  card.append(el("div", { class: "ask-acts" },
+    el("button", { class: "ask-act primary" + (a.kind === "delete" ? " danger" : ""),
+      onclick: async e => {
+        e.target.disabled = true;
+        try {
+        const hashes = a.photos.map(p => p.hash);
+        let msg;
+        if (a.kind === "rate") {
+          await invoke("set_rating", { path: S.source, hashes, rating: a.rating });
+          msg = `Rated ${n}`;
+        } else if (a.kind === "label") {
+          await invoke("set_label", { path: S.source, hashes, label: a.colour });
+          msg = `Labelled ${n} ${a.colour}`;
+        } else {
+          msg = await busy("Moving to Trash\u2026",
+            () => invoke("delete_photos", { path: S.source, hashes }));
+        }
+        toast(msg + " \u2014 \u2318Z to undo", "ok");
+        await loadPhotos();
+        card.replaceChildren(el("p", { class: "asentence" }, msg));
+        } catch (err) {
+          e.target.disabled = false;
+          card.append(el("p", { class: "asub" }, `That failed: ${err}`));
+          console.error("action failed:", err);
+        }
+      } }, a.kind === "delete" ? `Move ${n} to Trash` : `Yes, ${verb} ${n}`),
+    el("button", { class: "ask-act", onclick: () => card.replaceChildren(
+      el("p", { class: "asentence" }, "Left alone.")) }, "Cancel")));
 }
 
 /* The omnibar takes the question over: same parse, same semantic union, so the grid

@@ -893,6 +893,55 @@ async fn apply_album_migration(state: tauri::State<'_, AppState>, path: String) 
     })
 }
 
+// ---------------------------------------------------------------- commands
+
+/// A planned move, for the command layer's preview (ADR-0012).
+///
+/// Nothing reaches the disk without being listed here first: there is no path from a
+/// typed sentence to a file move that skips the preview.
+#[derive(Serialize)]
+pub struct MoveView {
+    dest: String,
+    moves: Vec<(String, String)>,
+    skipped: Vec<(String, String)>,
+}
+
+#[tauri::command]
+async fn plan_move(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    dest: String,
+) -> R<MoveView> {
+    with(&state, &path, |lib| {
+        let p = openfoto_core::plan::move_into(lib, &hashes, &dest)?;
+        Ok(MoveView {
+            dest: dest.trim().trim_matches('/').to_string(),
+            moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
+            skipped: p.skipped,
+        })
+    })
+}
+
+#[tauri::command]
+async fn apply_move(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    dest: String,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        let p = openfoto_core::plan::move_into(lib, &hashes, &dest)?;
+        if p.is_empty() {
+            return Ok("Nothing to move.".into());
+        }
+        let n = p.len();
+        std::fs::create_dir_all(lib.abs(dest.trim().trim_matches('/')))?;
+        let j = p.apply(lib)?;
+        Ok(format!("{n} moved to {} · undo id {}", dest.trim(), j.id))
+    })
+}
+
 // ---------------------------------------------------------------- saved searches
 
 #[tauri::command]
@@ -1466,7 +1515,8 @@ pub fn run() {
             people_overview, name_cluster, cluster_photos, autodetect_faces,
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
-            plan_album_migration, apply_album_migration, list_searches, save_search
+            plan_album_migration, apply_album_migration, list_searches, save_search,
+            plan_move, apply_move
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

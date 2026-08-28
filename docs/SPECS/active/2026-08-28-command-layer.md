@@ -59,13 +59,13 @@ table entry, not a model.
 
 ## Tasks
 
-- [ ] 1. `plan_move(hashes, dest)` core primitive + Tauri command — criteria 1, 2
-- [ ] 2. Verb grammar and synonym table, over `parseQuery` (app) — 1, 3, 6, 10
-- [ ] 3. Preview card with counts, destination and skipped items (app) — 1, 5, 9
-- [ ] 4. Apply, with journal id surfaced for undo (app) — 2
-- [ ] 5. Slot filling: missing destination becomes a question (app) — 4
-- [ ] 6. Referents and multi-clause utterances (app) — 7, 8
-- [ ] 7. Grammar unit tests (app) — every criterion
+- [x] 1. `plan_move(hashes, dest)` core primitive + Tauri command — criteria 1, 2
+- [x] 2. Verb grammar and synonym table, over `parseQuery` (app) — 1, 3, 6, 10
+- [x] 3. Preview card with counts, destination and skipped items (app) — 1, 5, 9
+- [x] 4. Apply, with journal id surfaced for undo (app) — 2
+- [x] 5. Slot filling: missing destination becomes a question (app) — 4
+- [x] 6. Referents and multi-clause utterances (app) — 7, 8
+- [x] 7. Grammar unit tests (app) — every criterion
 - [ ] 8. Doc sync: STATUS.md, the Ask panel section
 
 ## Risks

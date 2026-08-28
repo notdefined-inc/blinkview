@@ -12,11 +12,30 @@ pub struct Journal {
     pub ops: Vec<Op>,
 }
 
+/// A label reduced to something safe as a filename on any of our targets.
+fn slug(label: &str) -> String {
+    let out: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() { "op".into() } else { trimmed }
+}
+
 impl Journal {
     pub fn write(lib: &Library, label: &str, ops: Vec<Op>) -> Result<Self> {
         let now = chrono::Utc::now();
         let j = Journal {
-            id: format!("{}-{}", now.format("%Y%m%dT%H%M%S"), label),
+            // The id becomes a filename, so it cannot carry anything a path would read
+            // as structure. A label like "move 12 to Trip/Alps" would otherwise try to
+            // write into a journal/Trip/ directory that does not exist.
+            id: format!("{}-{}", now.format("%Y%m%dT%H%M%S"), slug(label)),
             label: label.to_string(),
             applied_at: now.timestamp(),
             ops,
@@ -25,6 +44,14 @@ impl Journal {
         std::fs::write(&path, serde_json::to_vec_pretty(&j)?)
             .with_context(|| format!("writing journal {}", path.display()))?;
         Ok(j)
+    }
+
+    /// Remove this journal entry, for when the operation it records is being undone
+    /// as part of a failed apply.
+    pub fn discard(&self, lib: &Library) -> Result<()> {
+        let path = lib.journal_dir().join(format!("{}.json", self.id));
+        std::fs::remove_file(path).ok();
+        Ok(())
     }
 
     pub fn list(lib: &Library) -> Result<Vec<String>> {
@@ -69,5 +96,26 @@ impl Journal {
         let path = lib.journal_dir().join(format!("{}.json", self.id));
         std::fs::remove_file(path).ok();
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_label_cannot_smuggle_a_path_into_the_filename() {
+        // "move 12 to Trip/Alps" once tried to write journal/Trip/Alps.json and failed
+        // only *after* the files had already moved.
+        assert_eq!(slug("move 12 to Trip/Alps"), "move-12-to-Trip-Alps");
+        assert!(!slug("a/b").contains('/'));
+        assert!(!slug("../../etc/passwd").contains('/'));
+        assert!(!slug("../../etc/passwd").starts_with('.'));
+    }
+
+    #[test]
+    fn a_label_with_nothing_usable_still_yields_a_filename() {
+        assert_eq!(slug("///"), "op");
+        assert_eq!(slug(""), "op");
     }
 }
