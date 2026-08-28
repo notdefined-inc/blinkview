@@ -91,6 +91,12 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 /* ---------- stage ---------- */
 main{overflow:auto;position:relative}
 #stage{padding:var(--s4) var(--s6) var(--s12)}
+/* Virtualised mode: blocks are absolutely positioned at their computed offsets and
+   the container is sized to the full layout, so the scrollbar stays honest while
+   only the visible rows exist in the DOM. */
+#stage.virt{position:relative;padding:var(--s4) var(--s6) var(--s12)}
+#stage.virt .dayhead,#stage.virt .jrow{position:absolute;left:var(--s6);right:var(--s6)}
+#stage.virt .dayhead{background:none}
 .daygroup{margin-bottom:var(--s6)}
 .dayhead{
   position:sticky;top:0;z-index:5;padding:var(--s3) 0 var(--s2);
@@ -100,6 +106,7 @@ main{overflow:auto;position:relative}
 .dayhead b{font-size:15px;font-weight:600;letter-spacing:-.01em}
 .dayhead span{font-size:12px;color:var(--text-faint)}
 .jrow{display:flex;gap:3px;margin-bottom:3px}
+#stage.virt .jrow{margin-bottom:0}
 .cell{position:relative;border-radius:6px;overflow:hidden;background:var(--surface-2);cursor:pointer}
 .cell img{width:100%;height:100%;object-fit:cover;display:block;
   opacity:0;transition:opacity .3s var(--ease)}

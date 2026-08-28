@@ -74,6 +74,8 @@ enum Cmd {
     },
     /// List applied operations.
     History,
+    /// Build the thumbnail cache.
+    Thumbs,
     /// Download the face-detection models.
     Models {
         #[command(subcommand)]
@@ -349,6 +351,11 @@ fn main() -> Result<()> {
             }
             let j = plan.apply(&mut lib)?;
             println!("\napplied. undo with:  openfoto undo {} --apply", j.id);
+        }
+        Cmd::Thumbs => {
+            let lib = open(&cli)?;
+            let n = openfoto_core::thumbs::build_with_progress(&lib, &cli_progress("thumbnails"))?;
+            println!("built {n} thumbnails");
         }
         Cmd::Models { cmd } => {
             use openfoto_core::faces::{fetch, models};

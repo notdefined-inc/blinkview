@@ -23,6 +23,12 @@ pub fn thumb_path_at(root: &std::path::Path, hash: &str) -> std::path::PathBuf {
     root.join(crate::library::VAULT_DIR).join("thumbs").join(format!("{hash}.jpg"))
 }
 
+/// Render a single thumbnail. Public so the desktop app can produce one on demand
+/// when the grid asks for it, rather than requiring a full pre-pass first.
+pub fn render_to(src: &std::path::Path, dst: &std::path::Path, is_video: bool) -> Result<()> {
+    if is_video { render_video(src, dst) } else { render_one(src, dst) }
+}
+
 fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     let img = imageio::load_rgb(src)?;
     let (w, h) = (img.width(), img.height());
@@ -99,14 +105,24 @@ pub fn build_with_progress(
         .collect();
 
     let counter = crate::progress::Counter::new(todo.len(), progress);
-    let made: usize = todo
+    let results: Vec<Result<()>> = todo
         .par_iter()
         .map(|(is_video, src, dst)| {
             let ok = if *is_video { render_video(src, dst) } else { render_one(src, dst) };
             counter.tick();
-            usize::from(ok.is_ok())
+            ok.with_context(|| format!("thumbnail for {}", src.display()))
         })
-        .sum();
+        .collect();
     counter.finish();
+
+    let made = results.iter().filter(|r| r.is_ok()).count();
+    // Failures used to be counted and discarded, which hid a hard stop partway
+    // through a large library. Surface the first one; the caller decides.
+    if let Some(Err(e)) = results.into_iter().find(|r| r.is_err()) {
+        if made == 0 {
+            return Err(e);
+        }
+        eprintln!("[thumbs] {made} built, first failure: {e:#}");
+    }
     Ok(made)
 }

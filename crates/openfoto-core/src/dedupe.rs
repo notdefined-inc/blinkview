@@ -93,25 +93,42 @@ pub fn find_groups(lib: &Library, opt: &Options) -> Result<Vec<Group>> {
     }
     let n = sigs.len();
 
+    // Normalize every thumbnail once. Doing it inside the comparison meant each image
+    // was re-normalized once per candidate pair it appeared in.
+    let norms: Vec<Vec<f32>> = sigs.par_iter().map(|s| imagesig::normalize(&s.thumb)).collect();
+
     // Stage 1+2: candidates by dHash, confirmed by pixels.
     let pairs: Vec<(f32, usize, usize)> = (0..n)
         .into_par_iter()
         .flat_map(|i| {
-            let sigs = &sigs;
+            let (sigs, norms) = (&sigs, &norms);
             ((i + 1)..n)
                 .filter_map(move |j| {
                     if imagesig::hamming(sigs[i].dhash, sigs[j].dhash) > opt.hamming {
                         return None;
                     }
-                    let d = imagesig::rmse(&sigs[i].thumb, &sigs[j].thumb);
-                    (d <= opt.rmse).then_some((d, i, j))
+                    imagesig::rmse_norm_within(&norms[i], &norms[j], opt.rmse)
+                        .map(|d| (d, i, j))
                 })
                 .collect::<Vec<_>>()
         })
         .collect();
 
     // Stage 3: complete-linkage, so no group is held together by transitivity.
-    let close = |a: usize, b: usize| imagesig::rmse(&sigs[a].thumb, &sigs[b].thumb) <= opt.rmse;
+    //
+    // `close` consults the pairs already verified above rather than recomputing RMSE.
+    // That is not only faster — complete-linkage calls it once per membership test and
+    // |A|x|B| times per merge, and each call was a 1024-element comparison, which is
+    // what took 15 minutes on a 20k library — it is also more consistent: the
+    // candidate gate (Hamming, then pixels) *is* the definition of close, and
+    // recomputing RMSE alone could call a pair close that was never a candidate.
+    let verified: std::collections::HashSet<(u32, u32)> = pairs
+        .iter()
+        .map(|&(_, i, j)| (i.min(j) as u32, i.max(j) as u32))
+        .collect();
+    let close = |a: usize, b: usize| {
+        verified.contains(&(a.min(b) as u32, a.max(b) as u32))
+    };
     let groups = cluster::complete_linkage(n, pairs, close);
 
     // Stage 4: the sharpest frame stays.

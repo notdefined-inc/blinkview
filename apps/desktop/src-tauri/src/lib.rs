@@ -754,6 +754,14 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     // nothing would ever resolve.
     let Ok(decoded) = percent_decode(request.uri().path()) else { return deny(400) };
     let path = std::path::PathBuf::from(&decoded);
+    // `?t=<hash>` asks for the thumbnail of this photo. Serving it from cache when
+    // present and rendering it on demand when not is what makes the grid usable
+    // immediately on a large library: the virtualised viewport only ever requests the
+    // few dozen images actually on screen, so thumbnails are produced in view order
+    // instead of by a pre-pass that has to finish before anything is visible.
+    let thumb_hash = request.uri().query().and_then(|q| {
+        q.split('&').find_map(|kv| kv.strip_prefix("t=").map(|v| v.to_string()))
+    });
 
     // Boundary: the file must live inside a source the user added.
     let sources = load_sources(app);
@@ -767,24 +775,57 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     if !allowed {
         return deny(403);
     }
-    match std::fs::read(&canon) {
-        Ok(bytes) => {
-            let mime = match canon.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
-                Some("png") => "image/png",
-                Some("mp4") => "video/mp4",
-                Some("mov") => "video/quicktime",
-                _ => "image/jpeg",
-            };
-            http::Response::builder()
-                .status(200)
-                .header("Content-Type", mime)
-                .header("Cache-Control", "max-age=31536000")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(bytes)
-                .unwrap()
+    // Resolve to a thumbnail path, rendering it if this is the first request.
+    let serve = match &thumb_hash {
+        None => canon.clone(),
+        Some(hash) => {
+            let root = sources
+                .iter()
+                .map(std::path::PathBuf::from)
+                .find(|r| r.canonicalize().map(|c| canon.starts_with(c)).unwrap_or(false));
+            match root {
+                None => canon.clone(),
+                Some(root) => {
+                    let t = openfoto_core::thumbs::thumb_path_at(&root, hash);
+                    if !t.exists() {
+                        let is_video = canon
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "m4v"));
+                        if openfoto_core::thumbs::render_to(&canon, &t, is_video).is_err() {
+                            // Fall back to the original rather than showing nothing.
+                            return match std::fs::read(&canon) {
+                                Ok(b) => ok_response(b, &canon),
+                                Err(_) => deny(404),
+                            };
+                        }
+                    }
+                    t
+                }
+            }
         }
+    };
+
+    match std::fs::read(&serve) {
+        Ok(bytes) => ok_response(bytes, &serve),
         Err(_) => deny(404),
     }
+}
+
+fn ok_response(bytes: Vec<u8>, path: &std::path::Path) -> http::Response<Vec<u8>> {
+    let mime = match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("png") => "image/png",
+        Some("mp4") => "video/mp4",
+        Some("mov") => "video/quicktime",
+        _ => "image/jpeg",
+    };
+    http::Response::builder()
+        .status(200)
+        .header("Content-Type", mime)
+        .header("Cache-Control", "max-age=31536000")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(bytes)
+        .unwrap()
 }
 
 fn percent_decode(s: &str) -> Result<String, ()> {

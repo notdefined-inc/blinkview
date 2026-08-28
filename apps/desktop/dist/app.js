@@ -174,12 +174,97 @@ const io = new IntersectionObserver(entries => {
   }
 }, { rootMargin: "600px 0px" });
 
+/* ---------------- virtualised grid ----------------
+   Layout is computed for every photo (arithmetic only, cheap at any size) but DOM is
+   created solely for the rows near the viewport. Without this a 20k-photo library
+   builds 20k cells up front and the window stops responding. */
+
+let LAYOUT = { blocks: [], height: 0, width: 0 };
+const ROW_H = 200, GAP = 3, HEAD_H = 46, OVERSCAN = 900;
+
+function computeLayout(width) {
+  const blocks = [];
+  let y = 0;
+  const groups = new Map();
+  for (const p of S.view) {
+    const key = p.taken_at ? DAY(p.taken_at) : "Undated";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  for (const [day, items] of groups) {
+    blocks.push({ kind: "head", y, h: HEAD_H, day, n: items.length });
+    y += HEAD_H;
+    for (const r of justify(items, width, ROW_H, GAP)) {
+      blocks.push({ kind: "row", y, h: r.h, items: r.items });
+      y += r.h + GAP;
+    }
+    y += 18; // breathing room between days
+  }
+  LAYOUT = { blocks, height: y, width };
+}
+
+function cellFor(p, w, h) {
+  const img = el("img", { alt: p.name, loading: "lazy", decoding: "async" });
+  // Ask for the *original* with ?t=<hash>: the handler serves the cached thumbnail
+  // or renders it now. Only visible cells ever ask, so thumbnails are produced in the
+  // order they are looked at.
+  img.src = photoUrl(p.path) + "?t=" + p.hash;
+  img.addEventListener("load", () => img.classList.add("on"), { once: true });
+  return el("div", {
+    class: "cell" + (S.sel.has(p.hash) ? " sel" : ""),
+    style: `width:${Math.max(40, w)}px;height:${h}px`,
+    title: p.name,
+    "data-hash": p.hash,
+    onclick: e => {
+      if (e.metaKey || e.ctrlKey) { toggleSel(p); return; }
+      if (e.shiftKey) { rangeSel(p); return; }
+      if (S.sel.size) { toggleSel(p); return; }
+      openLightbox(p);
+    },
+    oncontextmenu: e => {
+      e.preventDefault();
+      if (!S.sel.has(p.hash)) { S.sel.clear(); toggleSel(p); }
+      showCtx(e.clientX, e.clientY);
+    }
+  }, img,
+    p.kind === "video" ? el("span", { class: "play" }, "\u25B6") : null,
+    p.people.length ? el("span", { class: "badge" }, p.people.join(", ")) : null);
+}
+
+function paintViewport() {
+  const main = $("#main"), stage = $("#stage");
+  if (!LAYOUT.blocks.length) return;
+  const top = main.scrollTop - OVERSCAN;
+  const bottom = main.scrollTop + main.clientHeight + OVERSCAN;
+
+  const wanted = new Set();
+  const frag = document.createDocumentFragment();
+  LAYOUT.blocks.forEach((b, i) => {
+    if (b.y + b.h < top || b.y > bottom) return;
+    wanted.add(i);
+    if (stage.querySelector(`[data-b="${i}"]`)) return;
+    const node = b.kind === "head"
+      ? el("div", { class: "dayhead", "data-b": i, style: `top:${b.y}px` },
+          el("b", {}, b.day), el("span", { class: "num" }, String(b.n)))
+      : el("div", { class: "jrow", "data-b": i, style: `top:${b.y}px;height:${b.h}px` },
+          b.items.map(({ p, r }) => cellFor(p, r * b.h, b.h)));
+    frag.append(node);
+  });
+  stage.append(frag);
+  for (const n of [...stage.children]) {
+    const i = Number(n.dataset.b);
+    if (!wanted.has(i)) n.remove();
+  }
+}
+
 function renderGrid() {
   const stage = $("#stage");
   if (!S.source) return renderWelcome();
   if (!S.view.length) {
+    stage.className = "";
+    stage.style.height = "";
     stage.replaceChildren(el("div", { class: "welcome" },
-      el("div", { class: "art" }, "◇"),
+      el("div", { class: "art" }, "\u25C7"),
       el("h2", {}, "Nothing here yet"),
       el("p", {}, S.photos.length
         ? "No photos match this filter."
@@ -187,47 +272,12 @@ function renderGrid() {
       S.photos.length ? el("button", { class: "btn ghost", onclick: () => selectSource(S.source) }, "Show all photos") : null));
     return;
   }
-
-  const width = stage.clientWidth || 1000;
-  const groups = new Map();
-  for (const p of S.view) {
-    const key = p.taken_at ? DAY(p.taken_at) : "Undated";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p);
-  }
-
-  const frag = document.createDocumentFragment();
-  for (const [day, items] of groups) {
-    const rows = justify(items, width, 200, 3);
-    frag.append(el("section", { class: "daygroup" },
-      el("div", { class: "dayhead" }, el("b", {}, day), el("span", { class: "num" }, `${items.length}`)),
-      ...rows.map(r => el("div", { class: "jrow" },
-        r.items.map(({ p, r: ratio }) => {
-          const img = el("img", { alt: p.name, loading: "lazy" });
-          img.dataset.src = photoUrl(p.thumb);
-          img.addEventListener("load", () => img.classList.add("on"));
-          io.observe(img);
-          const cell = el("div", {
-            class: "cell" + (S.sel.has(p.hash) ? " sel" : ""),
-            style: `width:${Math.max(40, ratio * r.h)}px;height:${r.h}px`,
-            title: p.name,
-            "data-hash": p.hash,
-            onclick: e => {
-              // Modifier-click selects; a plain click opens, unless a selection is
-              // already running — then it extends it, as every photo app does.
-              if (e.metaKey || e.ctrlKey) { toggleSel(p); return; }
-              if (e.shiftKey) { rangeSel(p); return; }
-              if (S.sel.size) { toggleSel(p); return; }
-              openLightbox(p);
-            },
-            oncontextmenu: e => { e.preventDefault(); if (!S.sel.has(p.hash)) { S.sel.clear(); toggleSel(p); } showCtx(e.clientX, e.clientY); }
-          }, img,
-            p.kind === "video" ? el("span", { class: "play" }, "▶") : null,
-            p.people.length ? el("span", { class: "badge" }, p.people.join(", ")) : null);
-          return cell;
-        })))));
-  }
-  stage.replaceChildren(frag);
+  stage.className = "virt";
+  computeLayout(stage.clientWidth || $("#main").clientWidth - 48 || 1000);
+  stage.style.height = LAYOUT.height + "px";
+  stage.replaceChildren();
+  $("#main").scrollTop = 0;
+  paintViewport();
 }
 
 function renderWelcome() {
@@ -252,6 +302,7 @@ function rangeSel(p) {
 }
 function clearSel() { S.sel.clear(); paintSel(); }
 function paintSel() {
+  // Only mounted cells exist; the rest pick up their state when they scroll in.
   for (const c of document.querySelectorAll(".cell"))
     c.classList.toggle("sel", S.sel.has(c.dataset.hash));
   const bar = $("#selbar");
@@ -376,7 +427,7 @@ function paintLightbox() {
   strip.replaceChildren(...S.lbList.slice(from, to).map((q, k) => {
     const i = from + k;
     return el("img", {
-      src: photoUrl(q.thumb), alt: q.name, loading: "lazy", decoding: "async",
+      src: photoUrl(q.path) + "?t=" + q.hash, alt: q.name, loading: "lazy", decoding: "async",
       "aria-current": String(i === S.lbIndex),
       onclick: () => { S.lbIndex = i; paintLightbox(); }
     });
@@ -483,13 +534,14 @@ async function selectSource(path) {
   S.source = path; S.folder = null; S.person = null;
   renderSidebar();
   await busy("Loading library…", loadPhotos);
+  // Thumbnails are produced on demand by the photo:// handler as cells scroll into
+  // view, so nothing blocks the first paint. A background pass backfills the rest so
+  // later scrolling is instant, but it is an optimisation, not a prerequisite.
   const src = S.sources.find(s => s.path === path);
   if (src && src.thumbs_ready < src.photos) {
-    busy("Building thumbnails…", async () => {
-      await invoke("build_thumbs", { path });
-      await refreshSources(); await loadPhotos();
-      toast("Thumbnails ready", "ok");
-    });
+    invoke("build_thumbs", { path })
+      .then(() => refreshSources())
+      .catch(() => {});
   }
 }
 function selectFolder(f) { S.folder = (S.folder === f ? null : f); S.person = null; renderSidebar(); applyFilter(); }
@@ -748,6 +800,7 @@ addEventListener("keydown", e => {
   }
 });
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderGrid, 120); });
+$("#main").addEventListener("scroll", () => paintViewport(), { passive: true });
 
 (async function init() {
   renderWelcome();

@@ -20,6 +20,32 @@ explicit and confirms first.
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
+### Scale (measured on 20,000 distinct photos, debug build)
+
+| Operation | Time |
+|---|---|
+| `scan` (BLAKE3 + EXIF) | 5.5s |
+| `thumbs` (20,000 built) | 49s |
+| `dedupe` | **13.3s**, from 14m49s |
+
+The grid is virtualised: layout is computed for every photo but DOM exists only for
+rows near the viewport — 20,000 photos render with ~55 cells mounted. Thumbnails are
+produced on demand by the `photo://` handler as cells scroll into view, so nothing
+blocks first paint; a background pass backfills.
+
+The dedupe speedup was **not** the O(n^2) pair scan, which is what it looked like.
+`rmse` normalised both thumbnails and allocated two 1024-element vectors on every
+call, so each image was re-normalised once per candidate pair it appeared in.
+Hoisting `normalize` out and abandoning comparisons that cannot beat the threshold
+took it from 15 minutes to 13 seconds without touching the pair count.
+
+Two caveats on that number. The synthetic fixture is pathologically self-similar
+(5,779 groups from 20,000 photos, against 238 from 2,362 real ones), so it is a worst
+case. And its counts shifted very slightly (5778->5779 groups) because `close` now
+consults the verified candidate set rather than recomputing RMSE without the Hamming
+gate, and because chunked accumulation orders floats differently — both can flip a
+pair sitting exactly on the threshold. Real photos give identical results.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in
