@@ -14,7 +14,7 @@ use openfoto_core::{
     userdata::{PhotoMeta, UserData},
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
-    rename, scan, scenery, thumbs, Library,
+    rename, scan, scenery, semantic, thumbs, Library,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -44,6 +44,11 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 pub struct AppState {
     libs: Mutex<HashMap<String, Library>>,
     sources: Mutex<Vec<String>>,
+    /// Held open for the life of the window. Loading the text tower costs ~270 ms
+    /// against ~15 ms to embed a phrase, so a fresh load per keystroke would dominate
+    /// the search. Built on first use, not at startup — a library nobody searches
+    /// should not pay for it.
+    text_encoder: Mutex<Option<semantic::TextEncoder>>,
 }
 
 // ---------------------------------------------------------------- sources
@@ -385,6 +390,84 @@ async fn analyze_faces(
     with(&state, &path, |lib| {
         let st = pipeline::analyze_with_progress(lib, pipeline::DEFAULT_SCORE, &sink)?;
         Ok(format!("{} photos analysed · {} faces found", st.photos, st.faces))
+    })
+}
+
+// ---------------------------------------------------------------- semantic
+
+#[derive(Serialize)]
+pub struct SemanticStatus {
+    /// False when the models are not downloaded; the UI offers to fetch them.
+    available: bool,
+    /// Photos with an embedding, against photos that could have one.
+    embedded: usize,
+    total: usize,
+}
+
+#[tauri::command]
+async fn semantic_status(state: tauri::State<'_, AppState>, path: String) -> R<SemanticStatus> {
+    let available = semantic::TextEncoder::available();
+    with(&state, &path, |lib| {
+        let total = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").count();
+        Ok(SemanticStatus { available, embedded: lib.index.count_clip()?, total })
+    })
+}
+
+/// Embed every photo that has none yet. Resumable: interrupting loses only the photo
+/// in flight, so a large library can be indexed across several sittings.
+#[tauri::command]
+async fn semantic_index(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<String> {
+    let sink = emitter(&app, "semantic");
+    with(&state, &path, |lib| {
+        let st = semantic::analyze(lib, &sink)?;
+        Ok(match (st.embedded, st.errors.len()) {
+            (0, 0) => "Everything was already understood.".to_string(),
+            (n, 0) => format!("{n} photos understood."),
+            (n, e) => format!("{n} photos understood · {e} could not be read."),
+        })
+    })
+}
+
+#[derive(Serialize)]
+pub struct SemanticHit {
+    hash: String,
+    score: f32,
+}
+
+/// Rank photographs against a phrase. An empty result is a real answer: below the
+/// threshold the model is guessing, and a confident wrong photo is worse than none.
+#[tauri::command]
+async fn semantic_search(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    query: String,
+    limit: Option<usize>,
+) -> R<Vec<SemanticHit>> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !semantic::TextEncoder::available() {
+        return Ok(Vec::new());
+    }
+    let mut guard = state.text_encoder.lock().map_err(err)?;
+    if guard.is_none() {
+        *guard = Some(semantic::TextEncoder::load().map_err(err)?);
+    }
+    let enc = guard.as_mut().expect("just loaded");
+    with(&state, &path, |lib| {
+        let hits = semantic::search_with(
+            lib,
+            enc,
+            &query,
+            semantic::DEFAULT_THRESHOLD,
+            limit.unwrap_or(500),
+        )?;
+        Ok(hits.into_iter().map(|h| SemanticHit { hash: h.hash, score: h.score }).collect())
     })
 }
 
@@ -1200,7 +1283,8 @@ pub fn run() {
             delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
             models_status, models_fetch,
             people_overview, name_cluster, cluster_photos, autodetect_faces,
-            edit_photo, set_rating, set_label, set_album, list_albums, photo_detail
+            edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
+            semantic_status, semantic_index, semantic_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

@@ -32,29 +32,62 @@ const CTX: usize = 77;
 /// int8 text model inflated scores enough to nearly double what cleared this line.
 pub const DEFAULT_THRESHOLD: f32 = 0.18;
 
+/// The text half on its own.
+///
+/// Searching needs no vision tower, and loading one costs 45 MB of resident memory for
+/// nothing. Held open across queries by the app: loading costs ~270 ms against ~15 ms
+/// to embed a phrase, so a fresh load per keystroke would dominate.
+pub struct TextEncoder {
+    session: Session,
+    tokenizer: tokenizers::Tokenizer,
+    input: String,
+}
+
+impl TextEncoder {
+    pub fn load() -> Result<Self> {
+        let tp = crate::faces::models::find(TEXT)?;
+        let kp = crate::faces::models::find(TOKENIZER)?;
+        let session = Session::builder()?.commit_from_file(&tp)?;
+        let tokenizer = tokenizers::Tokenizer::from_file(&kp)
+            .map_err(|e| anyhow::anyhow!("loading {}: {e}", kp.display()))?;
+        Ok(Self { input: session.inputs()[0].name().to_string(), session, tokenizer })
+    }
+
+    pub fn available() -> bool {
+        [TEXT, TOKENIZER].iter().all(|n| crate::faces::models::find(n).is_ok())
+    }
+
+    /// Embed a phrase into the same 512-d space as [`Encoder::embed_image`].
+    pub fn embed(&mut self, query: &str) -> Result<Vec<f32>> {
+        let enc = self
+            .tokenizer
+            .encode(query, true)
+            .map_err(|e| anyhow::anyhow!("tokenising {query:?}: {e}"))?;
+        let mut ids: Vec<i64> = enc.get_ids().iter().map(|&i| i as i64).take(CTX).collect();
+        ids.resize(CTX, 0);
+        let input = Array2::from_shape_vec((1, CTX), ids)?;
+        let out = self
+            .session
+            .run(ort::inputs![self.input.as_str() => ort::value::Tensor::from_array(input)?])?;
+        let (_, data) = out[0].try_extract_tensor::<f32>()?;
+        Ok(unit(data))
+    }
+}
+
 pub struct Encoder {
     vision: Session,
-    text: Session,
-    tokenizer: tokenizers::Tokenizer,
+    text: TextEncoder,
     vision_input: String,
-    text_input: String,
 }
 
 impl Encoder {
     pub fn load() -> Result<Self> {
         let vp = crate::faces::models::find(VISION)?;
-        let tp = crate::faces::models::find(TEXT)?;
-        let kp = crate::faces::models::find(TOKENIZER)?;
         let vision = Session::builder()?.commit_from_file(&vp)?;
-        let text = Session::builder()?.commit_from_file(&tp)?;
-        let tokenizer = tokenizers::Tokenizer::from_file(&kp)
-            .map_err(|e| anyhow::anyhow!("loading {}: {e}", kp.display()))?;
         Ok(Self {
             vision_input: vision.inputs()[0].name().to_string(),
-            text_input: text.inputs()[0].name().to_string(),
             vision,
-            text,
-            tokenizer,
+            text: TextEncoder::load()?,
         })
     }
 
@@ -96,18 +129,7 @@ impl Encoder {
 
     /// Embed a search phrase into the same space.
     pub fn embed_text(&mut self, query: &str) -> Result<Vec<f32>> {
-        let enc = self
-            .tokenizer
-            .encode(query, true)
-            .map_err(|e| anyhow::anyhow!("tokenising {query:?}: {e}"))?;
-        let mut ids: Vec<i64> = enc.get_ids().iter().map(|&i| i as i64).take(CTX).collect();
-        ids.resize(CTX, 0);
-        let input = Array2::from_shape_vec((1, CTX), ids)?;
-        let out = self
-            .text
-            .run(ort::inputs![self.text_input.as_str() => ort::value::Tensor::from_array(input)?])?;
-        let (_, data) = out[0].try_extract_tensor::<f32>()?;
-        Ok(unit(data))
+        self.text.embed(query)
     }
 }
 
@@ -174,8 +196,21 @@ pub struct Hit {
 /// Returning nothing is the right answer for a query the model cannot serve. Showing
 /// the least-bad photograph would present a guess as a result.
 pub fn search(lib: &Library, query: &str, threshold: f32, limit: usize) -> Result<Vec<Hit>> {
-    let mut enc = Encoder::load()?;
-    let q = enc.embed_text(query)?;
+    search_with(lib, &mut TextEncoder::load()?, query, threshold, limit)
+}
+
+/// As [`search`], against an encoder the caller keeps open.
+///
+/// The app holds one for the life of the window; reloading it per keystroke would cost
+/// ~270 ms against the ~15 ms the query itself takes.
+pub fn search_with(
+    lib: &Library,
+    enc: &mut TextEncoder,
+    query: &str,
+    threshold: f32,
+    limit: usize,
+) -> Result<Vec<Hit>> {
+    let q = enc.embed(query)?;
     let mut hits: Vec<Hit> = lib
         .index
         .all_clip()?

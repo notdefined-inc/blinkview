@@ -71,6 +71,19 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .qc-rating{color:#fbbf24;border-color:#fbbf2444;background:#fbbf2414}
 .qc-label{color:#f87171;border-color:#f8717144;background:#f8717114}
 .qc-type{color:#67e8f9;border-color:#67e8f944;background:#67e8f914}
+/* Semantic: the one term matched against what the photo shows rather than what it
+   is called, so it gets its own colour and does not read as another text filter. */
+.qc-sem{color:#f0abfc;border-color:#f0abfc55;background:#f0abfc18}
+.qc-sem.busy{opacity:.7}
+.qc-sem.busy::after{
+  content:"";display:inline-block;width:6px;height:6px;margin-left:6px;
+  border-radius:50%;background:currentColor;animation:sempulse 1s ease-in-out infinite;
+}
+.qc-sem.empty{color:var(--text-dim);border-color:var(--glass-line);background:transparent}
+.qc-sem.action{cursor:pointer;font:inherit;font-size:12px;font-weight:600}
+.qc-sem.action:hover{background:#f0abfc28;border-color:#f0abfc88}
+.art.pulse{animation:sempulse 1.1s ease-in-out infinite}
+@keyframes sempulse{0%,100%{opacity:.25}50%{opacity:1}}
 
 /* Filter panel: every filter as a tap target, for anyone who would rather not type. */
 .filters{

@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-08-27_
+_Last updated: 2026-08-28_
 
 ## Current work — desktop app
 
@@ -68,6 +68,27 @@ consults the verified candidate set rather than recomputing RMSE without the Ham
 gate, and because chunked accumulation orders floats differently — both can flip a
 pair sitting exactly on the threshold. Real photos give identical results.
 
+### Search
+The search field parses a query into filters that combine: a date in any combination
+("august", "23 aug 2026", "2026-08-23"), a person, an album, a rating, a colour label,
+a type, and free text. Chips under the field show how the query was read, so a search
+that matches nothing is never a black box.
+
+Free text that is not a filename or folder is also matched **semantically** — against
+what the photograph shows rather than what it is called. "a church" finds the church
+interior, "green trees" finds foliage, "a laptop computer" finds the desk shots. It
+combines with everything else: `a church sam 18 august 2026` intersects scene, person
+and date.
+
+Below the 0.18 threshold a query returns nothing rather than the least-bad photograph;
+"the sea" against a library with no sea is answered "nothing recognised". A library
+that has not been embedded yet offers **Understand these photos** in place of silence,
+and missing models say so rather than reporting an empty result.
+
+Embedding runs once per photo, is resumable, and costs about 100 ms per photo. The
+text encoder is held open for the life of the window: loading it costs ~270 ms against
+~15 ms to embed a phrase, so a fresh load per keystroke would dominate the search.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in
@@ -76,12 +97,19 @@ regardless of library size, and counted atomically so parallel work never report
 count going backwards.
 
 ### Models
-`openfoto models fetch` downloads the two ONNX models into `~/.cache/openfoto/models`,
+`openfoto models fetch` downloads four ONNX models into `~/.cache/openfoto/models`
+(YuNet and SFace for faces, MobileCLIP-S0 vision and text for search, 204 MB total),
 and the app offers the same when they are missing. Downloads come from the LFS *media*
 endpoint — `raw.githubusercontent.com` returns a 133-byte pointer that loads as a
 corrupt model — and are verified against a pinned SHA-256 before install, because a
-different model silently invalidates every threshold in ADR-0003 and ADR-0004. Files
-land in `.part` and are renamed only after verification.
+different model silently invalidates every threshold in ADR-0003, ADR-0004 and ADR-0008.
+Files land in `.part` and are renamed only after verification, and an installed file
+whose hash no longer matches its spec is re-downloaded rather than trusted.
+
+Both CLIP towers are fp32. The int8 text tower is four times smaller and measurably
+wrong: its vectors diverge from fp32 by cosine 0.89, it nearly doubles the matches
+clearing the threshold, and it is not reproducible between onnxruntime builds, which
+makes the ADR-0004 parity rule unsatisfiable. ADR-0008 has the measurements.
 
 ### Build size
 The desktop crate emitted `staticlib` + `cdylib` targets for Tauri mobile that are never

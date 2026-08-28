@@ -58,10 +58,35 @@ above 0.20 and both failures below 0.18. Configurable via a flag.
 
 ## Tasks
 
-- [ ] 1. `semantic` module: model loading, image and text embedding (core)
-- [ ] 2. `clip` table, cache read/write keyed by hash (core)
-- [ ] 3. Model specs + SHA pins in `faces::fetch` (core) — criterion 1
-- [ ] 4. `analyze_semantic` with progress, and a CLI command (core, cli) — 4, 5, 10
-- [ ] 5. Parity test against a committed Python-generated reference (tests) — 2, 3
-- [ ] 6. `search` ranking with threshold (core) — 6, 7
-- [ ] 7. Tauri command + query integration + chip (app) — 8, 9
+- [x] 1. `semantic` module: model loading, image and text embedding (core)
+- [x] 2. `clip` table, cache read/write keyed by hash (core)
+- [x] 3. Model specs + SHA pins in `faces::fetch` (core) — criterion 1
+- [x] 4. `analyze_semantic` with progress, and a CLI command (core, cli) — 4, 5, 10
+- [x] 5. Parity test against a committed Python-generated reference (tests) — 2, 3
+- [x] 6. `search` ranking with threshold (core) — 6, 7
+- [x] 7. Tauri command + query integration + chip (app) — 8, 9
+
+## Outcome
+
+Shipped. All ten acceptance criteria met, verified against the 280-photo demo library
+and a 12-photo HEIC library.
+
+One decision changed during implementation. The spec assumed the int8 text encoder from
+ADR-0008; the parity test in task 5 failed against it, and the investigation showed int8
+was wrong rather than merely imprecise — vectors off by cosine 0.89 from fp32, nearly
+double the matches clearing the threshold, and irreproducible across onnxruntime builds.
+The text tower is now fp32 and the two runtimes agree bit-for-bit. ADR-0008 carries the
+measurements and the correction; models grew from 84 MB to 204 MB.
+
+The threshold stayed at 0.18 but was re-derived on the shipping path: the fp32 gap is
+0.168 (highest false positive) to 0.183 (lowest true positive), not the 0.175-0.20 the
+original evaluation reported from int8 scores.
+
+Two things surfaced only in the running window, not in the code:
+
+- Colour words were being claimed as label filters, so "a red sailing boat" searched for
+  a boat of no particular colour and "green trees" searched for trees. A bare colour is
+  now a label only when the query is nothing but colours.
+- An in-flight query rendered "No photos match this filter" — a wrong answer shown
+  before the right one arrived. There is now a distinct looking-in-progress state, and
+  a missing model reports itself rather than being reported as "nothing recognised".

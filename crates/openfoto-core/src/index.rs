@@ -186,6 +186,11 @@ impl Index {
         Ok(())
     }
 
+    /// How many photographs have an embedding, without reading any of them.
+    pub fn count_clip(&self) -> Result<usize> {
+        Ok(self.conn.query_row("SELECT COUNT(*) FROM clip", [], |r| r.get::<_, i64>(0))? as usize)
+    }
+
     pub fn all_clip(&self) -> Result<Vec<(String, Vec<f32>)>> {
         let mut st = self.conn.prepare("SELECT hash, embedding FROM clip")?;
         let rows = st.query_map([], |r| {

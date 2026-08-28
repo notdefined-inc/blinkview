@@ -31,6 +31,11 @@ const S = {
   crop: null,              // {x,y,w,h} fractions of the displayed image
   cropAR: null,            // locked aspect ratio, or null for free
   keepOriginal: true,      // safe editing, remembered per session
+  // Semantic search is the one filter that cannot run in the browser: it needs the
+  // text encoder. Results arrive after the grid has already drawn, so they are held
+  // here and folded in on the next pass rather than blocking the typed query.
+  semantic: null,          // { query, scores: Map<hash, score>, state }
+  semanticReady: null,     // { available, embedded, total }
 };
 
 const TRASH = "Trash";
@@ -304,13 +309,20 @@ function renderGrid() {
   if (!S.view.length) {
     stage.className = "";
     stage.style.height = "";
+    // A semantic query in flight has not answered yet, so "no photos match" would be
+    // a wrong answer shown before the right one arrives.
+    const looking = S.semantic && S.semantic.state === "busy";
     stage.replaceChildren(el("div", { class: "welcome" },
-      el("div", { class: "art" }, "\u25C7"),
-      el("h2", {}, "Nothing here yet"),
-      el("p", {}, S.photos.length
-        ? "No photos match this filter."
-        : "This folder has no photos openfoto can read, or it has not finished indexing."),
-      S.photos.length ? el("button", { class: "btn ghost", onclick: () => selectSource(S.source) }, "Show all photos") : null));
+      el("div", { class: looking ? "art pulse" : "art" }, looking ? "\u2728" : "\u25C7"),
+      el("h2", {}, looking ? "Looking\u2026" : "Nothing here yet"),
+      el("p", {}, looking
+        ? `Reading what your photos show, for \u201C${S.semantic.query}\u201D.`
+        : S.photos.length
+          ? "No photos match this filter."
+          : "This folder has no photos openfoto can read, or it has not finished indexing."),
+      !looking && S.photos.length
+        ? el("button", { class: "btn ghost", onclick: () => selectSource(S.source) }, "Show all photos")
+        : null));
     return;
   }
   stage.className = "virt";
@@ -587,6 +599,7 @@ function parseQuery(q, people = [], albums = []) {
     minRating: null, label: null, fav: false,
   };
   const text = [];
+  const colours = [];
   const tokens = q.toLowerCase().split(/[\s,]+/).filter(Boolean);
   const names = people.filter(Boolean).map(n => n.toLowerCase());
   const albumNames = albums.map(a => a.toLowerCase());
@@ -623,7 +636,11 @@ function parseQuery(q, people = [], albums = []) {
     // recognised as such, so "sam august 2026" needs no syntax at all.
     if (names.includes(raw)) { want.person = raw; continue; }
     if (albumNames.includes(raw)) { want.album = raw; continue; }
-    if (LABEL_NAMES.includes(raw)) { want.label = raw; continue; }
+    // Colours stay in place rather than being claimed. "red" alone means the red
+    // label; in "a red sailing boat" it describes the boat, and swallowing it would
+    // search for a boat of no particular colour. Kept in order: word order matters
+    // to the model that reads the phrase.
+    if (LABEL_NAMES.includes(raw)) { colours.push(text.length); text.push(raw); continue; }
     if (raw === "video" || raw === "videos") { want.kind = "video"; continue; }
     if (raw === "photo" || raw === "photos") { want.kind = "photo"; continue; }
     if (raw === "fav" || raw === "favourite" || raw === "favorite") { want.fav = true; continue; }
@@ -631,6 +648,11 @@ function parseQuery(q, people = [], albums = []) {
     if (stars) { want.minRating = +stars[1]; continue; }
 
     text.push(raw);
+  }
+  // Only when the leftover words are *nothing but* colours is this a label filter.
+  if (colours.length === text.length && text.length) {
+    want.label = text[0];
+    text.length = 0;
   }
   const hasFilter = Object.entries(want).some(([k, v]) =>
     k === "fav" ? v : v !== null);
@@ -652,8 +674,99 @@ function queryChips({ want, text }) {
   if (want.label) out.push({ kind: "label", text: want.label });
   if (want.minRating) out.push({ kind: "rating", text: "★".repeat(want.minRating) + "+" });
   if (want.fav) out.push({ kind: "rating", text: "★★★★★" });
-  for (const t of text) out.push({ kind: "text", text: t });
+  if (text.length) {
+    const phrase = text.join(" ");
+    const sem = S.semantic && S.semantic.query === phrase ? S.semantic : null;
+    // Availability is checked before any result state: "nothing recognised" would be
+    // a lie when the reason is that the models are not installed.
+    if (S.semanticReady && !S.semanticReady.available) {
+      out.push({ kind: "sem empty", text: "\u2728 needs the search models" });
+      for (const t of text) out.push({ kind: "text", text: t });
+    } else if (S.semanticReady && S.semanticReady.embedded === 0) {
+      out.push({ kind: "sem action", text: "\u2728 Understand these photos", act: understand });
+      for (const t of text) out.push({ kind: "text", text: t });
+    } else if (sem && sem.state === "busy") {
+      out.push({ kind: "sem busy", text: `\u2728 ${phrase}\u2026` });
+    } else if (sem && sem.state === "ok") {
+      out.push({ kind: "sem", text: `\u2728 ${phrase} \u00B7 ${sem.scores.size}` });
+    } else if (sem && sem.state === "none") {
+      // An empty result is a real answer, not a failure — say so rather than
+      // leaving a chip that looks like it is still working.
+      out.push({ kind: "sem empty", text: `\u2728 ${phrase} \u00B7 nothing recognised` });
+    } else {
+      for (const t of text) out.push({ kind: "text", text: t });
+    }
+  }
   return out;
+}
+
+/** Embed every photo so scenes become searchable. Resumable, and safe to re-run. */
+async function understand() {
+  const msg = await busy("Understanding photos… this runs once per photo",
+    () => invoke("semantic_index", { path: S.source }));
+  toast(msg, "ok");
+  await refreshSemanticStatus();
+  S.semantic = null;
+  applyFilter();
+}
+
+/* ---------------- semantic ----------------
+   Everything else about a photo is known from its name, its folder or its metadata.
+   What it *shows* is not, so this is the one filter that has to go to the backend.
+   The literal query is applied first and the grid drawn from it; the semantic answer
+   folds in when it arrives, so typing never waits on a model. */
+
+let semTimer = null;
+let semSeq = 0;
+
+function scheduleSemantic(phrase) {
+  clearTimeout(semTimer);
+  if (!phrase) { S.semantic = null; return; }
+  if (S.semantic && S.semantic.query === phrase && S.semantic.state !== "busy") return;
+  // Not a dead end: someone who fetches the models mid-session should not have to
+  // restart, so a typed phrase re-checks rather than trusting a stale "no".
+  if (S.semanticReady && !S.semanticReady.available) { semTimer = setTimeout(recheck, 220); return; }
+  if (S.semanticReady && S.semanticReady.embedded === 0) return;
+
+  S.semantic = { query: phrase, scores: new Map(), state: "busy" };
+  // Long enough that a phrase typed at speed costs one search, short enough to feel
+  // like the results simply appear.
+  semTimer = setTimeout(() => runSemantic(phrase, ++semSeq), 220);
+}
+
+async function recheck() {
+  const was = S.semanticReady && S.semanticReady.available;
+  await refreshSemanticStatus();
+  if ((S.semanticReady && S.semanticReady.available) !== was) applyFilter();
+}
+
+async function runSemantic(phrase, seq) {
+  try {
+    const hits = await invoke("semantic_search", { path: S.source, query: phrase });
+    if (seq !== semSeq) return;              // a newer query overtook this one
+    S.semantic = {
+      query: phrase,
+      scores: new Map(hits.map(h => [h.hash, h.score])),
+      state: hits.length ? "ok" : "none",
+    };
+    // Nothing came back. That is usually a real answer, but it is also what a missing
+    // model looks like from here, so confirm which before reporting it.
+    if (!hits.length) await refreshSemanticStatus();
+  } catch (e) {
+    if (seq !== semSeq) return;
+    S.semantic = { query: phrase, scores: new Map(), state: "none" };
+    console.warn("semantic search failed:", e);
+  }
+  applyFilter();
+}
+
+/** Cheap enough to call on every source switch, and it decides whether to search at all. */
+async function refreshSemanticStatus() {
+  try {
+    S.semanticReady = await invoke("semantic_status", { path: S.source });
+  } catch {
+    S.semanticReady = null;
+  }
 }
 
 /* Show what the query was understood to mean. Someone typing "sam august 2026" should
@@ -662,8 +775,12 @@ function showQueryChips(parsed) {
   const bar = $("#qchips");
   if (!parsed || (!parsed.hasFilter && !parsed.text.length)) { bar.hidden = true; return; }
   bar.hidden = false;
-  bar.replaceChildren(...queryChips(parsed).map(c =>
-    el("span", { class: `qc qc-${c.kind}` }, c.text)));
+  bar.replaceChildren(...queryChips(parsed).map(c => {
+    if (!c.act) return el("span", { class: `qc qc-${c.kind}` }, c.text);
+    const b = el("button", { class: `qc qc-${c.kind}`, type: "button" }, c.text);
+    b.onclick = c.act;
+    return b;
+  }));
 }
 
 function matchesQuery(p, parsed) {
@@ -684,7 +801,16 @@ function matchesQuery(p, parsed) {
   if (want.fav && (p.rating || 0) < 5) return false;
   if (!text.length) return true;
   const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
-  return text.every(t => hay.includes(t));
+  if (text.every(t => hay.includes(t))) return true;
+  // Falling through to what the photo *shows*. A union, not a replacement: typing a
+  // folder name must keep working, and "church" should still find churches.
+  return semanticMatches(p, text);
+}
+
+/** True when the leftover words were understood as a scene and this photo matched. */
+function semanticMatches(p, text) {
+  const sem = S.semantic;
+  return !!sem && sem.query === text.join(" ") && sem.scores.has(p.hash);
 }
 
 function applyFilter() {
@@ -693,6 +819,7 @@ function applyFilter() {
   const parsed = q
     ? parseQuery(q, S.people.filter(p => p.name).map(p => p.name), S.albums.map(a => a[0]))
     : null;
+  scheduleSemantic(parsed && parsed.text.length ? parsed.text.join(" ") : null);
   showQueryChips(parsed);
   S.view = S.photos.filter(p =>
     // Trash is a real folder, but it should not appear in the library view unless
@@ -716,6 +843,8 @@ function applyFilter() {
 async function selectSource(path) {
   S.source = path; S.folder = null; S.person = null;
   S.cluster = null; S.clusterHashes = null; S.people = [];
+  S.semantic = null; S.semanticReady = null;
+  refreshSemanticStatus();
   renderSidebar();
   await busy("Loading library…", loadPhotos);
   refreshPeople();
