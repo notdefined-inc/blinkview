@@ -45,10 +45,25 @@ impl PhotoMeta {
     }
 }
 
+/// A named query, replacing what albums were used for across folders (ADR-0009).
+///
+/// Only the query is stored, never a list of members: that is the point. A saved
+/// search stays current as photographs are added, where an album would need
+/// remembering.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SavedSearch {
+    pub name: String,
+    pub query: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserData {
     #[serde(default)]
     pub photos: BTreeMap<String, PhotoMeta>,
+    /// Library-wide, so only meaningful in the root file. A folder describes its
+    /// photographs; it does not describe how the whole library is searched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub searches: Vec<SavedSearch>,
 }
 
 impl UserData {
@@ -225,7 +240,7 @@ impl UserDataSet {
             let Some(u) = self.by_folder.get(&folder) else { continue };
             let dir = if folder.is_empty() { root.to_path_buf() } else { root.join(&folder) };
             let path = dir.join(FILE);
-            if u.photos.is_empty() {
+            if u.photos.is_empty() && u.searches.is_empty() {
                 // An empty file is litter in a folder people browse in Finder.
                 let _ = std::fs::remove_file(&path);
                 continue;
@@ -238,6 +253,39 @@ impl UserDataSet {
         }
         let _ = std::fs::remove_file(UserData::legacy_path(root));
         Ok(())
+    }
+
+    /// The library's saved searches, which live only in the root file.
+    pub fn searches(&self) -> &[SavedSearch] {
+        self.by_folder.get("").map(|u| u.searches.as_slice()).unwrap_or(&[])
+    }
+
+    /// Add or replace a saved search by name.
+    pub fn set_search(&mut self, name: &str, query: &str) {
+        let u = self.by_folder.entry(String::new()).or_default();
+        u.searches.retain(|s| s.name != name);
+        if !query.trim().is_empty() {
+            u.searches.push(SavedSearch { name: name.to_string(), query: query.trim().to_string() });
+            u.searches.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        self.dirty.insert(String::new());
+    }
+
+    /// Drop every album label, once they have become folders.
+    pub fn clear_albums(&mut self) {
+        for (folder, u) in self.by_folder.iter_mut() {
+            let mut touched = false;
+            for m in u.photos.values_mut() {
+                if !m.albums.is_empty() {
+                    m.albums.clear();
+                    touched = true;
+                }
+            }
+            u.photos.retain(|_, m| !m.is_empty());
+            if touched {
+                self.dirty.insert(folder.clone());
+            }
+        }
     }
 
     /// Every album name still recorded anywhere in the cascade, with its photo count.

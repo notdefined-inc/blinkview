@@ -9,6 +9,7 @@
 //! * Nothing touches the disk except through `Plan` -> `apply` -> `Journal`, so every
 //!   mutation is previewable and reversible.
 
+pub mod albums;
 pub mod cluster;
 pub mod dedupe;
 pub mod edit;

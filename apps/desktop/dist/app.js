@@ -17,7 +17,9 @@ const S = {
   clusterHashes: null,
   people: [],              // named + unnamed, from people_overview
   peopleCollapsed: true,
-  albums: [],
+  albums: [],            // legacy, only for the migration prompt
+  searches: [],
+  expanded: null,
   sort: "newest",
   group: "date",           // "date" or "folder" — how the grid sections itself
   photos: [],
@@ -484,14 +486,6 @@ function showCtx(x, y) {
   if (one) items.push(item("Rename…", "", () => renamePhoto(one)));
   if (S.person) items.push(item(`Not ${S.person}`, "", untagSelected));
   items.push(el("hr"));
-  // Albums are the one grouping that is not a folder, so a photo can be in several
-  // without being copied. Existing ones first: naming a new album every time is how
-  // album lists turn into a mess of near-duplicates.
-  for (const [name] of S.albums.slice(0, 6)) {
-    const all = [...S.sel].every(h => (S.photos.find(p => p.hash === h)?.albums || []).includes(name));
-    items.push(item(`${all ? "\u2713 " : ""}${name}`, "", () => setAlbum(name, !all)));
-  }
-  items.push(item("New album\u2026", "", newAlbumPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
   else items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
@@ -513,28 +507,56 @@ async function deleteSelected() {
   toast(msg + " — press ⌘Z to undo", "ok");
   clearSel(); await reload();
 }
-async function setAlbum(album, member) {
-  const hashes = [...S.sel];
-  if (!hashes.length) return;
-  await invoke("set_album", { path: S.source, hashes, album, member });
-  toast(member ? `Added ${hashes.length} to ${album}` : `Removed ${hashes.length} from ${album}`, "ok");
-  await refreshAlbums(); await loadPhotos();
+/* ---------------- saved searches ----------------
+   What albums were used for across folders (ADR-0009). Only the query is stored, so a
+   saved search stays current as photographs are added — an album would need
+   remembering. */
+
+async function refreshSearches() {
+  if (!S.source) { S.searches = []; return; }
+  try { S.searches = await invoke("list_searches", { path: S.source }); } catch { S.searches = []; }
+  renderSearches();
 }
 
-function newAlbumPrompt() {
+function renderSearches() {
+  const block = $("#searches-block"), list = $("#searches");
+  if (!block) return;
+  block.hidden = !S.searches.length;
+  if (!S.searches.length) return;
+  list.replaceChildren(...S.searches.map(sv => el("button", {
+    class: "row", "aria-current": String($("#search").value.trim() === sv.query),
+    title: sv.query,
+    onclick: () => { $("#search").value = sv.query; applyFilter(); renderFilters(); renderSearches(); },
+    oncontextmenu: async e => {
+      e.preventDefault();
+      const ok = await confirmDialog("Forget this search?",
+        `\u201C${sv.name}\u201D will be removed. The photographs are untouched.`, "Forget");
+      if (!ok) return;
+      await invoke("save_search", { path: S.source, name: sv.name, query: "" });
+      await refreshSearches();
+    }
+  }, el("span", { class: "grow" }, sv.name))));
+}
+
+/** Keep the current query under a name. */
+function saveSearchPrompt() {
+  const q = $("#search").value.trim();
+  if (!q) { toast("Type a search first, then save it", "info"); return; }
   document.querySelector(".namebar")?.remove();
-  const n = S.sel.size;
   const bar = el("div", { class: "namebar" },
-    el("span", { class: "grow" }, `Add ${n} photo${n === 1 ? "" : "s"} to a new album`),
+    el("span", { class: "grow" }, `Save \u201C${q}\u201D as`),
     el("input", {
-      class: "nameinput", type: "text", placeholder: "Album name", "aria-label": "Album name",
+      class: "nameinput", type: "text", placeholder: "Name this search",
+      "aria-label": "Search name",
       onkeydown: async e => {
         if (e.key === "Escape") { bar.remove(); return; }
         if (e.key !== "Enter") return;
         const v = e.target.value.trim();
         if (!v) return;
         bar.remove();
-        await setAlbum(v, true);
+        await invoke("save_search", { path: S.source, name: v, query: q });
+        await refreshSearches();
+        toast(`Saved \u201C${v}\u201D`, "ok");
       }
     }),
     el("button", { class: "mini", onclick: () => bar.remove(), title: "Cancel" }, "\u2715"));
@@ -726,6 +748,7 @@ async function refreshPeople() {
     S.people = await invoke("people_overview", { path: S.source, distance: 0.55 });
   } catch { S.people = []; }
   await refreshAlbums();
+  await refreshSearches();
   await refreshSources();
 }
 async function refreshAlbums() {
@@ -734,16 +757,48 @@ async function refreshAlbums() {
   renderAlbums();
 }
 
-/** Albums in the sidebar: a grouping that is not a folder, so nothing is copied. */
+/** Albums were removed (ADR-0009). A library that still has them is offered the
+    migration to folders rather than having the grouping quietly stripped. */
 function renderAlbums() {
   const block = $("#albums-block"), list = $("#albums");
   if (!block) return;
   block.hidden = !S.albums.length;
   if (!S.albums.length) return;
-  list.replaceChildren(...S.albums.map(([name, count]) => el("button", {
-    class: "row", "aria-current": String(queryHas(name)),
-    onclick: () => { toggleTerm(name, S.albums.map(a => a[0])); renderAlbums(); }
-  }, el("span", { class: "grow" }, name), el("span", { class: "n num" }, String(count)))));
+  const total = S.albums.reduce((n, a) => n + a[1], 0);
+  list.replaceChildren(
+    el("div", { class: "migrate-note" },
+      `${S.albums.length} album${S.albums.length === 1 ? "" : "s"} \u00B7 ${total} photos`),
+    el("button", { class: "row migrate", onclick: migrateAlbums },
+      el("span", { class: "grow" }, "Turn into folders\u2026")));
+}
+
+/** Show exactly what the migration would do before doing any of it. */
+async function migrateAlbums() {
+  const m = await invoke("plan_album_migration", { path: S.source });
+  if (!m.moves) { toast("Nothing to move", "info"); return; }
+  const lines = [
+    `${m.moves} photo${m.moves === 1 ? "" : "s"} will move into ` +
+      `${m.folders.length} folder${m.folders.length === 1 ? "" : "s"}: ` +
+      m.folders.map(([n, c]) => `${n} (${c})`).join(", "),
+  ];
+  if (m.renamed.length) {
+    lines.push("Renamed for the filesystem: " +
+      m.renamed.map(([a, b]) => `\u201C${a}\u201D \u2192 \u201C${b}\u201D`).join(", "));
+  }
+  if (m.skipped.length) {
+    // A photo in two albums can only live in one folder — say so rather than guess.
+    lines.push(`${m.skipped.length} left where they are (a file lives in one folder): ` +
+      m.skipped.slice(0, 3).map(([f]) => f).join(", ") +
+      (m.skipped.length > 3 ? "\u2026" : ""));
+  }
+  // Undo reverses the moves but not the cleared labels, so say so rather than let
+  // someone discover it by undoing.
+  lines.push("Undo puts the photographs back, but the album names are not restored.");
+  const ok = await confirmDialog("Turn albums into folders?", lines.join("  \u00B7  "), "Move them");
+  if (!ok) return;
+  const msg = await busy("Moving\u2026", () => invoke("apply_album_migration", { path: S.source }));
+  toast(msg + " \u2014 press \u2318Z to undo", "ok");
+  await refreshSources(); await refreshAlbums(); await loadPhotos();
 }
 
 async function loadPhotos() {
@@ -828,7 +883,9 @@ function parseQuery(q, people = [], albums = []) {
     if (raw === "video" || raw === "videos") { want.kind = "video"; continue; }
     if (raw === "photo" || raw === "photos") { want.kind = "photo"; continue; }
     if (raw === "fav" || raw === "favourite" || raw === "favorite") { want.fav = true; continue; }
-    const stars = raw.match(/^(\d)\+?(?:star|stars)$/);
+    // The "+" may sit either side: the filter panel emits "4star", but the chip it
+    // draws reads "★★★★+", so someone typing what they see writes "4stars+".
+    const stars = raw.match(/^(\d)\+?(?:star|stars)\+?$/);
     if (stars) { want.minRating = +stars[1]; continue; }
 
     text.push(raw);
@@ -959,12 +1016,17 @@ function showQueryChips(parsed) {
   const bar = $("#qchips");
   if (!parsed || (!parsed.hasFilter && !parsed.text.length)) { bar.hidden = true; return; }
   bar.hidden = false;
-  bar.replaceChildren(...queryChips(parsed).map(c => {
+  const chips = queryChips(parsed).map(c => {
     if (!c.act) return el("span", { class: `qc qc-${c.kind}` }, c.text);
     const b = el("button", { class: `qc qc-${c.kind}`, type: "button" }, c.text);
     b.onclick = c.act;
     return b;
-  }));
+  });
+  // Keeping a query is the replacement for making an album, so the offer belongs
+  // where the query itself is shown.
+  chips.push(el("button", { class: "qc qc-save", type: "button",
+    title: "Keep this search in the sidebar", onclick: saveSearchPrompt }, "\u2606 Save"));
+  bar.replaceChildren(...chips);
 }
 
 function matchesQuery(p, parsed) {
@@ -2208,11 +2270,8 @@ function fillAskCard(card, q, answer) {
       paintSel();
       toast(`${S.sel.size} selected`, "ok");
     } }, "Select results"),
-    el("button", { class: "ask-act", onclick: () => {
-      S.sel = new Set(photos.map(p => p.hash));
-      paintSel();
-      newAlbumPrompt();
-    } }, "Add to album…")));
+    el("button", { class: "ask-act", onclick: () => { showInLibrary(q); saveSearchPrompt(); } },
+      "Save this search\u2026")));
 }
 
 /* The omnibar takes the question over: same parse, same semantic union, so the grid

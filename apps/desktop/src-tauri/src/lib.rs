@@ -809,6 +809,78 @@ async fn set_album(state: tauri::State<'_, AppState>, path: String, hashes: Vec<
     })
 }
 
+/// What migrating albums to folders would do (ADR-0009), without doing it.
+#[derive(Serialize)]
+pub struct MigrationView {
+    moves: usize,
+    folders: Vec<(String, usize)>,
+    renamed: Vec<(String, String)>,
+    skipped: Vec<(String, String)>,
+}
+
+#[tauri::command]
+async fn plan_album_migration(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<MigrationView> {
+    with(&state, &path, |lib| {
+        let m = openfoto_core::albums::plan(lib)?;
+        Ok(MigrationView {
+            moves: m.plan.len(),
+            folders: m.folders.into_iter().collect(),
+            renamed: m.renamed,
+            skipped: m.plan.skipped,
+        })
+    })
+}
+
+#[tauri::command]
+async fn apply_album_migration(state: tauri::State<'_, AppState>, path: String) -> R<String> {
+    with(&state, &path, |lib| {
+        let m = openfoto_core::albums::plan(lib)?;
+        if m.plan.is_empty() {
+            return Ok("Nothing to move.".into());
+        }
+        for dest in m.folders.keys() {
+            std::fs::create_dir_all(lib.abs(dest))?;
+        }
+        let n = m.plan.len();
+        let j = m.plan.apply(lib)?;
+        // The albums have become folders; leaving the labels behind would show the
+        // same grouping twice.
+        let mut set = UserDataSet::load(lib.root())?;
+        set.clear_albums();
+        set.save(lib.root())?;
+        Ok(format!("{n} photos moved into folders · undo id {}", j.id))
+    })
+}
+
+// ---------------------------------------------------------------- saved searches
+
+#[tauri::command]
+async fn list_searches(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<Vec<openfoto_core::userdata::SavedSearch>> {
+    with(&state, &path, |lib| {
+        Ok(UserDataSet::load(lib.root())?.searches().to_vec())
+    })
+}
+
+#[tauri::command]
+async fn save_search(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    name: String,
+    query: String,
+) -> R<()> {
+    with(&state, &path, |lib| {
+        let mut set = UserDataSet::load(lib.root())?;
+        set.set_search(name.trim(), &query);
+        set.save(lib.root())
+    })
+}
+
 #[tauri::command]
 async fn list_albums(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(String, usize)>> {
     with(&state, &path, |lib| {
@@ -1355,7 +1427,8 @@ pub fn run() {
             models_status, models_fetch,
             people_overview, name_cluster, cluster_photos, autodetect_faces,
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
-            semantic_status, semantic_index, semantic_search
+            semantic_status, semantic_index, semantic_search,
+            plan_album_migration, apply_album_migration, list_searches, save_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

@@ -60,8 +60,8 @@ the natural-language verb layer (its own spec, unblocked by this one).
 - [x] 4. Integrity check, staged rebuild, scan on open (core, app) — 8, 9, 10, 11
 - [x] 5. Folder tree sidebar with disclosure and remembered state (app) — 2
 - [x] 6. Roll-up grid with subfolder sections and grouping toggle (app) — 3
-- [ ] 7. Saved searches replacing the albums panel (core, app) — 13
-- [ ] 8. Album migration command and prompt (core, app) — 12
+- [x] 7. Saved searches replacing the albums panel (core, app) — 13
+- [x] 8. Album migration command and prompt (core, app) — 12
 - [ ] 9. Doc sync: STATUS.md, DESIGN.md, remove albums from the search grammar
 
 ## Risks
