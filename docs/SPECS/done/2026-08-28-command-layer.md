@@ -66,7 +66,7 @@ table entry, not a model.
 - [x] 5. Slot filling: missing destination becomes a question (app) — 4
 - [x] 6. Referents and multi-clause utterances (app) — 7, 8
 - [x] 7. Grammar unit tests (app) — every criterion
-- [ ] 8. Doc sync: STATUS.md, the Ask panel section
+- [x] 8. Doc sync: STATUS.md, the Ask panel section
 
 ## Risks
 
@@ -77,3 +77,32 @@ there is no path from sentence to disk that does not pass through a listed plan 
 **Phrasing coverage disappoints.** The ceiling ADR-0012 accepts. Mitigated by visible
 suggestions and errors that name what was understood; measured by how often the fallback
 message appears.
+
+## Outcome
+
+Shipped. All ten acceptance criteria met, verified in the running app against a nested
+40-photo library: a sentence selected ten photographs, previewed the move, applied it,
+wrote a journal entry, and undid it back to the exact starting state.
+
+The work found three defects that had nothing to do with the grammar, one of them
+serious:
+
+- **`Plan::apply` recorded changes after making them.** A plan label containing `/`
+  produced an invalid journal filename; the write failed *after* twenty-three
+  photographs had moved, leaving them unreachable by undo while the UI said the
+  operation had failed. Files, journal, metadata — with rollback on any failure — is now
+  the order, and the journal id is sanitised where it becomes a path.
+- **`answerQuestion` offered to index the library whenever leftover words existed**, even
+  when those words matched a folder name, so "the swiss photos" could not find
+  `Swiss Day1`.
+- **An empty selector inherited the previous result**, so "move to Trip" planned ten
+  photographs without being asked to.
+
+Two grammar lessons worth keeping: a shared-prefix score cannot see a transposition, and
+"mvoe" shares exactly one letter with "move"; and a verb's value has to be lifted out of
+the selector during parsing, or "rate them 5 stars" is searched for as a phrase.
+
+## Not done here
+
+Standing rules that run on import, and saved recipes. Both reuse this grammar unchanged
+and are worth their own spec.

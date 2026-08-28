@@ -107,6 +107,34 @@ Embedding runs once per photo, is resumable, and costs about 100 ms per photo. T
 text encoder is held open for the life of the window: loading it costs ~270 ms against
 ~15 ms to embed a phrase, so a fresh load per keystroke would dominate the search.
 
+### Asking, and telling
+The Ask panel answers questions *and* carries out instructions. "move the swiss photos
+to Trip/Alps" resolves the selector, shows what it is about to do, and does nothing
+until the button is pressed; ⌘Z undoes it like any other change.
+
+This is a grammar, not a model (ADR-0012) — `verb selector [to target]`, over the same
+`parseQuery` the search field uses, so there is one selector language rather than two.
+Verbs are move, rate, label, delete, show and save, matched through a synonym table, and
+what a verb does not recognise falls through to scene search.
+
+Three rules keep it safe without a model's judgement:
+
+- **Nothing acts without a preview.** Every command compiles to a `Plan`, and the card
+  listing it is the only route to disk. Deleting is a preview like everything else.
+- **A missing slot is a question.** "move the swiss photos" with no destination asks
+  where, and the answer completes the original instruction.
+- **An empty selector is refused.** "move to Trip" does not quietly inherit whatever was
+  last on screen; saying "them" does that, deliberately.
+
+Clauses compose — "show the greece day1 photos and rate them 5 stars" runs as two steps,
+with "them" bound to what the first found. A mistyped verb is corrected by edit distance
+rather than refused, but only when the sentence is shaped like an instruction, so
+"movie night photos" stays a search.
+
+The honest limit is phrasing coverage: an unknown wording fails rather than being
+guessed at. That is the trade ADR-0012 accepts, and the first response to a phrasing
+someone expected to work is a synonym-table entry.
+
 ### Folders are the only grouping
 There are no albums (ADR-0009). A folder is where a photograph lives, nested folders are
 what albums were trying to be — `Trip/Greece Day3/` is how people organise photographs
