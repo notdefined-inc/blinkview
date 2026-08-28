@@ -131,6 +131,33 @@ impl Index {
         Ok(())
     }
 
+    /// Is this index usable?
+    ///
+    /// `quick_check` alone is not enough, and measurably so: scribbling 512 bytes over
+    /// a page body still returns "ok", because it validates b-tree structure rather
+    /// than page contents. So the tables are also counted, which walks every page they
+    /// occupy and turns damage into an error here instead of a failed query later.
+    ///
+    /// Neither catches garbage *inside* an otherwise well-formed cell — a corrupted
+    /// path string reads back as nonsense rather than an error. That case is repaired
+    /// by the next scan, which reconciles against the filesystem anyway.
+    pub fn integrity_check(&self) -> Result<()> {
+        let status: String = self
+            .conn
+            .query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+        if status != "ok" {
+            anyhow::bail!("index failed its integrity check: {status}");
+        }
+        for table in ["files", "clip", "faces", "signatures"] {
+            self.conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .with_context(|| format!("reading {table}"))?;
+        }
+        Ok(())
+    }
+
     pub fn remove_path(&self, path: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM files WHERE path=?1", params![path])?;

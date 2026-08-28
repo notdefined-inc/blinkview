@@ -339,3 +339,44 @@ fn a_move_carries_metadata_and_undo_brings_it_back() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// ADR-0011: a library in a synced folder will corrupt its SQLite sooner or later.
+/// Because the cache is reproducible and holds nothing user-authored, that must cost a
+/// rescan and nothing else — no error, and above all no loss of ratings.
+#[test]
+fn a_corrupt_index_is_rebuilt_without_losing_user_data() {
+    use openfoto_core::userdata::UserDataSet;
+
+    let dir = fixture("corrupt", &["Day1/a.jpg", "Day1/b.jpg"]);
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let hash = lib.index.all().unwrap()[0].hash.clone();
+
+    let mut set = UserDataSet::load(&dir).unwrap();
+    set.edit(&hash, "Day1", |u| u.set_rating(&hash, 5));
+    set.save(&dir).unwrap();
+    drop(lib);
+
+    // Damage the header, which is what a truncated or conflicted sync copy looks like.
+    // Scribbling over a page body is *not* enough: quick_check reports "ok" for that,
+    // because it validates b-tree structure rather than page contents.
+    let db = dir.join(".openfoto/index.sqlite");
+    let mut bytes = std::fs::read(&db).unwrap();
+    bytes[..16].copy_from_slice(b"NotADatabase\0\0\0\0");
+    std::fs::write(&db, &bytes).unwrap();
+
+    let mut lib = Library::open(&dir).expect("a corrupt index must not be fatal");
+    // Proves the rebuild actually happened rather than the damage going unnoticed:
+    // a rebuilt index is empty until it is scanned again.
+    assert!(
+        lib.index.all().unwrap().is_empty(),
+        "the index was not rebuilt — the corruption went undetected"
+    );
+    scan::scan(&mut lib, false).unwrap();
+    assert_eq!(lib.index.all().unwrap().len(), 2, "the library did not come back");
+
+    let after = UserDataSet::load(&dir).unwrap();
+    assert_eq!(after.get(&hash, "Day1").rating, 5, "the rating went with the cache");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -22,9 +22,20 @@ That separation makes a strong policy available.
 
 ## Decision
 
-**Cache corruption is a normal event, not an error.** On open, `PRAGMA quick_check`; on
-failure, delete the cache and rebuild. No dialog, no complaint — there is nothing to
-lose, which is the entire point of ADR-0001.
+**Cache corruption is a normal event, not an error.** On open the index is checked; on
+failure it is deleted and rebuilt. No dialog, no complaint — there is nothing to lose,
+which is the entire point of ADR-0001.
+
+`PRAGMA quick_check` alone is not the check, because measurement showed it is shallower
+than its name suggests: scribbling 512 bytes over a page body still returns `ok`, since
+it validates b-tree structure rather than page contents. Only header damage surfaced,
+and then as a failure to open at all. So the check is `quick_check` **plus a count of
+each table**, which walks every page those tables occupy and turns damage into an error
+at open rather than a failed query an hour later.
+
+Neither detects garbage inside an otherwise well-formed cell — a corrupted path string
+reads back as nonsense rather than an error. That case needs no special handling: the
+next scan reconciles against the filesystem and overwrites it.
 
 Four rules follow:
 

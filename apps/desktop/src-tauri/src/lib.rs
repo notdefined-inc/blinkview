@@ -159,7 +159,15 @@ pub struct PhotoInfo {
 fn open_lib(state: &AppState, root: &str) -> R<()> {
     let mut libs = state.libs.lock().map_err(err)?;
     if !libs.contains_key(root) {
-        let lib = Library::open(root).map_err(err)?;
+        let mut lib = Library::open(root).map_err(err)?;
+        // Reconcile with the filesystem the moment a library is opened, rather than
+        // waiting to be asked (ADR-0011). Photographs added or reorganised in Finder
+        // are picked up before anything is drawn, and the common case is cheap because
+        // `scan` skips hashing whenever size and mtime already match. A failure here is
+        // not fatal: an unreadable folder should still open, just stale.
+        if let Err(e) = scan::scan(&mut lib, false) {
+            eprintln!("[openfoto] scan on open failed for {root}: {e}");
+        }
         libs.insert(root.to_string(), lib);
     }
     Ok(())

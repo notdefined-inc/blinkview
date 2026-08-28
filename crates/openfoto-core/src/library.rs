@@ -29,10 +29,37 @@ impl Library {
             std::fs::create_dir_all(vault.join(sub))
                 .with_context(|| format!("creating {}", vault.join(sub).display()))?;
         }
-        let index = Index::open(&vault.join("index.sqlite"))?;
+        let index = Self::open_index(&vault.join("index.sqlite"))?;
         let lib = Self { root, index };
         lib.rescue_user_data();
         Ok(lib)
+    }
+
+    /// Open the index, rebuilding it if it is unusable.
+    ///
+    /// A library kept in iCloud or Dropbox will corrupt its SQLite eventually — this is
+    /// well documented and not preventable from in here. Because everything in the
+    /// cache is reproducible and nothing user-authored is in it (ADR-0001, ADR-0007),
+    /// corruption costs a rescan and nothing else, so it is handled as a normal event
+    /// rather than reported as an error. See ADR-0011.
+    fn open_index(path: &Path) -> Result<Index> {
+        match Index::open(path).and_then(|i| {
+            i.integrity_check()?;
+            Ok(i)
+        }) {
+            Ok(i) => Ok(i),
+            Err(e) => {
+                eprintln!("[openfoto] index unusable ({e}); rebuilding");
+                // The sidecars go too: a WAL belonging to a discarded database is
+                // worse than no WAL.
+                for suffix in ["", "-wal", "-shm"] {
+                    let mut p = path.as_os_str().to_os_string();
+                    p.push(suffix);
+                    let _ = std::fs::remove_file(std::path::PathBuf::from(p));
+                }
+                Index::open(path)
+            }
+        }
     }
 
     /// Move user-authored files out of the cache if an older version left them there.
