@@ -9,6 +9,15 @@ justified grid, lightbox with folder/person context, in-app people review with l
 re-suggestion, selection with context menu, delete to a recoverable `Trash/`, per-photo
 rename, per-person untagging, and the organize sheet (preview then apply).
 
+The visual layer is **Aurora Glass** (docs/CURRENT/DESIGN.md, spec
+docs/SPECS/done/2026-08-28-aurora-glass-ui.md): an ambient cyan/violet/amber gradient
+canvas under frosted panels, the lens mark as inline SVG, and the **Ask panel** (✨ in
+the titlebar or ⌘K) — natural-language questions parsed like the omnibar, answered with
+intent chips, people faces, a thumbnail strip and one-tap actions (Show in library,
+Select results, Add to album…). It composes the existing commands only; the thread is
+per-session and nothing is persisted. Native `prompt()`/`confirm()` are gone — glass
+dialogs instead.
+
 Run it: `cargo run -p openfoto-desktop`.
 
 Deleting moves photos to a `Trash/` folder **inside the library**, not the system

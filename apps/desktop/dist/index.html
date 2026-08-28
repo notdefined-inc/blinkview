@@ -3,26 +3,86 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>openfoto</title>
+<title>OpenFoto</title>
+<script>
+/* Theme must be on <html> before first paint, or the wrong theme flashes. The
+   choice is a UI preference, so it lives in localStorage — never in the vault. */
+try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")}catch(e){document.documentElement.dataset.theme="dark"}
+</script>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<div class="titlebar" data-tauri-drag-region>
+<header class="titlebar" data-tauri-drag-region>
   <div class="tb-left">
-    <span class="logo"></span>
-    <span class="wordmark">openfoto</span>
+    <span class="logowrap" aria-hidden="true">
+      <svg class="logomark" viewBox="0 0 48 48">
+        <defs>
+          <linearGradient id="lg-cool" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#3b82f6"/>
+          </linearGradient>
+          <linearGradient id="lg-warm" x1="1" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#fde047"/><stop offset="1" stop-color="#f97316"/>
+          </linearGradient>
+          <radialGradient id="lg-lens" cx="0.38" cy="0.32" r="0.9">
+            <stop offset="0" stop-color="#f0abfc"/><stop offset=".45" stop-color="#8b5cf6"/><stop offset="1" stop-color="#1e1b4b"/>
+          </radialGradient>
+        </defs>
+        <path d="M14 6 H9 a5 5 0 0 0 -5 5 V16" fill="none" stroke="url(#lg-cool)" stroke-width="5" stroke-linecap="round"/>
+        <path d="M34 6 H39 a5 5 0 0 1 5 5 V16" fill="none" stroke="url(#lg-warm)" stroke-width="5" stroke-linecap="round"/>
+        <path d="M14 42 H9 a5 5 0 0 1 -5 -5 V32" fill="none" stroke="url(#lg-cool)" stroke-width="5" stroke-linecap="round"/>
+        <path d="M34 42 H39 a5 5 0 0 0 5 -5 V32" fill="none" stroke="url(#lg-warm)" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="24" cy="24" r="12" fill="url(#lg-lens)"/>
+        <circle cx="24" cy="24" r="12" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>
+        <circle cx="19.5" cy="19" r="3.2" fill="rgba(255,255,255,.85)"/>
+      </svg>
+    </span>
+    <span class="wordmark">OpenFoto</span>
   </div>
-  <div class="tb-mid" data-tauri-drag-region><span id="crumb"></span></div>
-  <div class="tb-right">
+  <div class="tb-mid" data-tauri-drag-region>
     <div class="searchwrap">
+      <svg class="s-glyph" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+        <path d="M13.2 13.2 17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
       <input id="search" class="search" type="search"
-             placeholder="A name, a date, or what's in the photo" aria-label="Search photos">
-      <button class="icon-btn" id="btn-filter" title="Filters" aria-label="Filters">⚟</button>
+             placeholder="Search your photos — a name, a date, or what’s in them" aria-label="Search photos">
+      <button class="s-tool" id="btn-filter" title="Filters" aria-label="Filters">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M3 6h14M3 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <circle cx="13" cy="6" r="2.2" fill="currentColor"/>
+          <circle cx="7" cy="12" r="2.2" fill="currentColor"/>
+        </svg>
+      </button>
       <div class="suggest" id="suggest" hidden></div>
     </div>
-    <button class="icon-btn" id="btn-tools" title="Organize" aria-label="Organize">◈</button>
   </div>
-</div>
+  <div class="tb-right">
+    <button class="askbtn" id="btn-ask" title="Ask in natural language (⌘K)" aria-label="Ask OpenFoto">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M10 2.5 11.7 7.3 16.5 9 11.7 10.7 10 15.5 8.3 10.7 3.5 9 8.3 7.3Z" fill="currentColor"/>
+        <circle cx="16" cy="15.5" r="1.4" fill="currentColor"/>
+      </svg>
+      <span>Ask</span><kbd>⌘K</kbd>
+    </button>
+    <button class="icon-btn" id="btn-tools" title="Organize" aria-label="Organize">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <rect x="3" y="3" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+        <rect x="11" y="3" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+        <rect x="3" y="11" width="6" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+        <path d="M14 11v6M11 14h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <button class="icon-btn" id="btn-theme" title="Switch theme" aria-label="Switch between dark and light mode">
+      <svg class="th-moon" viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M15.6 12.4A6.1 6.1 0 0 1 7.6 4.4 6.1 6.1 0 1 0 15.6 12.4Z" fill="currentColor"/>
+      </svg>
+      <svg class="th-sun" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="3.6" fill="currentColor"/>
+        <path d="M10 2v2.2M10 15.8V18M2 10h2.2M15.8 10H18M4.3 4.3l1.6 1.6M14.1 14.1l1.6 1.6M15.7 4.3l-1.6 1.6M5.9 14.1l-1.6 1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
+</header>
 
 <div class="shell">
   <aside class="sidebar" id="sidebar">
@@ -50,6 +110,7 @@
   </aside>
 
   <main id="main">
+    <div class="libhead"><span id="crumb"></span></div>
     <div class="qchips" id="qchips" hidden></div>
     <div class="filters" id="filters" hidden>
       <div class="frow"><span class="flab">People</span><span class="fopts" id="f-people"></span></div>
@@ -62,6 +123,28 @@
     <div id="stage"></div>
   </main>
 </div>
+
+<aside class="askpanel" id="askpanel" hidden aria-label="Ask OpenFoto">
+  <div class="ask-head">
+    <span class="ask-title">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M10 2.5 11.7 7.3 16.5 9 11.7 10.7 10 15.5 8.3 10.7 3.5 9 8.3 7.3Z" fill="currentColor"/>
+      </svg>
+      Ask OpenFoto
+    </span>
+    <button class="icon-btn" id="ask-close" aria-label="Close">✕</button>
+  </div>
+  <div class="ask-thread" id="ask-thread"></div>
+  <form class="ask-composer" id="ask-form">
+    <input id="ask-input" type="text" autocomplete="off"
+           placeholder="“Sunset photos from the mountains”…" aria-label="Ask about your photos">
+    <button class="ask-send" id="ask-send" type="submit" aria-label="Ask">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M10 15V4M5.5 8.5 10 4l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </form>
+</aside>
 
 <div class="lightbox" id="lightbox" hidden>
   <div class="lb-chrome lb-top">

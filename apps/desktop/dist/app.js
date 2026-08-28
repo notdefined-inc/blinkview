@@ -83,7 +83,7 @@ async function busy(msg, fn) {
 const OP_LABEL = {
   faces: "Detecting faces", thumbs: "Building thumbnails",
   clusters: "Grouping faces", plan: "Analysing photos", apply: "Analysing photos",
-  models: "Downloading face models",
+  models: "Downloading face models", semantic: "Understanding photos",
 };
 
 listen("progress", ({ payload }) => {
@@ -313,7 +313,7 @@ function renderGrid() {
     // a wrong answer shown before the right one arrives.
     const looking = S.semantic && S.semantic.state === "busy";
     stage.replaceChildren(el("div", { class: "welcome" },
-      el("div", { class: looking ? "art pulse" : "art" }, looking ? "\u2728" : "\u25C7"),
+      el("div", { class: looking ? "art pulse" : "art" }, el("span", {}, looking ? "✨" : "◇")),
       el("h2", {}, looking ? "Looking\u2026" : "Nothing here yet"),
       el("p", {}, looking
         ? `Reading what your photos show, for \u201C${S.semantic.query}\u201D.`
@@ -334,10 +334,12 @@ function renderGrid() {
 }
 
 function renderWelcome() {
+  // The mark is defined once in the titlebar; clone it so gradient ids stay unique.
+  const mark = document.querySelector(".logomark")?.cloneNode(true);
   $("#stage").replaceChildren(el("div", { class: "welcome" },
-    el("div", { class: "art" }, "◎"),
+    el("div", { class: "art" }, mark || "◎"),
     el("h2", {}, "Your folders, your photos"),
-    el("p", {}, "openfoto reads folders you already have. Nothing is copied into a database, and nothing moves unless you ask. Add a folder to begin."),
+    el("p", {}, "OpenFoto reads folders you already have. Nothing is copied into a database, and nothing moves unless you ask. Add a folder to begin."),
     el("button", { class: "btn", onclick: addSource }, "Add a folder")));
 }
 
@@ -450,7 +452,7 @@ async function untagSelected() {
   clearSel(); await refreshSources(); await reload();
 }
 async function renamePhoto(p) {
-  const name = prompt("Rename photo", p.name);
+  const name = await promptDialog("Rename photo", p.name);
   if (!name || name === p.name) return;
   const msg = await busy("Renaming…",
     () => invoke("rename_photo", { path: S.source, hash: p.hash, name }));
@@ -466,7 +468,10 @@ async function restoreSelected() {
   clearSel(); await refreshSources(); await reload();
 }
 async function emptyTrash() {
-  if (!confirm("Move everything in Trash to the macOS Trash?\n\nopenfoto can no longer undo this — Finder can still recover the files.")) return;
+  const ok = await confirmDialog("Empty the Trash",
+    "Move everything in Trash to the macOS Trash? openfoto can no longer undo this — Finder can still recover the files.",
+    "Empty Trash", true);
+  if (!ok) return;
   const msg = await busy("Emptying Trash…", () => invoke("empty_trash", { path: S.source }));
   toast(msg, "ok");
   if (S.folder === TRASH) S.folder = null;
@@ -479,8 +484,15 @@ function openLightbox(photo) {
   // folder, stepping through stays inside that set; browsing unfiltered, it falls back
   // to the photo's own folder, which is the Picasa behaviour.
   const filtered = S.person || S.folder || $("#search").value.trim();
-  S.lbList = filtered ? S.view.slice() : S.photos.filter(p => p.folder === photo.folder);
-  S.lbIndex = S.lbList.findIndex(p => p.hash === photo.hash);
+  const list = filtered ? S.view.slice() : S.photos.filter(p => p.folder === photo.folder);
+  openViewer(list, list.findIndex(p => p.hash === photo.hash));
+}
+
+/* Any ordered set of photos can drive the viewer — the grid's view, a folder, or an
+   Ask answer. */
+function openViewer(list, index) {
+  S.lbList = list;
+  S.lbIndex = index;
   $("#lightbox").hidden = false;
   paintLightbox();
 }
@@ -857,6 +869,18 @@ function showQueryChips(parsed) {
 
 function matchesQuery(p, parsed) {
   const { want, text } = parsed;
+  if (!matchesStructured(p, want)) return false;
+  if (!text.length) return true;
+  const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
+  if (text.every(t => hay.includes(t))) return true;
+  // Falling through to what the photo *shows*. A union, not a replacement: typing a
+  // folder name must keep working, and "church" should still find churches.
+  return semanticMatches(p, text);
+}
+
+/* The structured half of a query — everything decidable from a photo's metadata.
+   Shared by the omnibar and the Ask panel so the two can never disagree. */
+function matchesStructured(p, want) {
   if (want.year !== null || want.month !== null || want.day !== null) {
     if (!p.taken_at) return false;
     const d = new Date(p.taken_at * 1000);
@@ -871,12 +895,7 @@ function matchesQuery(p, parsed) {
   if (want.label && (p.label || "") !== want.label) return false;
   if (want.minRating && (p.rating || 0) < want.minRating) return false;
   if (want.fav && (p.rating || 0) < 5) return false;
-  if (!text.length) return true;
-  const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
-  if (text.every(t => hay.includes(t))) return true;
-  // Falling through to what the photo *shows*. A union, not a replacement: typing a
-  // folder name must keep working, and "church" should still find churches.
-  return semanticMatches(p, text);
+  return true;
 }
 
 /** True when the leftover words were understood as a scene and this photo matched. */
@@ -997,7 +1016,10 @@ async function autodetect(path) {
   } catch { /* reported by busy */ }
 }
 async function removeSource(path) {
-  if (!confirm(`Remove ${path} from openfoto?\n\nYour photos are not touched.`)) return;
+  const ok = await confirmDialog("Remove this folder",
+    `Remove ${path} from OpenFoto? Your photos are not touched.`,
+    "Remove folder", true);
+  if (!ok) return;
   await invoke("remove_source", { path });
   if (S.source === path) { S.source = null; S.photos = []; S.view = []; renderWelcome(); }
   await refreshSources();
@@ -1597,7 +1619,9 @@ async function toggleInfo() {
   const d = await invoke("photo_detail", { path: S.source, hash: p.hash });
   const mb = (d.bytes / 1048576).toFixed(1);
   const row = (k, v) => v ? el("div", { class: "inforow" }, el("b", {}, k), el("span", {}, String(v))) : null;
-  panel.replaceChildren(
+  // row() returns null for absent values, and replaceChildren stringifies null into
+  // a literal "null" text node — filter the list before handing it over.
+  panel.replaceChildren(...[
     el("h3", {}, "Info"),
     row("File", d.path),
     row("Size", `${mb} MB`),
@@ -1606,16 +1630,26 @@ async function toggleInfo() {
     row("Date from", d.taken_from),
     row("Kind", d.kind),
     row("Faces", d.faces || null),
-    row("People", d.people.join(", ") || null),
+    // Face entries with no name yet come back as nulls; joining them raw prints
+    // "null, null" — count the nulls as nobody and keep the row for real names.
+    row("People", d.people.filter(Boolean).join(", ") || null),
     row("Rating", d.meta.rating ? "\u2605".repeat(d.meta.rating) : null),
     row("Label", d.meta.label),
-    row("Albums", (d.meta.albums || []).join(", ") || null));
+    row("Albums", (d.meta.albums || []).join(", ") || null),
+  ].filter(Boolean));
   panel.hidden = false;
 }
 
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
 $("#btn-tools").onclick = openSheet;
+/* The initial theme is applied by an inline script in index.html (pre-paint);
+   this only flips it and remembers the choice. */
+$("#btn-theme").onclick = () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("of-theme", next); } catch (e) { /* private mode: fine to forget */ }
+};
 $("#btn-review").onclick = openReview;
 $("#sheet-close").onclick = () => ($("#sheet").hidden = true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") $("#sheet").hidden = true; };
@@ -1624,6 +1658,9 @@ $("#lb-info").onclick = toggleInfo;
 $("#btn-filter").onclick = () => {
   const f = $("#filters");
   f.hidden = !f.hidden;
+  /* The panel lives at the top of main; opening it while scrolled down showed
+     nothing. Bring the top into view instead. */
+  if (!f.hidden) $("#main").scrollTo({ top: 0 });
   renderFilters();
 };
 {
@@ -1793,3 +1830,297 @@ $("#main").addEventListener("scroll", () => paintViewport(), { passive: true });
     if (first) await selectSource(first.path);
   }
 })();
+
+
+/* ---------------- glass dialogs ----------------
+   Native prompt()/confirm() render as OS sheets that ignore the design language and
+   block the webview. These are the same questions in our own glass; both resolve
+   null/false on Cancel, backdrop click or Escape. */
+function dialogFrame(title, bodyKids) {
+  let box;
+  let resolveFn;
+  const done = v => {
+    document.removeEventListener("keydown", onKey, true);
+    box.remove();
+    resolveFn(v);
+  };
+  const onKey = e => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    e.preventDefault();
+    done(null);
+  };
+  box = el("div", {
+    class: "sheet",
+    onclick: e => { if (e.target === box) done(null); }
+  },
+    el("div", { class: "sheet-panel small", role: "dialog", "aria-modal": "true", "aria-label": title },
+      el("div", { class: "sheet-head" }, el("h2", {}, title)),
+      el("div", { class: "sheet-body" }, bodyKids)));
+  return { box, done, onKey, attach: r => { resolveFn = r; } };
+}
+
+function confirmDialog(title, text, okLabel, danger = false) {
+  return new Promise(resolve => {
+    const d = dialogFrame(title, [
+      el("p", { class: "asktext" }, text),
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(false) }, "Cancel"),
+        el("button", {
+          class: "btn" + (danger ? " solid-danger" : ""),
+          onclick: () => d.done(true)
+        }, okLabel)),
+    ]);
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+  }).then(v => v === null ? false : v);   // Esc/backdrop (null) also means "not confirmed"
+}
+
+function promptDialog(title, value) {
+  return new Promise(resolve => {
+    let d;
+    const input = el("input", {
+      class: "nameinput", type: "text", value: value || "", "aria-label": title,
+      style: "width:100%",
+      onkeydown: e => {
+        e.stopPropagation();
+        if (e.key === "Escape") d.done(null);
+        if (e.key === "Enter") d.done(input.value.trim());
+      }
+    });
+    d = dialogFrame(title, [
+      input,
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel"),
+        el("button", { class: "btn", onclick: () => d.done(input.value.trim()) }, "Save")),
+    ]);
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+    setTimeout(() => { input.focus(); input.select(); }, 40);
+  });
+}
+
+/* ---------------- ask panel ----------------
+   The natural-language surface. Everything it does composes commands the app
+   already shipped: the question is parsed exactly like the omnibar (dates, people,
+   albums, field:value), leftover words go to the CLIP text encoder, and the answer
+   is a card of real photos. The thread is per-session memory — nothing is stored. */
+
+const ASK_HINTS = ["sunset over the mountains", "photos of a dog", "videos from this year",
+                   "food on a plate", "a night sky"];
+
+function toggleAsk(open) {
+  const panel = $("#askpanel");
+  const next = open === undefined ? panel.hidden : open;
+  panel.hidden = !next;
+  $("#btn-ask").setAttribute("aria-pressed", String(next));
+  if (next) {
+    renderAskEmpty();
+    setTimeout(() => $("#ask-input").focus(), 60);
+  }
+}
+
+function renderAskEmpty() {
+  const t = $("#ask-thread");
+  if (t.children.length) return;
+  t.replaceChildren(el("div", { class: "ask-empty" },
+    el("div", { class: "aico" }, el("span", {}, "✦")),
+    el("h3", {}, "Ask about your photos"),
+    el("p", {}, "Dates, people and scenes work together — the way you would describe a photo to a friend."),
+    el("div", { class: "ask-hints" }, ASK_HINTS.map(h =>
+      el("button", { class: "ask-hint", onclick: () => { $("#ask-input").value = h; askSubmit(); } }, h)))));
+}
+
+async function askSubmit() {
+  const input = $("#ask-input");
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = "";
+  const thread = $("#ask-thread");
+  thread.querySelector(".ask-empty")?.remove();
+  thread.append(el("div", { class: "ask-q" }, q));
+  const card = el("div", { class: "ask-a pending", role: "status" }, "Reading your library");
+  thread.append(card);
+  thread.scrollTop = thread.scrollHeight;
+  try {
+    const answer = await answerQuestion(q);
+    fillAskCard(card, q, answer);
+  } catch (e) {
+    card.classList.remove("pending");
+    card.replaceChildren(el("p", { class: "asentence" }, `That went wrong: ${e}`));
+  }
+  thread.scrollTop = thread.scrollHeight;
+}
+
+/* A question becomes an answer in three steps: parse it the way the omnibar would,
+   fetch scene scores for whatever words are left over, then keep the photos that
+   match either half. Nothing below the semantic threshold is offered (ADR-0008). */
+async function answerQuestion(q) {
+  if (!S.source) {
+    return { kind: "note", text: "Add a folder first — there is nothing to look through yet." };
+  }
+  if (!S.photos.length) await loadPhotos();
+  const names = S.people.filter(p => p.name).map(p => p.name);
+  const parsed = parseQuery(q, names, S.albums.map(a => a[0]));
+  const { want, text } = parsed;
+  const phrase = text.join(" ");
+
+  if (phrase && !S.semanticReady) await refreshSemanticStatus();
+  const ready = S.semanticReady;
+  if (phrase && ready && !ready.available) return { kind: "models" };
+  if (phrase && ready && ready.embedded === 0) return { kind: "embed" };
+
+  let semScores = new Map();
+  if (phrase) {
+    try {
+      const hits = await invoke("semantic_search", { path: S.source, query: phrase });
+      semScores = new Map(hits.map(h => [h.hash, h.score]));
+    } catch (e) {
+      console.warn("ask: semantic search failed:", e);
+    }
+  }
+
+  const inHay = p => {
+    const hay = [p.name, p.folder, p.people.join(" ")].join(" ").toLowerCase();
+    return text.every(t => hay.includes(t));
+  };
+  const photos = S.photos.filter(p =>
+    p.folder !== TRASH &&
+    (!parsed.hasFilter || matchesStructured(p, want)) &&
+    (!text.length || inHay(p) || semScores.has(p.hash)));
+  // Literal answers sort by date; answers that only matched on what they show sort
+  // by how well they matched.
+  photos.sort((a, b) => {
+    const la = parsed.hasFilter || inHay(a), lb = parsed.hasFilter || inHay(b);
+    if (la !== lb) return la ? -1 : 1;
+    if (!la) return (semScores.get(b.hash) ?? 0) - (semScores.get(a.hash) ?? 0);
+    return (b.taken_at || 0) - (a.taken_at || 0);
+  });
+  return { kind: "results", parsed, phrase, semCount: semScores.size, photos };
+}
+
+/** The intent chips for an answer — queryChips without the omnibar's live state. */
+function askChips({ want }, phrase, semCount) {
+  const out = [];
+  const date = [];
+  if (want.day !== null) date.push(String(want.day));
+  if (want.month !== null) date.push(MONTHS[want.month - 1].replace(/^./, c => c.toUpperCase()));
+  if (want.year !== null) date.push(String(want.year));
+  if (date.length) out.push(["date", date.join(" ")]);
+  if (want.person) out.push(["person", want.person]);
+  if (want.album) out.push(["album", want.album]);
+  if (want.kind) out.push(["type", want.kind === "video" ? "Videos" : "Photos"]);
+  if (want.ext) out.push(["type", want.ext]);
+  if (want.label) out.push(["label", want.label]);
+  if (want.minRating) out.push(["rating", "★".repeat(want.minRating) + "+"]);
+  if (want.fav) out.push(["rating", "★★★★★"]);
+  if (phrase) out.push(["sem", `✨ ${phrase}${semCount ? ` · ${semCount}` : ""}`]);
+  return out.map(([kind, txt]) => el("span", { class: `qc qc-${kind}` }, txt));
+}
+
+function fillAskCard(card, q, answer) {
+  card.classList.remove("pending");
+  card.replaceChildren();
+
+  if (answer.kind === "note") {
+    card.append(el("p", { class: "asentence" }, answer.text));
+    return;
+  }
+  if (answer.kind === "models") {
+    card.append(
+      el("p", { class: "asentence" },
+        "I can look for what a photo shows, but the search models are not installed yet."),
+      el("div", { class: "ask-acts" },
+        el("button", { class: "ask-act primary", onclick: async () => {
+          const msg = await busy("Downloading search models…", () => invoke("models_fetch"));
+          toast(msg, "ok");
+          await refreshSemanticStatus();
+          card.querySelector(".asentence").textContent = "Models installed — ask me again.";
+          card.querySelector(".ask-acts")?.remove();
+        } }, "Download models")));
+    return;
+  }
+  if (answer.kind === "embed") {
+    card.append(
+      el("p", { class: "asentence" },
+        "I know these files, but not yet what they show. Learning that takes one pass per photo, once."),
+      el("div", { class: "ask-acts" },
+        el("button", { class: "ask-act primary", onclick: async () => {
+          await understand();
+          card.querySelector(".asentence").textContent = "Done — ask me again.";
+          card.querySelector(".ask-acts")?.remove();
+        } }, "✨ Understand these photos")));
+    return;
+  }
+
+  const { parsed, phrase, semCount, photos } = answer;
+  card.append(el("div", { class: "qchips" }, askChips(parsed, phrase, semCount)));
+
+  // People named in the question get their faces into the answer — recognising a
+  // face beats reading a name.
+  const ql = q.toLowerCase();
+  const mentioned = S.people.filter(p => p.name && ql.includes(p.name.toLowerCase()));
+  if (mentioned.length) {
+    card.append(el("div", { class: "askpeople" }, mentioned.slice(0, 5).map(p =>
+      el("button", { class: "askperson", onclick: () => selectPerson(p.name) },
+        p.cover ? el("img", { src: photoUrl(p.cover), alt: "" }) : null,
+        el("span", {}, p.name)))));
+  }
+
+  const n = photos.length;
+  if (!n) {
+    card.append(el("p", { class: "asentence" },
+      "Nothing matches that — I would rather say so than show you something close enough."));
+    return;
+  }
+  card.append(el("p", { class: "asentence" },
+    el("b", {}, String(n)), ` photo${n === 1 ? "" : "s"}`,
+    phrase ? ` for “${phrase}”` : ""));
+
+  const THUMBS = 8;
+  const shown = n > THUMBS ? photos.slice(0, THUMBS - 1) : photos;
+  card.append(el("div", { class: "askthumbs" },
+    shown.map((p, i) => el("img", {
+      src: photoUrl(p.path) + "?t=" + p.hash, alt: p.name, loading: "lazy", decoding: "async",
+      onclick: () => openViewer(photos, i)
+    })),
+    n > shown.length
+      ? el("div", { class: "more", onclick: () => showInLibrary(q) }, `+${n - shown.length}`)
+      : null));
+
+  card.append(el("div", { class: "ask-acts" },
+    el("button", { class: "ask-act primary", onclick: () => showInLibrary(q) }, "Show in library"),
+    el("button", { class: "ask-act", onclick: () => {
+      S.sel = new Set(photos.map(p => p.hash));
+      paintSel();
+      toast(`${S.sel.size} selected`, "ok");
+    } }, "Select results"),
+    el("button", { class: "ask-act", onclick: () => {
+      S.sel = new Set(photos.map(p => p.hash));
+      paintSel();
+      newAlbumPrompt();
+    } }, "Add to album…")));
+}
+
+/* The omnibar takes the question over: same parse, same semantic union, so the grid
+   always agrees with the card. */
+function showInLibrary(q) {
+  $("#search").value = q;
+  applyFilter();
+  renderFilters();
+}
+
+$("#btn-ask").onclick = () => toggleAsk();
+$("#ask-close").onclick = () => toggleAsk(false);
+$("#ask-form").addEventListener("submit", e => { e.preventDefault(); askSubmit(); });
+$("#ask-input").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.stopPropagation(); toggleAsk(false); }
+});
+addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    toggleAsk();
+  }
+});

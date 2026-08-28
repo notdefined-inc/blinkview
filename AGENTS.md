@@ -125,3 +125,8 @@ exactly on others, suspect quantisation before suspecting your code.**
   explicit `[hidden]{display:none!important}`.
 - `backdrop-filter` on a full-screen container can stop WKWebView painting its children
   altogether — the element measures correctly and never appears.
+- `replaceChildren` stringifies `null` children into literal "null" text nodes — filter
+  arrays before spreading them in (the `el()` helper already skips nulls).
+- The Tauri app embeds `dist/` at compile time; editing frontend files needs
+  `cargo build -p openfoto-desktop` and an app restart — `location.reload()` still
+  serves the stale bundle.
