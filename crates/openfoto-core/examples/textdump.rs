@@ -1,5 +1,12 @@
-// Dumps Rust-path text embeddings as JSON so the parity harness can compare them
-// against the Python reference over the real index.
+//! Dumps Rust-path text embeddings as JSON.
+//!
+//! Kept because it is how the fp32 text decision was made: it lets a query's embedding
+//! be compared against the Python reference *and* scored across a real index, which is
+//! what showed that the quantised encoder moved photos across the threshold rather than
+//! merely perturbing them. `tests/semantic_parity.rs` covers the routine check; this is
+//! for when that test fails and the question is how much the difference matters.
+//!
+//!     cargo run -p openfoto-core --example textdump -- "a night sky" "a church"
 fn main() -> anyhow::Result<()> {
     let mut enc = openfoto_core::semantic::Encoder::load()?;
     let mut out = serde_json::Map::new();
