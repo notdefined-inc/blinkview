@@ -95,6 +95,16 @@ Embedding runs once per photo, is resumable, and costs about 100 ms per photo. T
 text encoder is held open for the life of the window: loading it costs ~270 ms against
 ~15 ms to embed a phrase, so a fresh load per keystroke would dominate the search.
 
+### Albums
+A photo can be in several albums without being copied — albums are the one grouping
+that is not a folder. Right-click a selection to add it to an existing album (a tick
+marks the ones it is already in) or to name a new one; the sidebar lists albums with
+counts and filters on click. Membership lives in `openfoto.json` at the library root,
+so it survives deleting the cache.
+
+Album and person names are matched as whole phrases before the query is tokenised, so
+"Greece 2026" is one album rather than a year and a stray word.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in

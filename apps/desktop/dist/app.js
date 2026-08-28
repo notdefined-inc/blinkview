@@ -382,6 +382,15 @@ function showCtx(x, y) {
   if (one) items.push(item("Rename…", "", () => renamePhoto(one)));
   if (S.person) items.push(item(`Not ${S.person}`, "", untagSelected));
   items.push(el("hr"));
+  // Albums are the one grouping that is not a folder, so a photo can be in several
+  // without being copied. Existing ones first: naming a new album every time is how
+  // album lists turn into a mess of near-duplicates.
+  for (const [name] of S.albums.slice(0, 6)) {
+    const all = [...S.sel].every(h => (S.photos.find(p => p.hash === h)?.albums || []).includes(name));
+    items.push(item(`${all ? "\u2713 " : ""}${name}`, "", () => setAlbum(name, !all)));
+  }
+  items.push(item("New album\u2026", "", newAlbumPrompt));
+  items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
   else items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
   menu.replaceChildren(...items);
@@ -402,6 +411,35 @@ async function deleteSelected() {
   toast(msg + " — press ⌘Z to undo", "ok");
   clearSel(); await reload();
 }
+async function setAlbum(album, member) {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  await invoke("set_album", { path: S.source, hashes, album, member });
+  toast(member ? `Added ${hashes.length} to ${album}` : `Removed ${hashes.length} from ${album}`, "ok");
+  await refreshAlbums(); await loadPhotos();
+}
+
+function newAlbumPrompt() {
+  document.querySelector(".namebar")?.remove();
+  const n = S.sel.size;
+  const bar = el("div", { class: "namebar" },
+    el("span", { class: "grow" }, `Add ${n} photo${n === 1 ? "" : "s"} to a new album`),
+    el("input", {
+      class: "nameinput", type: "text", placeholder: "Album name", "aria-label": "Album name",
+      onkeydown: async e => {
+        if (e.key === "Escape") { bar.remove(); return; }
+        if (e.key !== "Enter") return;
+        const v = e.target.value.trim();
+        if (!v) return;
+        bar.remove();
+        await setAlbum(v, true);
+      }
+    }),
+    el("button", { class: "mini", onclick: () => bar.remove(), title: "Cancel" }, "\u2715"));
+  $("#main").prepend(bar);
+  setTimeout(() => bar.querySelector("input")?.focus(), 60);
+}
+
 async function untagSelected() {
   const hashes = [...S.sel];
   if (!hashes.length || !S.person) return;
@@ -575,9 +613,27 @@ async function refreshPeople() {
   try {
     S.people = await invoke("people_overview", { path: S.source, distance: 0.55 });
   } catch { S.people = []; }
-  try { S.albums = await invoke("list_albums", { path: S.source }); } catch { S.albums = []; }
+  await refreshAlbums();
   await refreshSources();
 }
+async function refreshAlbums() {
+  if (!S.source) { S.albums = []; return; }
+  try { S.albums = await invoke("list_albums", { path: S.source }); } catch { S.albums = []; }
+  renderAlbums();
+}
+
+/** Albums in the sidebar: a grouping that is not a folder, so nothing is copied. */
+function renderAlbums() {
+  const block = $("#albums-block"), list = $("#albums");
+  if (!block) return;
+  block.hidden = !S.albums.length;
+  if (!S.albums.length) return;
+  list.replaceChildren(...S.albums.map(([name, count]) => el("button", {
+    class: "row", "aria-current": String(queryHas(name)),
+    onclick: () => { toggleTerm(name, S.albums.map(a => a[0])); renderAlbums(); }
+  }, el("span", { class: "grow" }, name), el("span", { class: "n num" }, String(count)))));
+}
+
 async function loadPhotos() {
   S.photos = await invoke("photos", { path: S.source, folder: null, person: null });
   applyFilter();
@@ -600,9 +656,25 @@ function parseQuery(q, people = [], albums = []) {
   };
   const text = [];
   const colours = [];
-  const tokens = q.toLowerCase().split(/[\s,]+/).filter(Boolean);
   const names = people.filter(Boolean).map(n => n.toLowerCase());
   const albumNames = albums.map(a => a.toLowerCase());
+
+  // Names are consumed as whole phrases before anything is tokenised. "Greece 2026" is
+  // one album, not a year and a stray word, and "Anna Maria" is one person. Longest
+  // first, so a longer name wins over a shorter one it contains.
+  let rest = q.toLowerCase();
+  const phrases = [...albumNames.map(n => ["album", n]), ...names.map(n => ["person", n])]
+    .filter(([, n]) => n.includes(" "))
+    .sort((a, b) => b[1].length - a[1].length);
+  for (const [field, name] of phrases) {
+    const re = new RegExp(`(^|\\s)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`);
+    if (re.test(rest) && want[field] === null) {
+      want[field] = name;
+      rest = rest.replace(re, " ");
+    }
+  }
+
+  const tokens = rest.split(/[\s,]+/).filter(Boolean);
 
   for (const raw of tokens) {
     // Explicit field:value always wins, for people who want precision.
