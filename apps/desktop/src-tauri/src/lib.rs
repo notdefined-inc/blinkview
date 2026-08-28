@@ -91,6 +91,7 @@ pub struct PersonInfo {
 
 #[derive(Serialize, Clone)]
 pub struct PhotoInfo {
+    kind: String,
     hash: String,
     path: String,
     name: String,
@@ -281,7 +282,6 @@ async fn photos(
             .index
             .all()?
             .into_iter()
-            .filter(|r| r.kind == "photo")
             .filter(|r| {
                 folder.as_ref().is_none_or(|f| {
                     r.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("") == f.as_str()
@@ -295,6 +295,7 @@ async fn photos(
             .map(|r| {
                 let sig = lib.index.get_signature(&r.hash).ok().flatten();
                 PhotoInfo {
+                    kind: r.kind.clone(),
                     name: r.path.rsplit('/').next().unwrap_or(&r.path).to_string(),
                     folder: r.path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
                     thumb: thumbs::thumb_path(lib, &r.hash).display().to_string(),
@@ -494,6 +495,70 @@ async fn untag_person(
     })
 }
 
+/// Restore photos from the library Trash back to the root.
+#[tauri::command]
+async fn restore_photos(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>) -> R<String> {
+    with(&state, &path, |lib| {
+        let want: BTreeSet<String> = hashes.into_iter().collect();
+        let mut plan = openfoto_core::Plan::new("restore");
+        for r in lib.index.all()? {
+            if !want.contains(&r.hash) || !r.path.starts_with(&format!("{TRASH}/")) {
+                continue;
+            }
+            let name = r.path.rsplit('/').next().unwrap_or(&r.path).to_string();
+            plan.ops.push(openfoto_core::Op::Move { hash: r.hash.clone(), from: r.path.clone(), to: name });
+        }
+        if plan.is_empty() {
+            return Ok("Nothing to restore".into());
+        }
+        let n = plan.len();
+        plan.apply(lib)?;
+        Ok(format!("Restored {n}"))
+    })
+}
+
+/// Hand the library Trash over to the system Trash.
+///
+/// This is the one place openfoto stops being reversible by itself, so it hands off
+/// rather than unlinking: the files land in the macOS Trash where Finder can still
+/// recover them. The library journal cannot undo this, which is why it is a separate,
+/// explicit action rather than part of delete.
+#[tauri::command]
+async fn empty_trash(state: tauri::State<'_, AppState>, path: String) -> R<String> {
+    with(&state, &path, |lib| {
+        let dir = lib.abs(TRASH);
+        if !dir.is_dir() {
+            return Ok("Trash is already empty".into());
+        }
+        let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("no HOME"))?;
+        let sys = std::path::PathBuf::from(home).join(".Trash");
+        std::fs::create_dir_all(&sys)?;
+        let mut moved = 0;
+        for e in std::fs::read_dir(&dir)? {
+            let p = e?.path();
+            if !p.is_file() {
+                continue;
+            }
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            // Never clobber something already in the system Trash.
+            let mut dest = sys.join(&name);
+            let mut n = 2;
+            while dest.exists() {
+                let (stem, ext) = name.rsplit_once('.').unwrap_or((name.as_str(), ""));
+                dest = sys.join(format!("{stem} {n}.{ext}"));
+                n += 1;
+            }
+            if std::fs::rename(&p, &dest).is_ok() {
+                if let Some(rel) = lib.rel(&p) {
+                    lib.index.remove_path(&rel)?;
+                }
+                moved += 1;
+            }
+        }
+        Ok(format!("Moved {moved} to the system Trash"))
+    })
+}
+
 // ---------------------------------------------------------------- operations
 
 #[derive(Serialize)]
@@ -658,8 +723,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("photo", |ctx, request| serve_photo(ctx.app_handle(), request));
 
-    // UI verification bridge. Debug builds only, so it never ships.
-    #[cfg(debug_assertions)]
+    // UI verification bridge. Behind the `ui-bridge` feature and additionally gated on
+    // a debug build, so a release binary never exposes a WebSocket server.
+    #[cfg(all(feature = "ui-bridge", debug_assertions))]
     {
         builder = builder.plugin(tauri_plugin_mcp_bridge::init());
     }
@@ -671,7 +737,7 @@ pub fn run() {
             photos, build_thumbs, analyze_faces,
             clusters, name_clusters,
             plan_op, apply_op, history, undo,
-            delete_photos, rename_photo, untag_person
+            delete_photos, rename_photo, untag_person, restore_photos, empty_trash
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

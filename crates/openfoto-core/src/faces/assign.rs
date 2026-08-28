@@ -100,7 +100,7 @@ mod tests {
         People {
             people: pairs
                 .iter()
-                .map(|(n, r)| Person { name: n.to_string(), references: r.clone() })
+                .map(|(n, r)| Person { name: n.to_string(), references: r.clone(), excluded: Vec::new() })
                 .collect(),
         }
     }

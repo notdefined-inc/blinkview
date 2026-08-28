@@ -90,3 +90,62 @@ impl People {
         self.people.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn people() -> People {
+        let mut p = People::default();
+        p.add_references("Sam", vec![vec![1.0, 0.0]]);
+        p.add_references("Alex", vec![vec![0.0, 1.0]]);
+        p
+    }
+
+    #[test]
+    fn exclusion_is_per_person() {
+        let mut p = people();
+        p.exclude("Sam", &["hash-a".into()]);
+        assert!(p.is_excluded("Sam", "hash-a"));
+        // Removing Sam from a photo must not remove anyone else in it.
+        assert!(!p.is_excluded("Alex", "hash-a"));
+        assert!(!p.is_excluded("Sam", "hash-b"));
+    }
+
+    #[test]
+    fn excluding_twice_does_not_duplicate() {
+        let mut p = people();
+        p.exclude("Sam", &["h".into()]);
+        p.exclude("Sam", &["h".into()]);
+        assert_eq!(p.get("Sam").unwrap().excluded.len(), 1);
+    }
+
+    #[test]
+    fn excluding_an_unknown_person_is_a_no_op() {
+        let mut p = people();
+        p.exclude("Nobody", &["h".into()]);
+        assert!(!p.is_excluded("Nobody", "h"));
+    }
+
+    /// people.json written before exclusions existed must still load.
+    #[test]
+    fn loads_a_file_without_the_excluded_field() {
+        let json = r#"{"people":[{"name":"Sam","references":[[1.0,0.0]]}]}"#;
+        let p: People = serde_json::from_str(json).expect("legacy people.json must parse");
+        assert_eq!(p.people[0].name, "Sam");
+        assert!(p.people[0].excluded.is_empty());
+    }
+
+    #[test]
+    fn round_trips_through_disk() {
+        let dir = std::env::temp_dir().join(format!("of-people-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = people();
+        p.exclude("Sam", &["x".into()]);
+        p.save(&dir).unwrap();
+        let back = People::load(&dir).unwrap();
+        assert!(back.is_excluded("Sam", "x"));
+        assert_eq!(back.people.len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

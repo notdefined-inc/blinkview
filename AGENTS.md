@@ -35,5 +35,17 @@ Global contract applies (~/.codex/AGENTS.md). Repo specifics below override it.
 ## Build / test / run
 - `cargo build --workspace`
 - `cargo test --workspace`
-- `cargo clippy --workspace -- -D warnings`
-- `cargo run -p openfoto-cli -- <cmd>`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+  **`--all-targets` is not optional.** Without it clippy skips test targets and will
+  report a clean workspace while a test fails to compile.
+- `cargo run -p openfoto-cli -- <cmd>` · `cargo run -p openfoto-desktop`
+
+## Traps hit here before
+- cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
+  dependencies must be real features, or they ship in release builds.
+- Synchronous `#[tauri::command]` functions run on the UI thread. Anything touching the
+  disk must be `async` or the window freezes.
+- A `display` value in a class rule outranks the `hidden` attribute; overlays need an
+  explicit `[hidden]{display:none!important}`.
+- `backdrop-filter` on a full-screen container can stop WKWebView painting its children
+  altogether — the element measures correctly and never appears.

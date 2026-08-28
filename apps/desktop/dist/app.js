@@ -89,7 +89,22 @@ function renderSidebar() {
       el("span", { class: "n num" }, String(p.photos))))
       : [el("div", { class: "row", style: "color:var(--text-faint)" }, "None named yet")]));
 
-  const folders = src.folders.filter(f => f.path !== "");
+  const trash = src.folders.find(f => f.path === TRASH);
+  const tb = $("#trash-block");
+  tb.hidden = !trash;
+  if (trash) {
+    $("#trash").replaceChildren(
+      el("button", {
+        class: "row", "aria-current": String(S.folder === TRASH),
+        onclick: () => selectFolder(TRASH)
+      }, el("span", { class: "grow" }, "Deleted photos"), el("span", { class: "n num" }, String(trash.count))),
+      el("button", {
+        class: "row", title: "Hand these to the macOS Trash — openfoto can no longer undo it",
+        onclick: emptyTrash
+      }, el("span", { class: "grow", style: "color:var(--text-faint)" }, "Empty…")));
+  }
+
+  const folders = src.folders.filter(f => f.path !== "" && f.path !== TRASH);
   fb.hidden = folders.length === 0;
   $("#folders").replaceChildren(...folders.map(f => el("button", {
     class: `row indent-${Math.min(f.depth, 2)}`, "aria-current": String(S.folder === f.path),
@@ -176,6 +191,7 @@ function renderGrid() {
             },
             oncontextmenu: e => { e.preventDefault(); if (!S.sel.has(p.hash)) { S.sel.clear(); toggleSel(p); } showCtx(e.clientX, e.clientY); }
           }, img,
+            p.kind === "video" ? el("span", { class: "play" }, "▶") : null,
             p.people.length ? el("span", { class: "badge" }, p.people.join(", ")) : null);
           return cell;
         })))));
@@ -212,6 +228,9 @@ function paintSel() {
   $("#selcount").textContent = `${S.sel.size} selected`;
   $("#sel-untag").hidden = !S.person;
   if (S.person) $("#sel-untag").textContent = `Not ${S.person}`;
+  const inTrash = S.folder === TRASH;
+  $("#sel-restore").hidden = !inTrash;
+  $("#sel-delete").hidden = inTrash;
 }
 
 /* ---------------- context menu ---------------- */
@@ -228,7 +247,8 @@ function showCtx(x, y) {
   if (one) items.push(item("Rename…", "", () => renamePhoto(one)));
   if (S.person) items.push(item(`Not ${S.person}`, "", untagSelected));
   items.push(el("hr"));
-  items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
+  if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
+  else items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
   menu.replaceChildren(...items);
 
   menu.hidden = false;
@@ -265,6 +285,21 @@ async function renamePhoto(p) {
 }
 async function reload() { await loadPhotos(); }
 
+async function restoreSelected() {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  const msg = await busy("Restoring…", () => invoke("restore_photos", { path: S.source, hashes }));
+  toast(msg, "ok");
+  clearSel(); await refreshSources(); await reload();
+}
+async function emptyTrash() {
+  if (!confirm("Move everything in Trash to the macOS Trash?\n\nopenfoto can no longer undo this — Finder can still recover the files.")) return;
+  const msg = await busy("Emptying Trash…", () => invoke("empty_trash", { path: S.source }));
+  toast(msg, "ok");
+  if (S.folder === TRASH) S.folder = null;
+  await refreshSources(); await reload();
+}
+
 /* ---------------- lightbox ---------------- */
 function openLightbox(photo) {
   // Navigation follows what you are actually looking at. Filtered to a person or a
@@ -279,7 +314,17 @@ function openLightbox(photo) {
 function paintLightbox() {
   const p = S.lbList[S.lbIndex];
   if (!p) return;
-  $("#lb-img").src = photoUrl(p.path);
+  const stage = document.querySelector(".lb-stage");
+  const isVideo = p.kind === "video";
+  stage.querySelector("video")?.remove();
+  const img = $("#lb-img");
+  img.hidden = isVideo;
+  if (isVideo) {
+    const v = el("video", { id: "lb-video", src: photoUrl(p.path), controls: true, autoplay: true });
+    stage.append(v);
+  } else {
+    img.src = photoUrl(p.path);
+  }
   $("#lb-name").textContent = p.name;
   $("#lb-meta").textContent = [
     p.taken_at ? `${DAY(p.taken_at)} · ${TIME(p.taken_at)}` : "Undated",
@@ -533,6 +578,7 @@ $("#lb-delete").onclick = async () => {
 $("#sel-all").onclick = () => { S.view.forEach(p => S.sel.add(p.hash)); paintSel(); };
 $("#sel-none").onclick = clearSel;
 $("#sel-delete").onclick = deleteSelected;
+$("#sel-restore").onclick = restoreSelected;
 $("#sel-untag").onclick = untagSelected;
 addEventListener("click", e => { if (!e.target.closest("#ctx")) hideCtx(); });
 $("#lb-prev").onclick = () => step(-1);
@@ -551,7 +597,10 @@ addEventListener("keydown", e => {
   if (typing) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); S.view.forEach(p => S.sel.add(p.hash)); paintSel(); }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); doUndo(); }
-  if ((e.key === "Backspace" || e.key === "Delete") && S.sel.size) { e.preventDefault(); deleteSelected(); }
+  if ((e.key === "Backspace" || e.key === "Delete") && S.sel.size) {
+    e.preventDefault();
+    S.folder === TRASH ? restoreSelected() : deleteSelected();
+  }
 });
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderGrid, 120); });
 

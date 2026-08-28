@@ -6,7 +6,9 @@ license.workspace = true
 
 [lib]
 name = "openfoto_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop only. The staticlib/cdylib targets exist for Tauri mobile and cost ~650MB
+# of build artifacts we never link.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -20,5 +22,11 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 http = "1"
 
-[target.'cfg(debug_assertions)'.dependencies]
-tauri-plugin-mcp-bridge = "0.12"
+# UI-verification bridge. cargo cannot select dependencies on cfg(debug_assertions),
+# so this is a real feature, on by default for development and dropped from a release
+# build with --no-default-features.
+tauri-plugin-mcp-bridge = { version = "0.12", optional = true }
+
+[features]
+default = ["ui-bridge"]
+ui-bridge = ["dep:tauri-plugin-mcp-bridge"]

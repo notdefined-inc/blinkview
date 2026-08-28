@@ -7,7 +7,7 @@
   --ok:#4ade80; --warn:#fbbf24; --danger:#f87171;
   --r:8px; --r-lg:14px; --r-xl:20px; --r-pill:999px;
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px; --s8:32px; --s12:48px;
-  --tb:52px; --side:248px;
+  --tb:60px; --side:248px;
   --ease:cubic-bezier(.2,.7,.3,1);
   --glass:rgba(20,20,25,.62);
   --glass-line:rgba(255,255,255,.08);
@@ -36,7 +36,9 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   -webkit-backdrop-filter:saturate(180%) blur(28px);
   border-bottom:1px solid var(--glass-line);
 }
-.tb-left{display:flex;align-items:center;gap:var(--s2);padding-left:78px}
+/* Clearance for the macOS traffic lights, which the Overlay title bar style draws
+   on top of our content at roughly x=20..70, vertically centred in a ~52px band. */
+.tb-left{display:flex;align-items:center;gap:var(--s2);padding-left:86px}
 .logo{
   width:14px;height:14px;border-radius:4px;flex:0 0 auto;
   background:conic-gradient(from 210deg,var(--accent),#a5b8ff,var(--accent));
@@ -103,6 +105,10 @@ main{overflow:auto;position:relative}
   opacity:0;transition:opacity .3s var(--ease)}
 .cell img.on{opacity:1}
 .cell:hover{outline:2px solid var(--accent);outline-offset:-2px}
+.cell .play{
+  position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+  color:#fff;font-size:20px;text-shadow:0 2px 10px rgba(0,0,0,.7)
+}
 .cell .badge{
   position:absolute;left:6px;bottom:6px;font-size:10px;padding:2px 6px;border-radius:var(--r-pill);
   background:rgba(0,0,0,.55);backdrop-filter:blur(8px);color:#fff;opacity:0;transition:opacity .2s
@@ -159,6 +165,11 @@ main{overflow:auto;position:relative}
    overflow:hidden parent — the geometry was internally inconsistent, not merely
    mis-specified. `inset:0; margin:auto` cannot express that state. */
 .lb-stage{grid-row:2;position:relative;min-width:0;min-height:0;overflow:hidden}
+#lb-video{
+  position:absolute;inset:var(--s4);margin:auto;
+  max-width:calc(100% - var(--s8));max-height:calc(100% - var(--s8));
+  width:auto;height:auto;border-radius:var(--r);background:#000
+}
 #lb-img{
   position:absolute;inset:var(--s4);margin:auto;
   max-width:calc(100% - var(--s8));max-height:calc(100% - var(--s8));

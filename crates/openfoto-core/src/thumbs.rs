@@ -48,19 +48,54 @@ fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Build any missing thumbnails. Returns how many were created.
+/// Grab a frame from a video via ffmpeg, if it is installed.
+///
+/// Optional by design: ffmpeg is an external binary, so a missing one degrades to a
+/// video with no poster frame rather than failing the whole thumbnail pass.
+fn render_video(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-y", "-ss", "00:00:01", "-i"])
+        .arg(src)
+        .args(["-frames:v", "1", "-vf", &format!("scale='min({THUMB_LONG},iw)':-2")])
+        .arg(dst)
+        .output()
+        .context("running ffmpeg")?;
+    if !out.status.success() || !dst.exists() {
+        anyhow::bail!("ffmpeg could not read {}", src.display());
+    }
+    Ok(())
+}
+
+pub fn have_ffmpeg() -> bool {
+    std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Build any missing thumbnails, for photos and videos alike. Returns how many were made.
 pub fn build(lib: &Library) -> Result<usize> {
     let rows = lib.index.all()?;
-    let todo: Vec<(String, std::path::PathBuf, std::path::PathBuf)> = rows
+    let ffmpeg = have_ffmpeg();
+    let todo: Vec<(bool, std::path::PathBuf, std::path::PathBuf)> = rows
         .iter()
-        .filter(|r| r.kind == "photo")
-        .map(|r| (r.hash.clone(), lib.abs(&r.path), thumb_path(lib, &r.hash)))
+        .filter(|r| r.kind == "photo" || (r.kind == "video" && ffmpeg))
+        .map(|r| (r.kind == "video", lib.abs(&r.path), thumb_path(lib, &r.hash)))
         .filter(|(_, _, dst)| !dst.exists())
         .collect();
 
     let made: usize = todo
         .par_iter()
-        .map(|(_, src, dst)| usize::from(render_one(src, dst).is_ok()))
+        .map(|(is_video, src, dst)| {
+            let ok = if *is_video { render_video(src, dst) } else { render_one(src, dst) };
+            usize::from(ok.is_ok())
+        })
         .sum();
     Ok(made)
 }

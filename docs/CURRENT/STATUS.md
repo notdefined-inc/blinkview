@@ -9,7 +9,22 @@ justified grid, lightbox with folder/person context, in-app people review with l
 re-suggestion, selection with context menu, delete to a recoverable `Trash/`, per-photo
 rename, per-person untagging, and the organize sheet (preview then apply).
 
-Run it: `cargo run --release -p openfoto-desktop`.
+Run it: `cargo run -p openfoto-desktop`.
+
+Deleting moves photos to a `Trash/` folder **inside the library**, not the system
+Trash, so it is journalled and undoable like every other operation. The sidebar shows
+Trash with a count, selections there offer Restore, and a separate "Empty…" hands the
+files to the macOS Trash — the one step openfoto cannot undo, which is why it is
+explicit and confirms first.
+
+Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
+lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
+
+### Build size
+The desktop crate emitted `staticlib` + `cdylib` targets for Tauri mobile that are never
+linked (a 532MB `.a` alone), and full debug info across the ort/onnxruntime/wry tree.
+Together they took `target/` to **12GB and filled the disk mid-session**. Restricting the
+crate to `rlib` and setting `debug = "line-tables-only"` brought it to **2.4GB**.
 
 ### Bugs found by driving the real window
 Each of these looked fine in code and only appeared on screen:
