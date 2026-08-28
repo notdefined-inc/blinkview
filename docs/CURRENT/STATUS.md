@@ -20,6 +20,12 @@ explicit and confirms first.
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
+### Editing
+Rotate, flip, straighten (with auto-trim of the blank corners), crop with handles and
+aspect presets, and brightness/contrast/saturation. Nothing is written until Save, which
+asks whether to keep the original — keeping it is the default and moves the untouched
+file to a visible `Originals/` folder. See ADR-0006.
+
 ### Formats
 JPEG, PNG and **HEIC** for photos; MP4/MOV/M4V for video. HEIC is transcoded by macOS
 `sips` and cached — thumbnails to the usual cache, full-size views to

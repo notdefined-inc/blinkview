@@ -430,3 +430,25 @@ body.dropping::after{
 .croplabel{font-size:12px;color:var(--text-faint);padding:0 var(--s2)}
 .cropbar .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
 .cropdims{font-size:12px;color:var(--text-dim);min-width:92px;text-align:center}
+
+/* ---------- sliders ---------- */
+.bardiv{width:1px;height:20px;background:var(--glass-line)}
+.slider{display:flex;align-items:center;gap:var(--s2);font-size:13px;color:var(--text-dim)}
+.slider>span:first-child{width:16px;text-align:center;opacity:.8}
+.slider input[type=range]{
+  -webkit-appearance:none;appearance:none;width:104px;height:3px;border-radius:var(--r-pill);
+  background:rgba(255,255,255,.18);outline:none;
+}
+.slider input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:13px;height:13px;border-radius:var(--r-pill);
+  background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:pointer;
+}
+.slider input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.sval{min-width:34px;font-size:11px;color:var(--text-faint);text-align:right}
+.adjustbar{
+  position:fixed;left:50%;bottom:110px;transform:translateX(-50%);z-index:62;
+  display:flex;align-items:center;gap:var(--s3);padding:var(--s2) var(--s3);
+  background:rgba(24,24,30,.9);backdrop-filter:saturate(180%) blur(24px);
+  border:1px solid var(--glass-line);border-radius:var(--r-pill);
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+}

@@ -59,7 +59,8 @@
       <button class="icon-btn" id="lb-rot-l" title="Rotate left" aria-label="Rotate left">⟲</button>
       <button class="icon-btn" id="lb-rot-r" title="Rotate right" aria-label="Rotate right">⟳</button>
       <button class="icon-btn" id="lb-flip" title="Flip horizontally" aria-label="Flip horizontally">⇋</button>
-      <button class="icon-btn" id="lb-crop" title="Crop" aria-label="Crop">⛶</button>
+      <button class="icon-btn" id="lb-crop" title="Crop and straighten" aria-label="Crop and straighten">⛶</button>
+      <button class="icon-btn" id="lb-adjust" title="Adjust light and colour" aria-label="Adjust">◑</button>
       <button class="btn btn-primary sm" id="lb-save" hidden>Save</button>
       <button class="btn ghost sm" id="lb-revert" hidden>Discard</button>
       <button class="icon-btn" id="lb-rename" title="Rename" aria-label="Rename">✎</button>
@@ -85,8 +86,29 @@
     <button class="chip" data-ar="1.3333">4:3</button>
     <button class="chip" data-ar="1.7778">16:9</button>
     <span class="cropdims num" id="cropdims"></span>
+    <span class="bardiv"></span>
+    <label class="slider" title="Straighten">
+      <span>⟀</span>
+      <input type="range" id="straighten" min="-15" max="15" step="0.1" value="0">
+      <span class="sval num" id="straighten-val">0°</span>
+    </label>
     <button class="btn ghost sm" id="crop-cancel">Cancel</button>
     <button class="btn btn-primary sm" id="crop-done">Done</button>
+  </div>
+
+  <div class="adjustbar" id="adjustbar" hidden>
+    <span class="croplabel">Adjust</span>
+    <label class="slider"><span>☀</span>
+      <input type="range" id="adj-brightness" min="-100" max="100" step="1" value="0">
+      <span class="sval num" id="adj-brightness-val">0</span></label>
+    <label class="slider"><span>◐</span>
+      <input type="range" id="adj-contrast" min="-100" max="100" step="1" value="0">
+      <span class="sval num" id="adj-contrast-val">0</span></label>
+    <label class="slider"><span>❋</span>
+      <input type="range" id="adj-saturation" min="-100" max="100" step="1" value="0">
+      <span class="sval num" id="adj-saturation-val">0</span></label>
+    <button class="btn ghost sm" id="adj-reset">Reset</button>
+    <button class="btn btn-primary sm" id="adj-done">Done</button>
   </div>
   <button class="lb-nav next" id="lb-next" aria-label="Next">›</button>
   <div class="lb-strip" id="lb-strip"></div>

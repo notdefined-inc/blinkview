@@ -35,10 +35,19 @@ folder of photographs.
 
 ## Order of operations
 
-Rotate and flip run **before** crop. The crop rectangle is drawn by the user on the
+Quarter-turn, flip, straighten, adjust, then crop — in that order. Rotate and flip run
+**before** crop. The crop rectangle is drawn by the user on the
 transformed preview, so its fractions are in that space; cropping first would apply
 their rectangle to the untransformed image and cut the wrong region. A test asserts
 rotate-then-crop on a 40x10 image yields 10x20.
+
+Straightening by a few degrees leaves blank wedges at the corners, so the result is
+trimmed to the largest inscribed rectangle containing no blank area. A test asserts all
+four corners of a straightened image still carry pixels.
+
+The preview is a CSS filter and the save is per-pixel Rust. Those two must agree or the
+preview lies about the result, so `filterFor()` in the frontend deliberately mirrors
+`edit::adjust` — the squared contrast curve and Rec. 601 luma included.
 
 ## Consequences
 

@@ -147,3 +147,78 @@ fn vault_is_disposable() {
     assert!(Journal::list(&lib).unwrap().is_empty());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Editing must never destroy the original when asked to keep it, and the kept copy
+/// must be a real file in a visible folder — not a cache entry.
+#[test]
+fn editing_keeps_the_original_in_a_visible_folder() {
+    use openfoto_core::edit::{Adjust, Crop, Edit, Rotate, ORIGINALS};
+
+    let dir = std::env::temp_dir().join(format!("openfoto-edit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // 60x20 landscape, so a quarter turn is unmistakable.
+    image::RgbImage::from_fn(60, 20, |x, _| image::Rgb([(x * 4) as u8, 10, 200]))
+        .save(dir.join("20260101_120000.jpg"))
+        .unwrap();
+
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let before = std::fs::read(dir.join("20260101_120000.jpg")).unwrap();
+
+    let e = Edit {
+        rotate: Rotate::Cw90,
+        straighten: 0.0,
+        adjust: Adjust { brightness: 0.2, ..Default::default() },
+        flip_h: false,
+        flip_v: false,
+        crop: Some(Crop { x: 0.0, y: 0.0, w: 1.0, h: 0.5 }),
+        keep_original: true,
+    };
+    let out = openfoto_core::edit::apply(&lib, "20260101_120000.jpg", &e).unwrap();
+
+    // Rotated to 20x60, then cropped to the top half.
+    assert_eq!((out.width, out.height), (20, 30), "rotate, then crop");
+
+    // The edited file replaced the original in place...
+    let after = std::fs::read(dir.join("20260101_120000.jpg")).unwrap();
+    assert_ne!(after, before, "the photo should have been rewritten");
+
+    // ...and the untouched original is a real file in a visible folder.
+    let kept = out.original.expect("original path reported");
+    assert!(kept.starts_with(ORIGINALS), "kept in {ORIGINALS}/, got {kept}");
+    let kept_bytes = std::fs::read(dir.join(&kept)).unwrap();
+    assert_eq!(kept_bytes, before, "the kept original must be byte-identical");
+    assert!(!kept.contains(".openfoto"), "must not hide the original in the disposable vault");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A destructive save is honoured when explicitly asked for.
+#[test]
+fn destructive_editing_keeps_nothing() {
+    use openfoto_core::edit::{Adjust, Edit, Rotate, ORIGINALS};
+
+    let dir = std::env::temp_dir().join(format!("openfoto-edit2-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    image::RgbImage::from_pixel(30, 10, image::Rgb([9, 9, 9]))
+        .save(dir.join("20260101_130000.jpg"))
+        .unwrap();
+
+    let mut lib = Library::open(&dir).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let e = Edit {
+        rotate: Rotate::Cw180,
+        straighten: 0.0,
+        adjust: Adjust::default(),
+        flip_h: false,
+        flip_v: false,
+        crop: None,
+        keep_original: false,
+    };
+    let out = openfoto_core::edit::apply(&lib, "20260101_130000.jpg", &e).unwrap();
+    assert!(out.original.is_none());
+    assert!(!dir.join(ORIGINALS).exists(), "nothing should be kept");
+    std::fs::remove_dir_all(&dir).ok();
+}

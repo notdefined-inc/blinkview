@@ -481,6 +481,14 @@ function closeLightbox() {
   resetZoom();
   S.edit = null;
   if (S.cropping) endCrop(false);
+  $("#adjustbar").hidden = true;
+  $("#straighten").value = 0;
+  $("#straighten-val").textContent = "0\u00B0";
+  for (const k of ["brightness", "contrast", "saturation"]) {
+    $(`#adj-${k}`).value = 0;
+    $(`#adj-${k}-val`).textContent = "0";
+  }
+  $("#lb-img").style.filter = "";
   applyEditPreview();
 }
 
@@ -937,8 +945,22 @@ listen("tauri://drag-drop", async ({ payload }) => {
    touches a photo until the user commits. */
 
 function editState() {
-  if (!S.edit) S.edit = { rotate: 0, flipH: false, crop: null };
+  if (!S.edit) {
+    S.edit = { rotate: 0, flipH: false, crop: null, straighten: 0,
+               brightness: 0, contrast: 0, saturation: 0 };
+  }
   return S.edit;
+}
+
+/* Adjustments preview through a CSS filter, which is the compositor's job and costs
+   nothing; the same numbers are applied per-pixel in Rust on save. The mapping has to
+   agree with edit::adjust or the preview would lie. */
+function filterFor(e) {
+  if (!e) return "";
+  const b = 1 + (e.brightness || 0) / 100 * 0.8;
+  const c = Math.pow(((e.contrast || 0) / 100) + 1, 2);
+  const s = 1 + (e.saturation || 0) / 100;
+  return `brightness(${b}) contrast(${c}) saturate(${s})`;
 }
 
 /* ---------------- crop ----------------
@@ -1028,12 +1050,15 @@ function rotateBy(deg) {
 
 function applyEditPreview() {
   const img = $("#lb-img");
-  const dirty = S.edit && (S.edit.rotate !== 0 || S.edit.crop || S.edit.flipH);
+  const e = S.edit;
+  const dirty = e && (e.rotate !== 0 || e.crop || e.flipH || Math.abs(e.straighten || 0) >= 0.05
+    || e.brightness || e.contrast || e.saturation);
   $("#lb-save").hidden = !dirty;
   $("#lb-revert").hidden = !dirty;
   if (!img) return;
-  const r = S.edit?.rotate || 0;
+  const r = (S.edit?.rotate || 0) + (S.edit?.straighten || 0);
   const flip = S.edit?.flipH ? " scaleX(-1)" : "";
+  img.style.filter = filterFor(S.edit);
   // Rotating a landscape photo into portrait needs the preview scaled to fit.
   const stage = document.querySelector(".lb-stage");
   const quarter = r === 90 || r === 270;
@@ -1063,7 +1088,16 @@ async function saveEdit() {
   const rotate = { 0: "none", 90: "cw90", 180: "cw180", 270: "cw270" }[S.edit.rotate] || "none";
   const msg = await busy("Saving…", () => invoke("edit_photo", {
     path: S.source, hash: p.hash,
-    edit: { rotate, flip_h: !!S.edit.flipH, flip_v: false, crop: S.edit.crop, keep_original: keep }
+    edit: {
+      rotate, flip_h: !!S.edit.flipH, flip_v: false,
+      straighten: S.edit.straighten || 0,
+      adjust: {
+        brightness: (S.edit.brightness || 0) / 100,
+        contrast: (S.edit.contrast || 0) / 100,
+        saturation: (S.edit.saturation || 0) / 100,
+      },
+      crop: S.edit.crop, keep_original: keep
+    }
   }));
   toast(msg, "ok");
   S.edit = null;
@@ -1147,6 +1181,37 @@ $("#lb-revert").onclick = discardEdit;
 $("#lb-crop").onclick = () => (S.cropping ? endCrop(true) : startCrop());
 $("#lb-flip").onclick = () => { const e = editState(); e.flipH = !e.flipH; applyEditPreview(); };
 $("#crop-done").onclick = () => endCrop(true);
+{
+  const st = $("#straighten");
+  st.oninput = () => {
+    editState().straighten = parseFloat(st.value);
+    $("#straighten-val").textContent = `${st.value}\u00B0`;
+    applyEditPreview();
+  };
+}
+$("#lb-adjust").onclick = () => {
+  const bar = $("#adjustbar");
+  bar.hidden = !bar.hidden;
+  if (!bar.hidden && S.cropping) endCrop(true);
+};
+$("#adj-done").onclick = () => ($("#adjustbar").hidden = true);
+$("#adj-reset").onclick = () => {
+  const e = editState();
+  e.brightness = e.contrast = e.saturation = 0;
+  for (const k of ["brightness", "contrast", "saturation"]) {
+    $(`#adj-${k}`).value = 0;
+    $(`#adj-${k}-val`).textContent = "0";
+  }
+  applyEditPreview();
+};
+for (const k of ["brightness", "contrast", "saturation"]) {
+  const el2 = $(`#adj-${k}`);
+  el2.oninput = () => {
+    editState()[k] = parseInt(el2.value, 10);
+    $(`#adj-${k}-val`).textContent = el2.value;
+    applyEditPreview();
+  };
+}
 $("#crop-cancel").onclick = () => endCrop(false);
 for (const b of document.querySelectorAll(".cropbar .chip")) {
   b.onclick = () => {
