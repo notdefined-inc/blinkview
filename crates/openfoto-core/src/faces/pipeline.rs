@@ -31,6 +31,16 @@ pub struct AnalyzeStats {
 /// Single-threaded: an `ort` Session is not shared across threads, and decode is no
 /// longer the bottleneck here — inference is.
 pub fn analyze(lib: &Library, score_thr: f32) -> Result<AnalyzeStats> {
+    analyze_with_progress(lib, score_thr, &crate::progress::silent)
+}
+
+/// As [`analyze`], reporting (done, total). This is the slowest operation openfoto
+/// performs, so it is the one that most needs to prove it is still working.
+pub fn analyze_with_progress(
+    lib: &Library,
+    score_thr: f32,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<AnalyzeStats> {
     let mut st = AnalyzeStats::default();
     let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
 
@@ -48,9 +58,11 @@ pub fn analyze(lib: &Library, score_thr: f32) -> Result<AnalyzeStats> {
 
     let mut det = detect::Detector::load(&models::find(models::YUNET)?)?;
     let mut emb = embed::Embedder::load(&models::find(models::SFACE)?)?;
+    let counter = crate::progress::Counter::new(todo.len(), progress);
 
     for r in todo {
         st.photos += 1;
+        counter.tick();
         let path = lib.abs(&r.path);
         let rgb0 = match crate::imageio::load_rgb(&path) {
             Ok(i) => i,
@@ -108,6 +120,7 @@ pub fn analyze(lib: &Library, score_thr: f32) -> Result<AnalyzeStats> {
         }
         lib.mark_faces_done(&r.hash)?;
     }
+    counter.finish();
     Ok(st)
 }
 

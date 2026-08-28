@@ -40,6 +40,14 @@ Global contract applies (~/.codex/AGENTS.md). Repo specifics below override it.
   report a clean workspace while a test fails to compile.
 - `cargo run -p openfoto-cli -- <cmd>` · `cargo run -p openfoto-desktop`
 
+## Verifying
+Never report a check as passing from filtered output. `cmd | grep ...; echo "clean"`
+prints "clean" whatever happened — that pattern has already caused a commit on top of a
+failing clippy run here. Branch on the exit code:
+
+    cargo clippy --workspace --all-targets -q -- -D warnings \
+      && echo PASS || { echo FAIL; ... }
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.

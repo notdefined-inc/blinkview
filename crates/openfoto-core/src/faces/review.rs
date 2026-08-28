@@ -122,6 +122,17 @@ fn b64(data: &[u8]) -> String {
 }
 
 pub fn build(lib: &Library, people: &People, opt: &assign::Options, max_distance: f32) -> Result<ReviewPayload> {
+    build_with_progress(lib, people, opt, max_distance, &crate::progress::silent)
+}
+
+/// As [`build`], reporting (done, total) over the clusters being rendered.
+pub fn build_with_progress(
+    lib: &Library,
+    people: &People,
+    opt: &assign::Options,
+    max_distance: f32,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<ReviewPayload> {
     let hash_to_path: std::collections::BTreeMap<String, String> =
         lib.index.all()?.into_iter().map(|r| (r.hash, r.path)).collect();
     let all = lib.all_faces()?;
@@ -131,7 +142,9 @@ pub fn build(lib: &Library, people: &People, opt: &assign::Options, max_distance
     let unassigned_faces = groups.iter().map(|g| g.len()).sum();
 
     let mut clusters = Vec::new();
+    let counter = crate::progress::Counter::new(groups.len(), progress);
     for (id, g) in groups.iter().enumerate() {
+        counter.tick();
         // Order by detection confidence, not box size. The largest face in a burst is
         // often a motion-blurred near-miss; score tracks how cleanly frontal and sharp
         // the face is, which is what makes a good card hero. Size breaks ties.
@@ -224,6 +237,7 @@ pub fn build(lib: &Library, people: &People, opt: &assign::Options, max_distance
         });
     }
 
+    counter.finish();
     Ok(ReviewPayload {
         library: lib.root().display().to_string(),
         clusters,

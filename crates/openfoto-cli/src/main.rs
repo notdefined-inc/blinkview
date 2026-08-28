@@ -101,6 +101,27 @@ enum FacesCmd {
     },
 }
 
+/// A single rewritten line, so a long run visibly advances without scrolling.
+fn cli_progress(label: &'static str) -> impl Fn(usize, usize) + Sync {
+    use std::io::Write;
+    move |done, total| {
+        if total == 0 {
+            return;
+        }
+        let width = 24usize;
+        let filled = done * width / total.max(1);
+        eprint!(
+            "\r  {label} [{}{}] {done}/{total}",
+            "#".repeat(filled),
+            " ".repeat(width - filled)
+        );
+        if done == total {
+            eprintln!();
+        }
+        let _ = std::io::stderr().flush();
+    }
+}
+
 fn open(cli: &Cli) -> Result<Library> {
     let root = cli
         .library
@@ -153,7 +174,7 @@ fn main() -> Result<()> {
         Cmd::Faces { cmd } => match cmd {
             FacesCmd::Analyze { score } => {
                 let lib = open(&cli)?;
-                let st = pipeline::analyze(&lib, *score)?;
+                let st = pipeline::analyze_with_progress(&lib, *score, &cli_progress("analysing"))?;
                 println!(
                     "analysed {} photos ({} already done): {} faces, {} too small to embed",
                     st.photos, st.skipped_cached, st.faces, st.too_small
@@ -266,7 +287,7 @@ fn main() -> Result<()> {
         Cmd::Dedupe { rmse, dest, apply } => {
             let mut lib = open(&cli)?;
             let opt = dedupe::Options { rmse: *rmse, dest: dest.clone(), ..Default::default() };
-            let n = dedupe::ensure_signatures(&lib)?;
+            let n = dedupe::ensure_signatures_with_progress(&lib, &cli_progress("analysing"))?;
             if n > 0 {
                 println!("analysed {n} photos");
             }

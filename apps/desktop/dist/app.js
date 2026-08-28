@@ -1,6 +1,7 @@
 /* openfoto desktop.
    The engine lives in Rust; this file is presentation and interaction only. */
 const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
 
 /* Photos are served by our own `photo://` scheme (see serve_photo in lib.rs), which
    only serves files inside folders the user has added as a source. */
@@ -35,7 +36,7 @@ const el = (t, a = {}, ...kids) => {
   return n;
 };
 
-/* ---------------- toasts ---------------- */
+/* ---------------- toasts and progress ---------------- */
 function toast(msg, kind = "info", sticky = false) {
   const t = el("div", { class: "toast", "data-kind": kind, role: "status" },
     kind === "busy" ? el("span", { class: "sp" }) : null, msg);
@@ -43,12 +44,40 @@ function toast(msg, kind = "info", sticky = false) {
   if (!sticky) setTimeout(() => t.remove(), kind === "error" ? 8000 : 3500);
   return t;
 }
+
+/* The current busy toast, so backend progress events can find it. Long work would
+   otherwise be indistinguishable from a hang — the reason this exists at all. */
+let liveToast = null;
+
 async function busy(msg, fn) {
-  const t = toast(msg, "busy", true);
+  const label = el("span", {}, msg);
+  const pct = el("span", { class: "pct num" });
+  const fill = el("span");
+  const bar = el("div", { class: "tbar", hidden: true }, fill);
+  const t = el("div", { class: "toast", "data-kind": "busy", role: "status" },
+    el("div", { class: "trow" }, el("span", { class: "sp" }), label, pct), bar);
+  $("#toasts").append(t);
+  liveToast = { label, pct, bar, fill, msg };
   try { return await fn(); }
   catch (e) { toast(String(e), "error"); throw e; }
-  finally { t.remove(); }
+  finally { liveToast = null; t.remove(); }
 }
+
+const OP_LABEL = {
+  faces: "Detecting faces", thumbs: "Building thumbnails",
+  clusters: "Grouping faces", plan: "Analysing photos", apply: "Analysing photos",
+};
+
+listen("progress", ({ payload }) => {
+  if (!liveToast) return;
+  const { op, done, total } = payload;
+  if (!total) return;
+  const p = Math.round((done / total) * 100);
+  liveToast.label.textContent = OP_LABEL[op] || liveToast.msg;
+  liveToast.pct.textContent = `${done} / ${total}`;
+  liveToast.bar.hidden = false;
+  liveToast.fill.style.width = p + "%";
+});
 
 /* ---------------- date helpers ---------------- */
 const DAY = ts => {

@@ -16,8 +16,23 @@ use openfoto_core::{
     rename, scan, scenery, thumbs, Library,
 };
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Mutex;
+
+#[derive(Clone, Serialize)]
+struct ProgressEvent<'a> {
+    op: &'a str,
+    done: usize,
+    total: usize,
+}
+
+/// A progress sink that forwards to the webview as a `progress` event.
+fn emitter<'a>(app: &'a tauri::AppHandle, op: &'a str) -> impl Fn(usize, usize) + Sync + 'a {
+    move |done, total| {
+        let _ = app.emit("progress", ProgressEvent { op, done, total });
+    }
+}
 
 type R<T> = Result<T, String>;
 fn err<E: std::fmt::Display>(e: E) -> String {
@@ -316,14 +331,24 @@ async fn photos(
 }
 
 #[tauri::command]
-async fn build_thumbs(state: tauri::State<'_, AppState>, path: String) -> R<usize> {
-    with(&state, &path, |lib| thumbs::build(lib))
+async fn build_thumbs(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<usize> {
+    let sink = emitter(&app, "thumbs");
+    with(&state, &path, |lib| thumbs::build_with_progress(lib, &sink))
 }
 
 #[tauri::command]
-async fn analyze_faces(state: tauri::State<'_, AppState>, path: String) -> R<String> {
+async fn analyze_faces(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<String> {
+    let sink = emitter(&app, "faces");
     with(&state, &path, |lib| {
-        let st = pipeline::analyze(lib, pipeline::DEFAULT_SCORE)?;
+        let st = pipeline::analyze_with_progress(lib, pipeline::DEFAULT_SCORE, &sink)?;
         Ok(format!("{} photos analysed · {} faces found", st.photos, st.faces))
     })
 }
@@ -342,10 +367,16 @@ pub struct ClusterView {
 }
 
 #[tauri::command]
-async fn clusters(state: tauri::State<'_, AppState>, path: String, distance: f32) -> R<Vec<ClusterView>> {
+async fn clusters(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    distance: f32,
+) -> R<Vec<ClusterView>> {
+    let sink = emitter(&app, "clusters");
     with(&state, &path, |lib| {
         let people = People::load(&lib.vault())?;
-        let p = review::build(lib, &people, &assign::Options::default(), distance)?;
+        let p = review::build_with_progress(lib, &people, &assign::Options::default(), distance, &sink)?;
         Ok(p.clusters
             .into_iter()
             .map(|c| ClusterView {
@@ -568,10 +599,16 @@ pub struct PlanView {
     skipped: Vec<(String, String)>,
 }
 
-fn build_plan(lib: &mut Library, op: &str, param: Option<f32>, mkdirs: bool) -> anyhow::Result<openfoto_core::Plan> {
+fn build_plan(
+    lib: &mut Library,
+    op: &str,
+    param: Option<f32>,
+    mkdirs: bool,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> anyhow::Result<openfoto_core::Plan> {
     Ok(match op {
         "dedupe" => {
-            dedupe::ensure_signatures(lib)?;
+            dedupe::ensure_signatures_with_progress(lib, progress)?;
             let mut o = dedupe::Options::default();
             if let Some(v) = param { o.rmse = v }
             if mkdirs { std::fs::create_dir_all(lib.abs(&o.dest))?; }
@@ -598,9 +635,16 @@ fn build_plan(lib: &mut Library, op: &str, param: Option<f32>, mkdirs: bool) -> 
 }
 
 #[tauri::command]
-async fn plan_op(state: tauri::State<'_, AppState>, path: String, op: String, param: Option<f32>) -> R<PlanView> {
+async fn plan_op(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    op: String,
+    param: Option<f32>,
+) -> R<PlanView> {
+    let sink = emitter(&app, "plan");
     with(&state, &path, |lib| {
-        let p = build_plan(lib, &op, param, false)?;
+        let p = build_plan(lib, &op, param, false, &sink)?;
         Ok(PlanView {
             label: op.clone(),
             moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
@@ -610,9 +654,16 @@ async fn plan_op(state: tauri::State<'_, AppState>, path: String, op: String, pa
 }
 
 #[tauri::command]
-async fn apply_op(state: tauri::State<'_, AppState>, path: String, op: String, param: Option<f32>) -> R<String> {
+async fn apply_op(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    op: String,
+    param: Option<f32>,
+) -> R<String> {
+    let sink = emitter(&app, "apply");
     with(&state, &path, |lib| {
-        let p = build_plan(lib, &op, param, true)?;
+        let p = build_plan(lib, &op, param, true, &sink)?;
         if p.is_empty() {
             return Ok("Nothing to do".into());
         }

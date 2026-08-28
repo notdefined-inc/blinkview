@@ -37,6 +37,14 @@ impl Default for Options {
 /// Compute and cache signatures for every photo missing one. Parallel; decoding is
 /// the bottleneck, not the comparison.
 pub fn ensure_signatures(lib: &Library) -> Result<usize> {
+    ensure_signatures_with_progress(lib, &crate::progress::silent)
+}
+
+/// As [`ensure_signatures`], reporting (done, total).
+pub fn ensure_signatures_with_progress(
+    lib: &Library,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<usize> {
     let rows: Vec<FileRow> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
 
     // Resolve everything the workers need *before* going parallel: the SQLite
@@ -48,10 +56,16 @@ pub fn ensure_signatures(lib: &Library) -> Result<usize> {
         }
     }
 
+    let counter = crate::progress::Counter::new(todo.len(), progress);
     let computed: Vec<(String, imagesig::Signature)> = todo
         .par_iter()
-        .filter_map(|(hash, path)| imagesig::compute(path).ok().map(|s| (hash.clone(), s)))
+        .filter_map(|(hash, path)| {
+            let out = imagesig::compute(path).ok().map(|s| (hash.clone(), s));
+            counter.tick();
+            out
+        })
         .collect();
+    counter.finish();
 
     let n = computed.len();
     for (hash, sig) in computed {

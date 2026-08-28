@@ -256,7 +256,11 @@ main{overflow:auto;position:relative}
 }
 .toast[data-kind="ok"]{border-color:color-mix(in srgb,var(--ok) 50%,transparent)}
 .toast[data-kind="error"]{border-color:var(--danger);color:var(--danger)}
-.toast .sp{display:inline-block;width:12px;height:12px;margin-right:8px;vertical-align:-1px;
+.toast .trow{display:flex;align-items:center;gap:var(--s2)}
+.toast .pct{margin-left:auto;font-size:12px;color:var(--text-faint)}
+.tbar{height:3px;border-radius:var(--r-pill);background:rgba(255,255,255,.10);margin-top:var(--s2);overflow:hidden}
+.tbar span{display:block;height:100%;width:0;background:var(--accent);transition:width .2s var(--ease)}
+.toast .sp{display:inline-block;width:12px;height:12px;vertical-align:-1px;
   border:2px solid var(--text-faint);border-top-color:var(--accent);border-radius:50%;
   animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}

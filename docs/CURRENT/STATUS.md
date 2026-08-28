@@ -20,6 +20,13 @@ explicit and confirms first.
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
+### Progress reporting
+The four slow operations — face detection, thumbnails, face grouping, duplicate
+analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in
+its toast; the CLI rewrites a single stderr line. Updates are throttled to ~100 per run
+regardless of library size, and counted atomically so parallel work never reports a
+count going backwards.
+
 ### Build size
 The desktop crate emitted `staticlib` + `cdylib` targets for Tauri mobile that are never
 linked (a 532MB `.a` alone), and full debug info across the ort/onnxruntime/wry tree.

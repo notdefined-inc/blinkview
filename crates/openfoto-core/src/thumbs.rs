@@ -81,6 +81,14 @@ pub fn have_ffmpeg() -> bool {
 
 /// Build any missing thumbnails, for photos and videos alike. Returns how many were made.
 pub fn build(lib: &Library) -> Result<usize> {
+    build_with_progress(lib, &crate::progress::silent)
+}
+
+/// As [`build`], reporting (done, total) as it goes.
+pub fn build_with_progress(
+    lib: &Library,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<usize> {
     let rows = lib.index.all()?;
     let ffmpeg = have_ffmpeg();
     let todo: Vec<(bool, std::path::PathBuf, std::path::PathBuf)> = rows
@@ -90,12 +98,15 @@ pub fn build(lib: &Library) -> Result<usize> {
         .filter(|(_, _, dst)| !dst.exists())
         .collect();
 
+    let counter = crate::progress::Counter::new(todo.len(), progress);
     let made: usize = todo
         .par_iter()
         .map(|(is_video, src, dst)| {
             let ok = if *is_video { render_video(src, dst) } else { render_one(src, dst) };
+            counter.tick();
             usize::from(ok.is_ok())
         })
         .sum();
+    counter.finish();
     Ok(made)
 }

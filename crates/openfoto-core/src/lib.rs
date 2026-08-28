@@ -19,6 +19,7 @@ pub mod index;
 pub mod journal;
 pub mod library;
 pub mod plan;
+pub mod progress;
 pub mod rename;
 pub mod scan;
 pub mod scenery;
