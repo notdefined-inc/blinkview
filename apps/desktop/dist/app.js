@@ -1377,6 +1377,60 @@ function toggleTerm(term, group = []) {
   renderFilters();
 }
 
+/* ---------------- search suggestions ----------------
+   A face is easier to recognise than a name is to recall, so focusing the field shows
+   who is in the library rather than waiting to be asked. It is also how the semantic
+   search becomes discoverable: nobody guesses they can type "a church" unless shown. */
+
+const SCENE_IDEAS = ["a night sky", "snowy mountains", "green trees",
+                     "food on a plate", "a city street", "the beach"];
+
+function renderSuggest() {
+  const box = $("#suggest");
+  const typed = $("#search").value.trim();
+  if (!S.source || typed) { box.hidden = true; return; }
+
+  const kids = [];
+  const named = S.people.filter(p => p.name && p.cover);
+  if (named.length) {
+    kids.push(el("h4", {}, "People"));
+    const grid = el("div", { class: "sgrid" });
+    for (const p of named.slice(0, 8)) {
+      const b = el("button", { class: "sface", type: "button", title: p.name },
+        el("img", { src: photoUrl(p.cover), alt: "" }), el("span", {}, p.name));
+      b.onmousedown = e => e.preventDefault();   // keep focus; blur would close this
+      b.onclick = () => { pickSuggestion(p.name); };
+      grid.append(b);
+    }
+    kids.push(grid);
+  }
+
+  // Only offered once the library has been embedded — suggesting a search that
+  // cannot run is worse than not suggesting one.
+  if (S.semanticReady && S.semanticReady.available && S.semanticReady.embedded > 0) {
+    kids.push(el("h4", {}, "Try a scene"));
+    const grid = el("div", { class: "sgrid" });
+    for (const q of SCENE_IDEAS) {
+      const b = el("button", { class: "sugg-pill scene", type: "button" }, q);
+      b.onmousedown = e => e.preventDefault();
+      b.onclick = () => pickSuggestion(q);
+      grid.append(b);
+    }
+    kids.push(grid);
+  }
+
+  if (!kids.length) { box.hidden = true; return; }
+  box.replaceChildren(...kids);
+  box.hidden = false;
+}
+
+function pickSuggestion(term) {
+  $("#search").value = term;
+  $("#suggest").hidden = true;
+  applyFilter();
+  renderFilters();
+}
+
 function renderFilters() {
   if ($("#filters").hidden) return;
   const opt = (label, term, group, extra) =>
@@ -1621,7 +1675,12 @@ $("#sel-untag").onclick = untagSelected;
 addEventListener("click", e => { if (!e.target.closest("#ctx")) hideCtx(); });
 $("#lb-prev").onclick = () => step(-1);
 $("#lb-next").onclick = () => step(1);
-$("#search").oninput = applyFilter;
+$("#search").oninput = () => { applyFilter(); renderSuggest(); };
+$("#search").onfocus = renderSuggest;
+$("#search").onblur = () => setTimeout(() => { $("#suggest").hidden = true; }, 120);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("#suggest").hidden) { $("#suggest").hidden = true; }
+}, true);
 addEventListener("keydown", e => {
   if (!$("#lightbox").hidden) {
     if (S.cropping) {

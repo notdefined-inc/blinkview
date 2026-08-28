@@ -85,6 +85,12 @@ Below the 0.18 threshold a query returns nothing rather than the least-bad photo
 that has not been embedded yet offers **Understand these photos** in place of silence,
 and missing models say so rather than reporting an empty result.
 
+Focusing an empty field shows who is in the library as faces, and a row of scene
+suggestions — a face is easier to recognise than a name is to recall, and nobody
+guesses they can type "a church" unless shown. Scene suggestions appear only once the
+library has been embedded, since offering a search that cannot run is worse than
+offering none.
+
 Embedding runs once per photo, is resumable, and costs about 100 ms per photo. The
 text encoder is held open for the life of the window: loading it costs ~270 ms against
 ~15 ms to embed a phrase, so a fresh load per keystroke would dominate the search.

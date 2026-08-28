@@ -57,6 +57,44 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   width:290px;padding:6px var(--s3);font:inherit;font-size:13px;color:var(--text);
   background:rgba(255,255,255,.06);border:1px solid var(--glass-line);border-radius:var(--r-pill);
 }
+/* Focusing the field shows who is in the library, the way Google Photos does. A face
+   is easier to recognise than a name is to recall, and it makes the feature findable
+   for anyone who would not have guessed they could type a person's name. */
+.suggest{
+  position:absolute;top:calc(100% + 8px);right:0;width:330px;z-index:40;
+  padding:var(--s3);border-radius:var(--r-lg);
+  background:var(--glass);border:1px solid var(--glass-line);
+  backdrop-filter:blur(24px) saturate(160%);-webkit-backdrop-filter:blur(24px) saturate(160%);
+  box-shadow:0 18px 50px rgba(0,0,0,.5);
+  animation:suggestin .14s ease-out;
+}
+@keyframes suggestin{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.suggest h4{
+  margin:0 0 var(--s2);font-size:10px;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--text-faint);
+}
+.suggest h4 + .sgrid{margin-bottom:var(--s3)}
+.sgrid{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.sface{
+  display:flex;flex-direction:column;align-items:center;gap:4px;width:58px;
+  padding:0;background:none;border:0;cursor:pointer;color:var(--text-dim);font:inherit;
+}
+.sface img{
+  width:44px;height:44px;border-radius:var(--r-pill);object-fit:cover;
+  border:2px solid transparent;transition:border-color .12s,transform .12s;
+}
+.sface span{font-size:11px;max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sface:hover img{border-color:var(--accent,#7dd3fc);transform:scale(1.05)}
+.sface:hover span{color:var(--text)}
+.sugg-pill{
+  padding:5px 11px;border-radius:var(--r-pill);font-size:12px;cursor:pointer;
+  border:1px solid var(--glass-line);background:rgba(255,255,255,.05);color:var(--text-dim);
+  font:inherit;font-size:12px;
+}
+.sugg-pill:hover{background:rgba(255,255,255,.1);color:var(--text)}
+.sugg-pill.scene{color:#f0abfc;border-color:#f0abfc44;background:#f0abfc14}
+.sugg-pill.scene:hover{background:#f0abfc26}
+
 /* Shows how the query was read — "23 aug" becomes a visible date rather than
    silently matching nothing. */
 /* Query chips: the parsed query made visible, so the search is never a black box. */
