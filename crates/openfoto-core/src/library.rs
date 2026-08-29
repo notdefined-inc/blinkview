@@ -56,6 +56,20 @@ impl Library {
         self.user_data = None;
     }
 
+    /// Open a library that already has an index, without scanning or creating anything.
+    ///
+    /// For readers that must not wait on a writer: the index is in WAL mode, so this
+    /// sees every row the scan has committed so far. Fails when there is no index yet,
+    /// which is the caller's cue that there is nothing to read.
+    pub fn open_readable(root: impl AsRef<Path>) -> Result<Self> {
+        let root = root.as_ref().canonicalize()?;
+        let db = root.join(VAULT_DIR).join("index.sqlite");
+        if !db.is_file() {
+            bail!("no index yet at {}", db.display());
+        }
+        Ok(Self { root, index: Index::open(&db)?, user_data: None })
+    }
+
     /// Open the index, rebuilding it if it is unusable.
     ///
     /// A library kept in iCloud or Dropbox will corrupt its SQLite eventually — this is

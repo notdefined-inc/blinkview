@@ -145,6 +145,10 @@ listen("progress", ({ payload }) => {
   if (source) {
     S.busy[source] = { op, done, total };
     paintSourceProgress(source);
+    // While the library being looked at is still indexing, keep pulling in what has
+    // landed so far. The index commits as it walks and reads do not wait on it, so the
+    // grid fills in rather than sitting empty until the whole folder is done.
+    if (op === "scan" && source === S.source) scheduleIndexingRefresh();
   }
   // The banner tracks one operation: the one it was opened for.
   if (!liveToast) return;
@@ -154,6 +158,16 @@ listen("progress", ({ payload }) => {
   liveToast.bar.hidden = false;
   liveToast.fill.style.width = Math.round((done / total) * 100) + "%";
 });
+
+/* Refilling on every progress tick would re-query hundreds of times a second, so it is
+   throttled to something a person can actually perceive. */
+let indexingRefresh = 0;
+function scheduleIndexingRefresh() {
+  const now = performance.now();
+  if (now - indexingRefresh < 900) return;
+  indexingRefresh = now;
+  loadPhotos().catch(() => {});
+}
 
 /** Draw a source's own progress on its own row, without rebuilding the sidebar. */
 function paintSourceProgress(source) {
@@ -496,6 +510,19 @@ function renderGrid() {
   if (!S.view.length) {
     stage.className = "";
     stage.style.height = "";
+    const scanning = S.busy[S.source]?.op === "scan";
+    if (scanning && !S.photos.length) {
+      const b = S.busy[S.source];
+      const pct = b.total ? Math.round((b.done / b.total) * 100) : 0;
+      stage.replaceChildren(el("div", { class: "welcome" },
+        el("div", { class: "art pulse" }, el("span", {}, "\u25F4")),
+        el("h2", {}, "Indexing this folder"),
+        el("p", {}, b.total
+          ? `${b.done.toLocaleString()} of ${b.total.toLocaleString()} files so far. Photographs appear as they are found — you can keep using the other folders.`
+          : "Reading the folder. Photographs appear as they are found."),
+        el("div", { class: "idxbar" }, el("span", { style: `width:${pct}%` }))));
+      return;
+    }
     // A semantic query in flight has not answered yet, so "no photos match" would be
     // a wrong answer shown before the right one arrives.
     const looking = S.semantic && S.semantic.state === "busy";
@@ -1460,8 +1487,12 @@ async function selectSource(path) {
   S.source = path; S.folder = null; S.person = null;
   S.cluster = null; S.clusterHashes = null; S.people = [];
   S.semantic = null; S.semanticReady = null;
+  // Drop the previous library's photographs before the new one's arrive. Leaving them
+  // up meant the breadcrumb named one folder while the grid showed another.
+  S.photos = []; S.view = []; S.sel.clear();
   refreshSemanticStatus();
   renderSidebar();
+  renderGrid();
   await busy("Loading library…", loadPhotos, path);
   refreshPeople();
   // Thumbnails are produced on demand by the photo:// handler as cells scroll into
@@ -1473,6 +1504,10 @@ async function selectSource(path) {
       .then(() => refreshSources())
       .catch(() => {});
   }
+  // Opening a folder is also the moment to finish what a previous session started —
+  // `source-ready` only fires when a library is opened for writing, which reading its
+  // counts does not do.
+  resumeUnfinished(path);
 }
 function selectFolder(f) { S.folder = (S.folder === f ? null : f); S.person = null; renderSidebar(); applyFilter(); }
 /** Remove a person. The photographs stay; only the claim about who is in them goes. */
@@ -1566,12 +1601,47 @@ async function addSource() {
   refreshSources().then(() => autodetect(picked));
 }
 
+/* Pick up analysis that a previous session left unfinished.
+   These passes take hours on a large library and quitting part-way is normal; every
+   stage commits per photograph, so what was done survives. Only stages that were
+   *already begun* resume — a folder nobody has asked to analyse must not start burning
+   CPU on its own the next time the app opens. */
+const resuming = new Set();
+
+async function resumeUnfinished(path) {
+  if (resuming.has(path)) return;
+  let p;
+  try { p = await invoke("pending_work", { path }); } catch { return; }
+
+  const faces = p.faces_started && p.faces_missing > 0;
+  const semantic = p.clip_started && p.clip_missing > 0;
+  if (!faces && !semantic) return;
+
+  resuming.add(path);
+  const left = Math.max(faces ? p.faces_missing : 0, semantic ? p.clip_missing : 0);
+  toast(`Picking up where the last session stopped — ${left.toLocaleString()} photos left`, "ok");
+  try {
+    S.busy[path] = { op: "analyze", done: 0, total: left };
+    paintSourceProgress(path);
+    await invoke("analyze_resume", { path, faces, semantic });
+    if (path === S.source) { await refreshPeople(); await loadPhotos(); }
+  } catch (e) {
+    console.warn("resume failed:", e);
+  } finally {
+    resuming.delete(path);
+    delete S.busy[path];
+    paintSourceProgress(path);
+    await refreshSources();
+  }
+}
+
 /* A library finished its first scan. Refresh the sidebar so its counts appear, and the
    grid too if it is the one being looked at. */
 listen("source-ready", async ({ payload }) => {
   delete S.busy[payload];
   await refreshSources();
   if (payload === S.source) await loadPhotos();
+  resumeUnfinished(payload);
 });
 
 /* Finding people is the point of the app, so a newly added folder is scanned for

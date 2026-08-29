@@ -282,6 +282,36 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
     Ok(())
 }
 
+/// Run `f` against a library, without waiting for its first scan to finish.
+///
+/// A library being indexed for the first time is not in the registry yet, and opening
+/// it would block behind the scan. But the scan commits rows as it goes and the index
+/// is in WAL mode, so a second connection can read what has landed so far. That is what
+/// lets the grid fill in while a folder indexes instead of showing the previous
+/// source's photographs, or nothing at all.
+///
+/// Falls back to the blocking path when there is no index yet — the very first moments
+/// of a brand new library, when there is nothing to read anyway.
+fn with_readable<T>(
+    state: &AppState,
+    root: &str,
+    f: impl FnOnce(&mut Library) -> anyhow::Result<T>,
+) -> R<T> {
+    let open = {
+        let libs = state.libs.lock().map_err(err)?;
+        libs.get(root).cloned()
+    };
+    if let Some(lib) = open {
+        let mut guard = lib.lock().map_err(err)?;
+        return f(&mut guard).map_err(err);
+    }
+    match Library::open_readable(root) {
+        Ok(mut lib) => f(&mut lib).map_err(err),
+        // No index on disk yet; take the slow path, which creates one.
+        Err(_) => with(state, root, f),
+    }
+}
+
 /// Run `f` against an open library.
 ///
 /// The guard is confined to this function so it is never held across an await
@@ -414,12 +444,28 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
             });
             continue;
         }
-        match with(&state, &root, describe) {
+        // Readable, not blocking: listing the sidebar must not wait on a library that
+        // is still being indexed, or every folder disappears until that one finishes.
+        match with_readable(&state, &root, describe) {
             Ok(info) => {
+                // Counts were read, so this folder is known even if the library is not
+                // open for writing yet. "Indexing" means there is nothing to read —
+                // not merely that we have not opened it.
                 start_watching(&app, &state, &root);
                 out.push(info);
             }
-            Err(_) => continue,
+            Err(_) => {
+                // No index yet at all — show the folder rather than dropping it.
+                out.push(SourceInfo {
+                    name: std::path::Path::new(&root)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| root.clone()),
+                    path: root.clone(),
+                    photos: 0, videos: 0, folders: vec![], people: vec![],
+                    faces_analysed: 0, thumbs_ready: 0, missing: false, indexing: true,
+                });
+            }
         }
     }
     Ok(out)
@@ -605,7 +651,7 @@ async fn photos(
     folder: Option<String>,
     person: Option<String>,
 ) -> R<Vec<PhotoInfo>> {
-    with(&state, &path, |lib| {
+    with_readable(&state, &path, |lib| {
         let people_file = People::load(lib.root())?;
         let user = lib.user_data()?.clone();
         let opt = assign::Options::default();
@@ -728,6 +774,67 @@ async fn analyze_faces(
             &sink,
         )?;
         Ok(format!("{} photos analysed · {} faces found", st.decoded, st.faces))
+    })
+}
+
+/// What analysis is unfinished for a library.
+///
+/// Quitting mid-pass is normal — these runs take hours on a large library — and every
+/// stage commits per photograph, so the work already done survives. This is what lets
+/// the window pick it up again on the next launch instead of waiting to be asked.
+#[derive(Serialize, Default)]
+pub struct Pending {
+    photos: usize,
+    thumbs_missing: usize,
+    faces_missing: usize,
+    clip_missing: usize,
+    /// Whether each stage was ever begun. Resuming is for work already started; a
+    /// library nobody has asked to analyse should not start doing it on its own.
+    faces_started: bool,
+    clip_started: bool,
+}
+
+/// Resume the stages a previous session left unfinished.
+#[tauri::command]
+async fn analyze_resume(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    faces: bool,
+    semantic: bool,
+) -> R<String> {
+    let sink = emitter(&app, "analyze", &path);
+    with(&state, &path, |lib| {
+        let st = analyze::run_with_progress(
+            lib,
+            analyze::Stages { thumbs: true, faces, semantic },
+            &sink,
+        )?;
+        Ok(format!("{} photos finished", st.decoded))
+    })
+}
+
+#[tauri::command]
+async fn pending_work(state: tauri::State<'_, AppState>, path: String) -> R<Pending> {
+    with_readable(&state, &path, |lib| {
+        let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
+        let mut p = Pending { photos: rows.len(), ..Default::default() };
+        for r in &rows {
+            if !thumbs::thumb_path(lib, &r.hash).exists() {
+                p.thumbs_missing += 1;
+            }
+            if lib.faces_done(&r.hash)? {
+                p.faces_started = true;
+            } else {
+                p.faces_missing += 1;
+            }
+            if lib.index.get_clip(&r.hash)?.is_some() {
+                p.clip_started = true;
+            } else {
+                p.clip_missing += 1;
+            }
+        }
+        Ok(p)
     })
 }
 
@@ -1923,7 +2030,7 @@ pub fn run() {
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,
-            plan_move, apply_move, forget_person, analyze_all, source_data
+            plan_move, apply_move, forget_person, analyze_all, source_data, pending_work, analyze_resume
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

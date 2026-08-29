@@ -321,6 +321,10 @@ kbd{
   cursor:pointer;
 }
 .lb-scope:hover{background:rgba(255,255,255,.18);color:var(--ink)}
+/* Indexing state in the main panel: a real proportion, not a spinner. */
+.idxbar{width:min(280px,60%);height:4px;margin:var(--s4) auto 0;border-radius:3px;
+  background:rgba(128,128,128,.22);overflow:hidden}
+.idxbar span{display:block;height:100%;background:var(--accent);transition:width .3s ease}
 .srcrow{position:relative;display:flex;align-items:center;gap:4px}
 /* A source working in the background says so on its own row, rather than through a
    banner that would speak for whichever folder you happen to be looking at. */

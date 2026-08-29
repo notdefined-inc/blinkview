@@ -196,6 +196,26 @@ While a 25GB library rescans from scratch, queries against other sources return 
 24-30 ms. They used to block until it finished, because `open_lib` scanned while holding
 the lock every command for every library needs.
 
+### While a folder indexes
+Switching to a library that is still indexing shows **its** photographs, filling in as
+they are found — not the previous source's, and not an empty screen. The index is in
+WAL mode and commits as it walks, so a second connection reads what has landed without
+waiting on the writer. The sidebar lists every folder immediately with real counts,
+including partial ones that climb as the scan proceeds.
+
+Before this, switching left the last library's photographs on screen under the new
+library's name, because the query blocked behind the scan while the grid kept what it
+had.
+
+### Picking up where a session stopped
+Analysis is resumable by construction — every stage commits per photograph — and it now
+resumes on its own when a folder is opened, rather than waiting to be asked again.
+
+Only stages already begun are resumed. A folder nobody has asked to analyse does not
+start burning CPU by itself the next time the app opens; one that was half-analysed
+finishes. Verified by killing a pass at 36 of 40 photographs and reopening the folder:
+it completed to 40 without being asked, and a second open started nothing.
+
 ### Removing a folder
 Each source has a visible ✕ rather than a right-click nobody finds. It asks first, and
 the dialog leads with the thing being feared: **your photographs are not deleted** — the
