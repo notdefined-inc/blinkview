@@ -5,6 +5,10 @@
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
+
+/// Bumped whenever openfoto learns to read something it could not before, so files
+/// previously given up on are tried again.
+pub const DECODER_GENERATION: &str = "2026-08-29-webp-gif";
 use std::path::Path;
 
 pub struct Index {
@@ -62,6 +66,18 @@ impl Index {
             -- Photos analysed but containing no usable face. Without this we would
             -- re-decode every landscape shot on each run.
             CREATE TABLE IF NOT EXISTS faces_done (hash TEXT PRIMARY KEY);
+            -- Photographs that could not be decoded. Without this a file openfoto
+            -- cannot read looks identical to one not yet analysed, so every pass
+            -- retries it and the library never reports itself finished.
+            CREATE TABLE IF NOT EXISTS unreadable (
+                hash   TEXT PRIMARY KEY,
+                reason TEXT NOT NULL,
+                at     INTEGER NOT NULL,
+                -- Which build gave up. A later one may understand the format: WebP
+                -- was added exactly because fifteen files kept failing, and had this
+                -- table existed first they would have been written off for good.
+                version TEXT NOT NULL DEFAULT ''
+            );
             -- Semantic (CLIP) embeddings. Derived, so it belongs in the disposable
             -- vault; keyed by content hash like everything else, so it survives
             -- renaming and moving.
@@ -211,6 +227,46 @@ impl Index {
             params![hash, floats_to(embedding)],
         )?;
         Ok(())
+    }
+
+    /// Record that a photograph could not be decoded, so it is not tried for ever.
+    ///
+    /// Keyed by content hash: if the file is replaced with a readable one its hash
+    /// changes and the note no longer applies.
+    pub fn mark_unreadable(&self, hash: &str, reason: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO unreadable (hash, reason, at, version) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![hash, reason, chrono::Utc::now().timestamp(), DECODER_GENERATION],
+        )?;
+        Ok(())
+    }
+
+    /// True only when *this* build already failed on it. A note left by an older build
+    /// is not trusted, so adding a format retries what it can now read instead of
+    /// leaving those files written off.
+    pub fn is_unreadable(&self, hash: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM unreadable WHERE hash=?1 AND version=?2",
+                params![hash, DECODER_GENERATION],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// Every photograph openfoto could not read, with why.
+    pub fn unreadable(&self) -> Result<Vec<(String, String)>> {
+        let mut st = self.conn.prepare("SELECT hash, reason FROM unreadable")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Forget the failures, so a library can be retried after openfoto learns a format.
+    pub fn clear_unreadable(&self) -> Result<usize> {
+        Ok(self.conn.execute("DELETE FROM unreadable", [])?)
     }
 
     /// How many photographs have an embedding, without reading any of them.

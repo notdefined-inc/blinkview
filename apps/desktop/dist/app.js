@@ -1625,7 +1625,10 @@ async function addSource() {
   S.sources = [...S.sources.filter(s => s.path !== picked), info];
   S.busy[picked] = { op: "scan", done: 0, total: 0 };
   renderSidebar();
-  toast(`${info.name} added — indexing in the background`, "ok");
+  toast(`${info.name} added`, "ok");
+  // Go to what was just added. Reads no longer wait on the scan, so this shows the
+  // folder filling in rather than blocking on it.
+  await selectSource(picked);
   refreshSources().then(() => autodetect(picked));
 }
 
@@ -1647,7 +1650,8 @@ async function resumeUnfinished(path) {
 
   resuming.add(path);
   const left = Math.max(faces ? p.faces_missing : 0, semantic ? p.clip_missing : 0);
-  toast(`Picking up where the last session stopped — ${left.toLocaleString()} photos left`, "ok");
+  const what = faces && semantic ? "faces and scenes" : faces ? "faces" : "scenes";
+  toast(`Resuming ${what} — ${left.toLocaleString()} photo${left === 1 ? "" : "s"} left`, "ok");
   try {
     S.busy[path] = { op: "analyze", done: 0, total: left };
     paintSourceProgress(path);

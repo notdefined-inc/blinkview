@@ -53,6 +53,8 @@ pub struct Stats {
     pub too_small: usize,
     pub embedded: usize,
     pub skipped: usize,
+    /// Photographs recorded as impossible to decode during this pass.
+    pub unreadable: usize,
     pub errors: Vec<String>,
 }
 
@@ -72,6 +74,9 @@ struct Outcome {
     hash: String,
     faces: Option<Vec<StoredFace>>,
     clip: Option<Vec<f32>>,
+    /// Set when the photograph could not be decoded at all, so it is recorded and not
+    /// attempted again on every future pass.
+    unreadable: Option<String>,
     stats: Stats,
 }
 
@@ -112,6 +117,13 @@ pub fn run_with_progress(
     let mut todo = Vec::new();
     let mut skipped = 0usize;
     for r in &rows {
+        // A photograph openfoto already failed to read is not outstanding work; it is
+        // a known limitation, and retrying it every pass is what made a library report
+        // the same "15 left" for ever.
+        if lib.index.is_unreadable(&r.hash)? {
+            skipped += 1;
+            continue;
+        }
         let thumb = stages.thumbs && !thumbs::thumb_path(lib, &r.hash).exists();
         let faces = want_faces && !lib.faces_done(&r.hash)?;
         let clip = want_semantic && lib.index.get_clip(&r.hash)?.is_none();
@@ -153,6 +165,10 @@ pub fn run_with_progress(
                 if let Some(v) = out.clip {
                     lib.index.put_clip(&out.hash, &v)?;
                 }
+                if let Some(why) = &out.unreadable {
+                    lib.index.mark_unreadable(&out.hash, why)?;
+                    acc.unreadable += 1;
+                }
                 merge(&mut acc, out.stats);
             }
             Ok(acc)
@@ -183,6 +199,7 @@ fn merge(into: &mut Stats, from: Stats) {
     into.faces += from.faces;
     into.too_small += from.too_small;
     into.embedded += from.embedded;
+    into.unreadable += from.unreadable;
     into.errors.extend(from.errors);
 }
 
@@ -193,8 +210,13 @@ thread_local! {
 /// Everything one photograph needs, from at most one decode.
 fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
     let mut st = Stats::default();
-    let mut out =
-        Outcome { hash: job.hash.clone(), faces: None, clip: None, stats: Stats::default() };
+    let mut out = Outcome {
+        hash: job.hash.clone(),
+        faces: None,
+        clip: None,
+        unreadable: None,
+        stats: Stats::default(),
+    };
 
     // A thumbnail on its own can often come from the preview the camera embedded,
     // which is the whole reason not to decode unless something else needs it.
@@ -214,7 +236,10 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
                     st.decoded += 1;
                 }
             }
-            Err(e) => st.errors.push(format!("{}: thumbnail: {e}", job.rel)),
+            Err(e) => {
+                st.errors.push(format!("{}: thumbnail: {e}", job.rel));
+                out.unreadable = Some(e.to_string());
+            }
         }
         out.stats = st;
         return out;
@@ -230,6 +255,7 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
         Ok(v) => v,
         Err(e) => {
             st.errors.push(format!("{}: decode: {e}", job.rel));
+            out.unreadable = Some(e.to_string());
             out.stats = st;
             return out;
         }

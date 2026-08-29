@@ -47,3 +47,25 @@ Known work before Windows and Linux are real:
 - **Windows filename rules** go beyond exFAT's character set: reserved device names
   (`CON`, `NUL`, `COM1`), no trailing dots or spaces, and a 260-character path limit
   unless long paths are enabled. `fsops::RESERVED` covers the characters only.
+
+## Formats
+
+Decoded today, all in pure Rust with no C dependency and no per-platform build: JPEG,
+PNG, WebP, GIF, TIFF, BMP, ICO, TGA, QOI, PNM, HDR, DDS. Adding the lot cost **1 MB** of
+binary. HEIC works on macOS through `sips` (ADR-0005).
+
+Not yet, in order of what it would cost:
+
+- **AVIF** — phones are starting to write it. `image` can decode it only through
+  `avif-native`, which needs dav1d, a C library. That is a per-platform build decision
+  rather than a feature flag, so it belongs with the Windows and Linux work.
+- **HEIC off macOS** — the same shape of problem: libheif, per platform.
+- **RAW** (CR2, NEF, ARW, DNG, RAF, ORF, RW2) — a different project, not a bigger
+  version of this one. `rawloader` reads the sensor data in pure Rust, but a RAW file is
+  not an image until it has been demosaiced and colour-managed, and getting that wrong
+  looks worse than not opening the file. Deserves its own ADR.
+
+  There is a cheap first step, though: RAW files carry a full-size JPEG preview, and the
+  machinery that already prefers a camera's embedded preview for thumbnails
+  (`imageio::embedded_preview`) would give RAW browsing and search almost immediately —
+  leaving the colour pipeline as a separate, later decision about editing.

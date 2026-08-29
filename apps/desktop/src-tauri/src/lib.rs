@@ -798,6 +798,9 @@ pub struct Pending {
     thumbs_missing: usize,
     faces_missing: usize,
     clip_missing: usize,
+    /// Files openfoto cannot decode. Reported so the count is explained rather than
+    /// silently outstanding for ever.
+    unreadable: usize,
     /// Whether each stage was ever begun. Resuming is for work already started; a
     /// library nobody has asked to analyse should not start doing it on its own.
     faces_started: bool,
@@ -830,6 +833,10 @@ async fn pending_work(state: tauri::State<'_, AppState>, path: String) -> R<Pend
         let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
         let mut p = Pending { photos: rows.len(), ..Default::default() };
         for r in &rows {
+            if lib.index.is_unreadable(&r.hash)? {
+                p.unreadable += 1;
+                continue;
+            }
             if !thumbs::thumb_path(lib, &r.hash).exists() {
                 p.thumbs_missing += 1;
             }

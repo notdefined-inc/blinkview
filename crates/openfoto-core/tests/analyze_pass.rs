@@ -153,3 +153,37 @@ fn a_second_run_finishes_what_the_first_started() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A file openfoto cannot read must be given up on *once*, not on every pass.
+///
+/// The symptom this prevents: a library reporting the same "15 photos left" for ever,
+/// because fifteen WebP files saved with .jpg extensions failed every time and so never
+/// stopped counting as outstanding work.
+#[test]
+fn an_unreadable_file_is_not_retried_for_ever() {
+    let dir = std::env::temp_dir().join(format!("openfoto-unread-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("corrupt.jpg"), b"\xff\xd8\xffnot really a jpeg at all").unwrap();
+    std::fs::write(dir.join("nonsense.png"), b"definitely not a png").unwrap();
+
+    let mut lib = Library::open(&dir).unwrap();
+    openfoto_core::scan::scan(&mut lib, false).unwrap();
+
+    let first = analyze::run(&mut lib, analyze::Stages::only_thumbs()).unwrap();
+    assert_eq!(first.thumbs, 0, "nothing here can be decoded");
+    assert_eq!(first.unreadable, 2, "both failures should be recorded");
+
+    // The second pass must find no outstanding work at all.
+    let again = analyze::run(&mut lib, analyze::Stages::only_thumbs()).unwrap();
+    assert_eq!(again.decoded, 0, "an unreadable file was tried again");
+    assert_eq!(again.unreadable, 0, "and recorded again");
+    assert_eq!(again.skipped, again.considered, "everything should be accounted for");
+
+    // The reasons are kept, so the count can be explained rather than left mysterious.
+    let listed = lib.index.unreadable().unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().all(|(_, why)| !why.is_empty()));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

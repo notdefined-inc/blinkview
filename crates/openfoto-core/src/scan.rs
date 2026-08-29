@@ -9,7 +9,15 @@ use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
 
-pub const PHOTO_EXT: &[&str] = &["jpg", "jpeg", "png", "heic", "heif"];
+/// Extensions openfoto will index as photographs.
+///
+/// Kept in step with what `image` is built to decode, plus HEIC which goes through a
+/// converter. Indexing a format we cannot read only produces a file that fails once and
+/// is then recorded as unreadable.
+pub const PHOTO_EXT: &[&str] = &[
+    "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff", "bmp", "ico",
+    "tga", "qoi", "pbm", "pgm", "ppm", "pnm", "hdr", "dds",
+];
 pub const VIDEO_EXT: &[&str] = &["mp4", "mov", "m4v"];
 
 #[derive(Debug, Default, PartialEq)]

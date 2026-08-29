@@ -20,7 +20,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kamadak-exif = "0.6"
 regex = "1"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# WebP is not optional in practice: a phone backup carried fifteen WebP files saved
+# with .jpg extensions (Reddit downloads), which failed to decode on every pass and so
+# were retried for ever. GIF costs little and turns up for the same reason.
+# Every format `image` decodes in pure Rust. They cost a little binary size and nothing
+# else — no C library, no per-platform build — and a photo app that cannot open a TIFF
+# is a surprise. AVIF is deliberately absent: its decoder needs dav1d, a C dependency,
+# which is a different decision. RAW is a different project again (see ROADMAP).
+image = { version = "0.25", default-features = false, features = [
+    "jpeg", "png", "webp", "gif", "tiff", "bmp", "ico", "tga", "qoi", "pnm", "hdr", "dds",
+] }
 rayon = "1"
 jpeg-decoder = "0.3"
 ureq = { version = "3", features = ["native-tls"] }
