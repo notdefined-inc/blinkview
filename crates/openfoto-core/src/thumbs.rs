@@ -2,8 +2,11 @@
 //!
 //! Thumbnails are content-addressed (`.openfoto/thumbs/<hash>.jpg`), so they survive
 //! renames and folder moves, and the cache is disposable like the rest of the vault.
-//! Decoding uses the JPEG decoder's DCT downscaling, so building 280 thumbnails costs
-//! about a second rather than a minute.
+//! The cost of a thumbnail is the decode, not the resize or the encode, and the decode
+//! is avoided entirely when the camera already wrote a preview into the file — see
+//! `imageio::embedded_preview`. Failing that, the image is decoded once, shrunk, and
+//! only then rotated, because rotating twelve megapixels to throw away all but a
+//! 512-pixel edge costs 14 ms for nothing.
 
 use crate::{imageio, Library};
 use anyhow::{Context, Result};
@@ -30,10 +33,24 @@ pub fn render_to(src: &std::path::Path, dst: &std::path::Path, is_video: bool) -
 }
 
 fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
-    let img = imageio::load_rgb(src)?;
+    // The camera's own preview first: reading 37 KB and decoding a 512px image instead
+    // of twelve megapixels is the difference between minutes and seconds over a phone
+    // backup. `embedded_preview` refuses anything that is too small or whose shape
+    // disagrees with the photograph, so this is a fast path, never a guess.
+    // `o` is the rotation still owed. The HEIC route rotates inside `load_rgb`, so it
+    // owes nothing further — applying it twice would turn a portrait upside down.
+    let (img, o) = match std::fs::read(src)
+        .ok()
+        .and_then(|b| imageio::embedded_preview(&b, THUMB_LONG))
+    {
+        Some(preview) => (preview, imageio::orientation(src)),
+        None if imageio::needs_conversion(src) => (imageio::load_rgb(src)?, 1),
+        None => (imageio::load_rgb_unrotated(src)?, imageio::orientation(src)),
+    };
+
     let (w, h) = (img.width(), img.height());
     let scale = THUMB_LONG as f32 / w.max(h) as f32;
-    let out = if scale < 1.0 {
+    let shrunk = if scale < 1.0 {
         image::imageops::resize(
             &img,
             (w as f32 * scale).round().max(1.0) as u32,
@@ -43,6 +60,8 @@ fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     } else {
         img
     };
+    // Rotate last, on the small image.
+    let out = imageio::apply_rgb(shrunk, o);
     if let Some(p) = dst.parent() {
         std::fs::create_dir_all(p)?;
     }

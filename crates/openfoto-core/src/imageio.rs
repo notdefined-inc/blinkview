@@ -105,6 +105,93 @@ pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
 
 /// Decode to RGB with EXIF orientation applied, transcoding first when the format
 /// needs it (HEIC/HEIF).
+/// The JPEG preview a camera already wrote into the file, if it is good enough to be
+/// our thumbnail.
+///
+/// Phone cameras embed a preview in the EXIF APP1 segment — on the Samsung backup this
+/// was measured at 96% of JPEGs, every one of them exactly 512px on the long edge, which
+/// is the size we want, and not one with an aspect ratio that disagreed with its photo.
+///
+/// Using it turns a thumbnail from "decode 12 megapixels and throw 99% away" into
+/// "read 37 KB and decode a small image". Decoding the full frame costs ~60 ms and
+/// cannot be avoided by asking for a scaled decode, because a JPEG's entropy coding has
+/// to be walked in full either way — measured: turbojpeg at 1/8 scale saved only 22%.
+///
+/// Returns `None` whenever anything is off — no preview, too small, or an aspect ratio
+/// that disagrees with the real image. A thumbnail that does not match its photograph
+/// is worse than a slow one, so every doubt falls back to decoding properly.
+pub fn embedded_preview(bytes: &[u8], min_long: u32) -> Option<RgbImage> {
+    let (fw, fh) = jpeg_size(bytes)?;
+    let thumb = find_app1_jpeg(bytes)?;
+    let (tw, th) = jpeg_size(thumb)?;
+    if tw.max(th) < min_long {
+        return None;
+    }
+    // The preview must be the same photograph, not a differently cropped one.
+    let (fa, ta) = (fw as f32 / fh as f32, tw as f32 / th as f32);
+    if (fa - ta).abs() > 0.02 * fa.max(ta) {
+        return None;
+    }
+    let img = image::load_from_memory_with_format(thumb, image::ImageFormat::Jpeg).ok()?;
+    Some(img.to_rgb8())
+}
+
+/// Width and height from the first SOF marker, without decoding anything.
+fn jpeg_size(b: &[u8]) -> Option<(u32, u32)> {
+    if b.len() < 4 || b[0] != 0xFF || b[1] != 0xD8 {
+        return None;
+    }
+    let mut i = 2usize;
+    while i + 9 < b.len() {
+        if b[i] != 0xFF {
+            return None;
+        }
+        let marker = b[i + 1];
+        // SOF0/1/2 carry the frame size; SOF4 (DHT) and friends must not be read as one.
+        if matches!(marker, 0xC0..=0xC2) {
+            let h = u16::from_be_bytes([b[i + 5], b[i + 6]]) as u32;
+            let w = u16::from_be_bytes([b[i + 7], b[i + 8]]) as u32;
+            return Some((w, h));
+        }
+        if marker == 0xD8 || marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            i += 2;
+            continue;
+        }
+        let len = u16::from_be_bytes([b[i + 2], b[i + 3]]) as usize;
+        if len < 2 {
+            return None;
+        }
+        i += 2 + len;
+    }
+    None
+}
+
+/// The complete JPEG embedded inside the EXIF APP1 segment.
+fn find_app1_jpeg(b: &[u8]) -> Option<&[u8]> {
+    let mut i = 2usize;
+    while i + 4 < b.len() {
+        if b[i] != 0xFF {
+            return None;
+        }
+        let marker = b[i + 1];
+        if matches!(marker, 0xC0..=0xC2 | 0xDA) {
+            return None; // reached image data; there is no preview
+        }
+        let len = u16::from_be_bytes([b[i + 2], b[i + 3]]) as usize;
+        if len < 2 || i + 2 + len > b.len() {
+            return None;
+        }
+        if marker == 0xE1 {
+            let seg = &b[i + 4..i + 2 + len];
+            let start = seg.windows(3).position(|w| w == [0xFF, 0xD8, 0xFF])?;
+            let end = seg[start..].windows(2).rposition(|w| w == [0xFF, 0xD9])?;
+            return Some(&seg[start..start + end + 2]);
+        }
+        i += 2 + len;
+    }
+    None
+}
+
 pub fn load_rgb(path: &Path) -> Result<RgbImage> {
     if needs_conversion(path) {
         let tmp = std::env::temp_dir().join(format!(
@@ -125,6 +212,18 @@ pub fn load_rgb(path: &Path) -> Result<RgbImage> {
     }
     let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
     Ok(apply_rgb(img.to_rgb8(), orientation(path)))
+}
+
+/// As [`load_rgb`], but without applying EXIF orientation.
+///
+/// For callers that are about to shrink the image: rotating twelve megapixels costs
+/// 14 ms and rotating the 512-pixel result costs 0.2 ms, for the same picture.
+/// Callers must apply [`orientation`] themselves — see `thumbs::render_one`, which does
+/// it after shrinking. Not for HEIC, whose conversion rotates on the way through.
+pub fn load_rgb_unrotated(path: &Path) -> Result<RgbImage> {
+    debug_assert!(!needs_conversion(path), "HEIC is rotated during conversion");
+    let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
+    Ok(img.to_rgb8())
 }
 
 #[cfg(test)]

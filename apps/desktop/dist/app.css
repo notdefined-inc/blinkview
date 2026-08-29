@@ -65,7 +65,10 @@ kbd{
    on top of our content at roughly x=20..70, vertically centred in a ~52px band. */
 .tb-left{display:flex;align-items:center;gap:10px;padding-left:86px;min-width:0}
 .logowrap{display:grid;place-items:center;flex:0 0 auto}
-.logomark{width:26px;height:26px;display:block;filter:drop-shadow(0 2px 8px rgba(139,92,246,.45))}
+/* The artwork carries its own glow, so the shadow only has to lift it off the bar —
+   the old violet drop-shadow was compensating for a flat SVG and now reads as haze. */
+.logomark{width:26px;height:26px;display:block;object-fit:contain;
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.35))}
 .wordmark{font-size:16px;font-weight:700;letter-spacing:-.02em;
   background:linear-gradient(100deg,#e8f4ff 10%,#bcd9ff 45%,#e9d5ff 80%);
   -webkit-background-clip:text;background-clip:text;color:transparent}

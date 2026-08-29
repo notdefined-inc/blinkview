@@ -21,7 +21,7 @@ mod watch;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Serialize)]
 struct ProgressEvent<'a> {
@@ -42,9 +42,28 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Threads that decode and resize images for the `photo://` scheme.
+///
+/// Bounded deliberately. Every in-flight request holds a decoded full-size frame —
+/// 36 MB for a 12 MP photograph — so an unbounded pool answering a fast scroll would
+/// have hundreds of those alive at once.
+static IMAGE_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock::new(|| {
+    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(n.clamp(2, 6))
+        .thread_name(|i| format!("openfoto-img-{i}"))
+        .build()
+        .expect("image pool")
+});
+
 #[derive(Default)]
 pub struct AppState {
-    libs: Mutex<HashMap<String, Library>>,
+    /// One lock *per library*, not one lock over all of them.
+    ///
+    /// A single mutex meant a long operation on one library — building thumbnails for
+    /// a phone backup — blocked every command for every other library, so switching
+    /// source while thumbnails were generating simply hung until it finished.
+    libs: Mutex<HashMap<String, Arc<Mutex<Library>>>>,
     sources: Mutex<Vec<String>>,
     /// One filesystem watcher per open library, so photographs dropped into a folder
     /// in Finder appear without the window being touched.
@@ -201,7 +220,7 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
         if let Err(e) = scan::scan(&mut lib, false) {
             eprintln!("[openfoto] scan on open failed for {root}: {e}");
         }
-        libs.insert(root.to_string(), lib);
+        libs.insert(root.to_string(), Arc::new(Mutex::new(lib)));
     }
     Ok(())
 }
@@ -214,9 +233,14 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
 /// freeze the window.
 fn with<T>(state: &AppState, root: &str, f: impl FnOnce(&mut Library) -> anyhow::Result<T>) -> R<T> {
     open_lib(state, root)?;
-    let mut libs = state.libs.lock().map_err(err)?;
-    let lib = libs.get_mut(root).ok_or("library not open")?;
-    f(lib).map_err(err)
+    // Take the registry lock only long enough to find the library, then release it, so
+    // work on one library never holds up another.
+    let lib = {
+        let libs = state.libs.lock().map_err(err)?;
+        libs.get(root).ok_or("library not open")?.clone()
+    };
+    let mut guard = lib.lock().map_err(err)?;
+    f(&mut guard).map_err(err)
 }
 
 /// True when `path` sits in `folder` or anywhere beneath it.
@@ -1533,7 +1557,16 @@ pub fn run() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .register_uri_scheme_protocol("photo", |ctx, request| serve_photo(ctx.app_handle(), request));
+        // Asynchronous, not the synchronous variant: `serve_photo` decodes and resizes
+        // a full-size photograph when a thumbnail is not cached yet, and on the
+        // synchronous protocol that work happens on the UI thread — which is why
+        // scrolling crawled while thumbnails were being produced and was fine once
+        // they existed. Served on a pool instead, the grid scrolls at full speed while
+        // the work happens behind it.
+        .register_asynchronous_uri_scheme_protocol("photo", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            IMAGE_POOL.spawn(move || responder.respond(serve_photo(&app, request)));
+        });
 
     // UI verification bridge. Behind the `ui-bridge` feature and additionally gated on
     // a debug build, so a release binary never exposes a WebSocket server.

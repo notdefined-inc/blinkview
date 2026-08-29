@@ -22,6 +22,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 http = "1"
 notify = { workspace = true }
+rayon = { workspace = true }
 
 # UI-verification bridge. cargo cannot select dependencies on cfg(debug_assertions),
 # so this is a real feature, on by default for development and dropped from a release

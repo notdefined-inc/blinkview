@@ -134,6 +134,18 @@ operation, not a receipt printed afterwards.**
 path needs sanitising at the point it becomes a path, not at every call site. The label
 was fine as a label; it was only wrong as a filename.
 
+**13. A comment claiming an optimisation that is not there.** `thumbs.rs` said decoding
+"uses the JPEG decoder's DCT downscaling" — it never did; that trick lives only in
+`imagesig`. The comment sent a whole investigation to the wrong place. **Before
+optimising, check the claim in the comment against the code.**
+
+**14. Measure the library you actually link.** `image` 0.25 already decodes JPEG with
+zune-jpeg, so "switch to a faster decoder" was worth nothing, and turbojpeg measured
+identical (60.4 ms vs 60.1 ms on 12 MP) — a C dependency for zero gain. The win was
+elsewhere entirely: not decoding at all, by using the preview the camera already
+embedded. **Benchmark the alternative before adopting it, and benchmark what you have
+before assuming it is slow.**
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.

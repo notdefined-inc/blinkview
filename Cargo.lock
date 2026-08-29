@@ -3051,6 +3051,7 @@ dependencies = [
  "http",
  "notify",
  "openfoto-core",
+ "rayon",
  "serde",
  "serde_json",
  "tauri",
