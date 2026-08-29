@@ -222,6 +222,28 @@ Two things that do *not* help, both measured rather than assumed:
   more than the acceleration returns. DirectML and CUDA are worth measuring on their own
   platforms before being believed.
 
+### How that compares
+Immich publishes whole-library wall clock, so the same unit is used here. Their figures
+are user-reported rather than controlled, on other hardware, and at least one thread
+mentions a GPU — treat them as a league table, not a photo finish.
+
+| Embedding 80,000 assets | wall clock |
+|---|---|
+| Immich `ViT-B-32__laion2b_e16` | 80 min |
+| **openfoto, parallel (not yet shipped)** | **110 min** |
+| **openfoto, as it ships today** | **194 min** |
+| Immich `ViT-B-16-SigLIP-384__webli` | 270 min |
+
+So: the same league, faster than their heavier model, behind their light one. Not slow,
+and not fast enough to leave alone. Worth noting we run a much smaller model
+(MobileCLIP-S0) for those numbers, which means the pipeline around it, not the model, is
+where the remaining time sits.
+
+Parallelising the two ML passes is worth about 1.8x on eight cores — less than the core
+count, because ONNX Runtime already threads a single inference internally. Face
+detection and embedding both still loop one photograph at a time; only thumbnails use
+rayon.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in
