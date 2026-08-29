@@ -71,7 +71,7 @@ Grab the installer for your platform from [**Releases**](https://github.com/notd
 |---|---|
 | **macOS** | `.dmg` — Apple Silicon and Intel |
 | **Windows** | `.msi` |
-| **Linux** | `.AppImage` and `.deb` |
+| **Linux** | `.AppImage` and `.deb` — needs glibc 2.38+ (Ubuntu 24.04, Fedora 39, Debian 13 or newer) |
 
 The app is not code-signed yet, so the first launch needs a nudge: on macOS, right-click → Open; on Windows, *More info* → *Run anyway*. Signing certificates cost money that a project with no revenue doesn't have.
 

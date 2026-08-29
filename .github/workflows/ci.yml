@@ -8,7 +8,10 @@ on:
 jobs:
   test:
     name: Tests and lints
-    runs-on: ubuntu-22.04
+    # 24.04, not 22.04: `ort` downloads a prebuilt onnxruntime linked against
+    # glibc 2.38+, and 22.04 ships 2.35 — linking fails on __isoc23_strtol and
+    # friends long before any test runs.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
