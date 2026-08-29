@@ -196,6 +196,13 @@ While a 25GB library rescans from scratch, queries against other sources return 
 24-30 ms. They used to block until it finished, because `open_lib` scanned while holding
 the lock every command for every library needs.
 
+### Scroll position
+Only navigation moves the scroll. A background refresh — a scan finding more
+photographs, the watcher noticing a change — redraws the grid under someone who is
+reading it, and jumping them to the top for that is maddening. Verified by scrolling
+into a library, dropping a file into it from outside, and watching the count go 40 to 41
+with the position unmoved.
+
 ### While a folder indexes
 Switching to a library that is still indexing shows **its** photographs, filling in as
 they are found — not the previous source's, and not an empty screen. The index is in

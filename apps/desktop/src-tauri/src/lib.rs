@@ -79,6 +79,14 @@ pub struct AppState {
     /// Kept so background work — the first scan of a library, above all — can report
     /// progress without being handed a handle through every call.
     app: Mutex<Option<tauri::AppHandle>>,
+    /// One guard per library root, held while it is being opened.
+    ///
+    /// Opening scans, and scanning writes. Two threads reaching the same unopened
+    /// library would each build their own connection and scan concurrently — including
+    /// the pass that deletes rows for files it did not see — which corrupted the index
+    /// on a real library. The registry lock cannot do this job, because holding it
+    /// across a scan blocks every other library.
+    opening: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Held open for the life of the window. Loading the text tower costs ~270 ms
     /// against ~15 ms to embed a phrase, so a fresh load per keystroke would dominate
     /// the search. Built on first use, not at startup — a library nobody searches
@@ -253,6 +261,23 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
         }
     }
 
+    // Only one thread opens a given library. Two scanning the same folder at once
+    // write over each other, and the delete pass at the end of each removes rows the
+    // other has just inserted.
+    let gate = {
+        let mut opening = state.opening.lock().map_err(err)?;
+        opening.entry(root.to_string()).or_default().clone()
+    };
+    let _held = gate.lock().map_err(err)?;
+
+    // Another thread may have finished opening it while this one waited.
+    {
+        let libs = state.libs.lock().map_err(err)?;
+        if libs.contains_key(root) {
+            return Ok(());
+        }
+    }
+
     let mut lib = Library::open(root).map_err(err)?;
     // Reconcile with the filesystem the moment a library is opened, rather than
     // waiting to be asked (ADR-0011). Photographs added or reorganised in Finder are
@@ -274,9 +299,6 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
         let _ = app.emit("source-ready", root.to_string());
     }
 
-    // Another thread may have opened the same library while this one was scanning.
-    // Whichever arrives second discards its copy rather than replacing a library that
-    // callers already hold a handle to.
     let mut libs = state.libs.lock().map_err(err)?;
     libs.entry(root.to_string()).or_insert_with(|| Arc::new(Mutex::new(lib)));
     Ok(())

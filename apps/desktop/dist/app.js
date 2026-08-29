@@ -53,6 +53,7 @@ const S = {
   lbList: [],
   lbScope: "view",         // "view" = everything on screen, "folder" = just this one
   busy: {},                // per-source progress: { [path]: { op, done, total } }
+  resetScroll: false,      // set by navigation, never by background refreshes
   sel: new Set(),          // selected photo hashes
   lastIndex: -1,           // anchor for shift-range selection
   zoom: 1, panX: 0, panY: 0,
@@ -283,8 +284,21 @@ function renderSidebar() {
       el("span", { class: "n num" }, String(u.photos))));
   }
   if (!rows.length) {
-    rows.push(el("div", { class: "row", style: "color:var(--text-faint)" },
-      src.faces_analysed < src.photos ? "Not scanned yet" : "No faces found"));
+    const unscanned = src.faces_analysed < src.photos;
+    if (unscanned) {
+      // Saying "not scanned yet" without offering the scan leaves the user to find a
+      // menu item they have no reason to know exists.
+      const left = src.photos - src.faces_analysed;
+      rows.push(el("button", {
+        class: "row scanrow",
+        title: `Look for people in ${left.toLocaleString()} photograph${left === 1 ? "" : "s"}`,
+        onclick: () => analyze(),
+      },
+        el("span", { class: "grow" }, "Look for people"),
+        el("span", { class: "n num" }, left.toLocaleString())));
+    } else {
+      rows.push(el("div", { class: "row", style: "color:var(--ink-faint)" }, "No faces found"));
+    }
   }
   if (unnamed.length > 12) {
     rows.push(el("div", { class: "row", style: "color:var(--text-faint)" },
@@ -296,20 +310,31 @@ function renderSidebar() {
   toggle.textContent = collapsed ? `Show all ${rows.length}` : "Show less";
   toggle.onclick = () => { S.peopleCollapsed = !S.peopleCollapsed; renderSidebar(); };
 
+  // Trash is always listed, even when empty. Somewhere deleted photographs go is a
+  // thing people look for before they delete anything, and a row that appears only
+  // once you have used it cannot answer the question you had beforehand.
   const trash = src.folders.find(f => f.path === TRASH);
+  const count = trash ? trash.count : 0;
   const tb = $("#trash-block");
-  tb.hidden = !trash;
-  if (trash) {
-    $("#trash").replaceChildren(
-      el("button", {
-        class: "row", "aria-current": String(S.folder === TRASH),
-        onclick: () => selectFolder(TRASH)
-      }, el("span", { class: "grow" }, "Deleted photos"), el("span", { class: "n num" }, String(trash.count))),
-      el("button", {
-        class: "row", title: "Hand these to the macOS Trash — openfoto can no longer undo it",
-        onclick: emptyTrash
-      }, el("span", { class: "grow", style: "color:var(--text-faint)" }, "Empty…")));
+  tb.hidden = false;
+  const rows2 = [
+    el("button", {
+      class: "row", "aria-current": String(S.folder === TRASH),
+      title: count ? `${count} photo${count === 1 ? "" : "s"} you can still restore`
+                   : "Deleted photographs wait here until you empty it",
+      onclick: () => count && selectFolder(TRASH),
+    },
+      el("span", { class: "tico" }, "\u{1F5D1}"),
+      el("span", { class: "grow" }, "Trash"),
+      el("span", { class: "n num" }, count ? String(count) : "empty")),
+  ];
+  if (count) {
+    rows2.push(el("button", {
+      class: "row", title: "Hand these to the system Trash — openfoto can no longer undo it",
+      onclick: emptyTrash,
+    }, el("span", { class: "grow", style: "color:var(--ink-faint)" }, "Empty\u2026")));
   }
+  $("#trash").replaceChildren(...rows2);
 
   const folders = src.folders.filter(f =>
     f.path !== "" && f.path !== TRASH && !f.path.startsWith(TRASH + "/"));
@@ -571,7 +596,13 @@ function renderGrid() {
   computeLayout(stage.clientWidth || $("#main").clientWidth - 48 || 1000);
   stage.style.height = LAYOUT.height + "px";
   stage.replaceChildren();
-  $("#main").scrollTop = 0;
+  // Only a deliberate move resets the scroll. Background work — a scan finding more
+  // photographs, a watcher noticing a change — refreshes the grid underneath someone
+  // who is reading it, and yanking them to the top for that is maddening.
+  if (S.resetScroll) {
+    $("#main").scrollTop = 0;
+    S.resetScroll = false;
+  }
   paintViewport();
 }
 
@@ -1518,6 +1549,7 @@ async function selectSource(path) {
   // Drop the previous library's photographs before the new one's arrive. Leaving them
   // up meant the breadcrumb named one folder while the grid showed another.
   S.photos = []; S.view = []; S.sel.clear();
+  S.resetScroll = true;
   refreshSemanticStatus();
   renderSidebar();
   renderGrid();
@@ -1537,7 +1569,13 @@ async function selectSource(path) {
   // counts does not do.
   resumeUnfinished(path);
 }
-function selectFolder(f) { S.folder = (S.folder === f ? null : f); S.person = null; renderSidebar(); applyFilter(); }
+function selectFolder(f) {
+  S.folder = (S.folder === f ? null : f);
+  S.person = null;
+  S.resetScroll = true;
+  renderSidebar();
+  applyFilter();
+}
 /** Remove a person. The photographs stay; only the claim about who is in them goes. */
 async function forgetPerson(name) {
   const ok = await confirmDialog(`Forget ${name}?`,
@@ -1562,6 +1600,7 @@ async function forgetEmptyPeople(names) {
 }
 
 function selectPerson(p) {
+  S.resetScroll = true;
   S.person = (S.person === p ? null : p);
   S.folder = null; S.cluster = null; S.clusterHashes = null;
   renderSidebar(); applyFilter();
@@ -2505,7 +2544,7 @@ $("#sel-untag").onclick = untagSelected;
 addEventListener("click", e => { if (!e.target.closest("#ctx")) hideCtx(); });
 $("#lb-prev").onclick = () => step(-1);
 $("#lb-next").onclick = () => step(1);
-$("#search").oninput = () => { applyFilter(); renderSuggest(); syncClear(); };
+$("#search").oninput = () => { S.resetScroll = true; applyFilter(); renderSuggest(); syncClear(); };
 
 /* The native clear affordance on <input type=search> does not survive the restyle, and
    a query with no visible way out is a dead end for anyone who did not think to select

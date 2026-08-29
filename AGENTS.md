@@ -163,6 +163,13 @@ hours of work, so re-adding a folder showed no library at all while its faces we
 detected. **Try the lock, and on failure read the committed state instead of waiting** —
 WAL exists for exactly this.
 
+**18. Moving work out of a lock without replacing the exclusion.** Taking the scan out
+of the registry lock fixed the freeze and introduced index corruption: nothing stopped
+two threads reaching the same *unopened* library, each building its own connection and
+scanning concurrently — including the pass that deletes rows for files it did not see.
+A real library lost 1,900 of 2,433 rows. **When work leaves a lock, ask what that lock
+was excluding, and give that job to a narrower one.**
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.
