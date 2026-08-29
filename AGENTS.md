@@ -146,6 +146,17 @@ elsewhere entirely: not decoding at all, by using the preview the camera already
 embedded. **Benchmark the alternative before adopting it, and benchmark what you have
 before assuming it is slow.**
 
+**15. A lock held across the slow part.** `open_lib` scanned a library while holding the
+*registry* mutex — the one every command for every library needs — so adding a 25GB
+folder froze the whole window until it finished. Per-library locks did not help, because
+the contention was one level up. **Look up the handle under the lock, release it, then
+do the work.**
+
+**16. One global banner for concurrent work.** A single `liveToast` was repainted by
+whatever progress event arrived, so two operations at once fought over it and a
+background scan narrated itself over the thing the user was doing. Progress events now
+carry the library they belong to, and the banner ignores the ones that are not its own.
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.

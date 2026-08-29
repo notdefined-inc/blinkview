@@ -52,6 +52,7 @@ const S = {
   lbIndex: -1,
   lbList: [],
   lbScope: "view",         // "view" = everything on screen, "folder" = just this one
+  busy: {},                // per-source progress: { [path]: { op, done, total } }
   sel: new Set(),          // selected photo hashes
   lastIndex: -1,           // anchor for shift-range selection
   zoom: 1, panX: 0, panY: 0,
@@ -103,7 +104,9 @@ function toast(msg, kind = "info", sticky = false) {
    otherwise be indistinguishable from a hang — the reason this exists at all. */
 let liveToast = null;
 
-async function busy(msg, fn) {
+/* `source` names the library this operation is about, so background work on another
+   folder cannot repaint this banner. */
+async function busy(msg, fn, source = null) {
   const label = el("span", {}, msg);
   const pct = el("span", { class: "pct num" });
   const fill = el("span");
@@ -111,28 +114,63 @@ async function busy(msg, fn) {
   const t = el("div", { class: "toast", "data-kind": "busy", role: "status" },
     el("div", { class: "trow" }, el("span", { class: "sp" }), label, pct), bar);
   $("#toasts").append(t);
-  liveToast = { label, pct, bar, fill, msg };
+  const prev = liveToast;
+  liveToast = { label, pct, bar, fill, msg, source };
   try { return await fn(); }
   catch (e) { toast(String(e), "error"); throw e; }
-  finally { liveToast = null; t.remove(); }
+  finally {
+    // Restore whatever banner was underneath rather than clearing the only one.
+    liveToast = prev;
+    t.remove();
+    if (source) { delete S.busy[source]; paintSourceProgress(source); }
+  }
 }
 
 const OP_LABEL = {
-  faces: "Detecting faces", thumbs: "Building thumbnails",
+  faces: "Detecting faces", thumbs: "Building thumbnails", scan: "Indexing folder",
+  analyze: "Analysing photos",
   clusters: "Grouping faces", plan: "Analysing photos", apply: "Analysing photos",
   models: "Downloading face models", semantic: "Understanding photos",
 };
 
+/* Progress belongs to a library, not to the window.
+   Work on one folder used to drive whatever banner happened to be open, so two jobs at
+   once fought over it and a background scan narrated itself over the thing you were
+   actually doing. Each source now carries its own state, shown on its own row, and the
+   banner only speaks for the job it was opened for. */
 listen("progress", ({ payload }) => {
-  if (!liveToast) return;
-  const { op, done, total } = payload;
+  const { op, done, total, source } = payload;
   if (!total) return;
-  const p = Math.round((done / total) * 100);
+
+  if (source) {
+    S.busy[source] = { op, done, total };
+    paintSourceProgress(source);
+  }
+  // The banner tracks one operation: the one it was opened for.
+  if (!liveToast) return;
+  if (liveToast.source && source && liveToast.source !== source) return;
   liveToast.label.textContent = OP_LABEL[op] || liveToast.msg;
   liveToast.pct.textContent = `${done} / ${total}`;
   liveToast.bar.hidden = false;
-  liveToast.fill.style.width = p + "%";
+  liveToast.fill.style.width = Math.round((done / total) * 100) + "%";
 });
+
+/** Draw a source's own progress on its own row, without rebuilding the sidebar. */
+function paintSourceProgress(source) {
+  const row = document.querySelector(`#sources [data-src="${CSS.escape(source)}"]`);
+  if (!row) return;
+  const b = S.busy[source];
+  let bar = row.querySelector(".srcbar");
+  if (!b) { bar?.remove(); row.classList.remove("working"); return; }
+  row.classList.add("working");
+  if (!bar) {
+    bar = el("span", { class: "srcbar" }, el("span", { class: "srcfill" }));
+    row.append(bar);
+  }
+  bar.querySelector(".srcfill").style.width =
+    Math.round((b.done / Math.max(b.total, 1)) * 100) + "%";
+  bar.title = `${OP_LABEL[b.op] || b.op} — ${b.done} of ${b.total}`;
+}
 
 /* ---------------- date helpers ---------------- */
 const DAY = ts => {
@@ -148,12 +186,13 @@ function renderSidebar() {
     const active = s.path === S.source && !S.folder && !S.person;
     return el("div", {
       class: "row srcrow" + (s.missing ? " missing" : ""), "aria-current": String(active),
-      title: s.path,
+      title: s.path, "data-src": s.path,
     },
       el("button", { class: "grow srcopen", onclick: () => { if (!s.missing) selectSource(s.path); } },
         el("span", { class: "dotmark" }),
         el("span", { class: "grow" }, s.missing ? `${s.name} (missing)` : s.name)),
-      el("span", { class: "n num" }, s.missing ? "" : String(s.photos)),
+      el("span", { class: "n num" },
+        s.missing ? "" : (s.indexing || S.busy[s.path] ? "indexing\u2026" : String(s.photos))),
       el("button", { class: "mini sact", title: `Remove ${s.name} from openfoto`,
         onclick: e => { e.stopPropagation(); removeSource(s.path); } }, "\u2715"));
   }));
@@ -1263,7 +1302,7 @@ function queryChips({ want, text }) {
 /** Embed every photo so scenes become searchable. Resumable, and safe to re-run. */
 async function understand() {
   const msg = await busy("Understanding photos… this runs once per photo",
-    () => invoke("semantic_index", { path: S.source }));
+    () => invoke("semantic_index", { path: S.source }), S.source);
   toast(msg, "ok");
   await refreshSemanticStatus();
   S.semantic = null;
@@ -1423,7 +1462,7 @@ async function selectSource(path) {
   S.semantic = null; S.semanticReady = null;
   refreshSemanticStatus();
   renderSidebar();
-  await busy("Loading library…", loadPhotos);
+  await busy("Loading library…", loadPhotos, path);
   refreshPeople();
   // Thumbnails are produced on demand by the photo:// handler as cells scroll into
   // view, so nothing blocks the first paint. A background pass backfills the rest so
@@ -1517,20 +1556,29 @@ function namePrompt(id) {
 async function addSource() {
   const picked = await dialog.open({ directory: true, multiple: false, title: "Add a photo folder" });
   if (!picked) return;
-  await busy("Indexing folder…", async () => {
-    await invoke("add_source", { path: picked });
-    await refreshSources();
-    await selectSource(picked);
-  });
-  toast("Folder added", "ok");
-  autodetect(picked);
+  // The folder appears at once and indexes behind itself. Waiting for the first scan
+  // of a phone backup before even showing the row is what made this feel like a hang.
+  const info = await invoke("add_source", { path: picked });
+  S.sources = [...S.sources.filter(s => s.path !== picked), info];
+  S.busy[picked] = { op: "scan", done: 0, total: 0 };
+  renderSidebar();
+  toast(`${info.name} added — indexing in the background`, "ok");
+  refreshSources().then(() => autodetect(picked));
 }
+
+/* A library finished its first scan. Refresh the sidebar so its counts appear, and the
+   grid too if it is the one being looked at. */
+listen("source-ready", async ({ payload }) => {
+  delete S.busy[payload];
+  await refreshSources();
+  if (payload === S.source) await loadPhotos();
+});
 
 /* Finding people is the point of the app, so a newly added folder is scanned for
    faces without being asked. Silent if the models are not installed. */
 async function autodetect(path) {
   try {
-    const msg = await busy("Looking for people…", () => invoke("autodetect_faces", { path }));
+    const msg = await busy("Looking for people…", () => invoke("autodetect_faces", { path }), path);
     if (msg.includes("models not installed")) return;
     await refreshPeople();
     const unnamed = S.people.filter(p => !p.name).length;
@@ -1660,7 +1708,7 @@ async function runApply(op, out, applyBtn) {
   await refreshSources(); await loadPhotos();
 }
 async function analyze() {
-  const msg = await busy("Detecting faces… this runs once per photo", () => invoke("analyze_faces", { path: S.source }));
+  const msg = await busy("Detecting faces… this runs once per photo", () => invoke("analyze_faces", { path: S.source }), S.source);
   toast(msg, "ok");
   $("#sheet").hidden = true;
   await refreshPeople(); await loadPhotos();
@@ -1679,7 +1727,7 @@ const chosen = new Map();
 const cosine = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
 
 async function openReview() {
-  const cl = await busy("Grouping faces…", () => invoke("clusters", { path: S.source, distance: 0.55 }));
+  const cl = await busy("Grouping faces…", () => invoke("clusters", { path: S.source, distance: 0.55 }), S.source);
   chosen.clear();
   $("#sheet-title").textContent = "Who is this?";
   const known = (S.sources.find(s => s.path === S.source)?.people || []).map(p => p.name);

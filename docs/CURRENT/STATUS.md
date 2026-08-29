@@ -177,6 +177,25 @@ the file rows that referenced them, so a photograph that disappears and comes ba
 not re-analysed. Orphans are only reaped on an explicit vacuum — automatic reaping would
 destroy exactly that property.
 
+### Adding a folder
+The row appears immediately and indexes behind itself. `add_source` registers the path
+and returns without opening the library, because the first scan of a phone backup takes
+minutes and waiting for it before even showing the folder is what made adding one feel
+like a hang.
+
+Scanning reports real progress. It walks twice — once reading only directory entries to
+learn the total, then again to do the work — because names are cheap next to hashing
+contents, and without a total there is only a spinner, which says nothing about whether
+to wait.
+
+Progress belongs to a library, not to the window: each source draws its own bar on its
+own row, and the banner only speaks for the operation it was opened for. Work on one
+folder no longer narrates itself over another.
+
+While a 25GB library rescans from scratch, queries against other sources return in
+24-30 ms. They used to block until it finished, because `open_lib` scanned while holding
+the lock every command for every library needs.
+
 ### Removing a folder
 Each source has a visible ✕ rather than a right-click nobody finds. It asks first, and
 the dialog leads with the thing being feared: **your photographs are not deleted** — the

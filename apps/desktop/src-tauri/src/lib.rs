@@ -28,12 +28,20 @@ struct ProgressEvent<'a> {
     op: &'a str,
     done: usize,
     total: usize,
+    /// Which library this is about. Without it the window cannot tell whether the
+    /// bar it is drawing belongs to the folder being looked at or another one
+    /// working in the background, and two operations at once fight over one banner.
+    source: &'a str,
 }
 
 /// A progress sink that forwards to the webview as a `progress` event.
-fn emitter<'a>(app: &'a tauri::AppHandle, op: &'a str) -> impl Fn(usize, usize) + Sync + 'a {
+fn emitter<'a>(
+    app: &'a tauri::AppHandle,
+    op: &'a str,
+    source: &'a str,
+) -> impl Fn(usize, usize) + Sync + 'a {
     move |done, total| {
-        let _ = app.emit("progress", ProgressEvent { op, done, total });
+        let _ = app.emit("progress", ProgressEvent { op, done, total, source });
     }
 }
 
@@ -68,6 +76,9 @@ pub struct AppState {
     /// One filesystem watcher per open library, so photographs dropped into a folder
     /// in Finder appear without the window being touched.
     watchers: watch::Watchers,
+    /// Kept so background work — the first scan of a library, above all — can report
+    /// progress without being handed a handle through every call.
+    app: Mutex<Option<tauri::AppHandle>>,
     /// Held open for the life of the window. Loading the text tower costs ~270 ms
     /// against ~15 ms to embed a phrase, so a fresh load per keystroke would dominate
     /// the search. Built on first use, not at startup — a library nobody searches
@@ -116,6 +127,10 @@ pub struct SourceInfo {
     faces_analysed: usize,
     thumbs_ready: usize,
     missing: bool,
+    /// True while the library has not been opened yet, so the row can appear before
+    /// its first scan finishes instead of after.
+    #[serde(default)]
+    indexing: bool,
 }
 
 #[derive(Serialize)]
@@ -228,19 +243,42 @@ fn start_watching(app: &tauri::AppHandle, state: &AppState, root: &str) {
 }
 
 fn open_lib(state: &AppState, root: &str) -> R<()> {
-    let mut libs = state.libs.lock().map_err(err)?;
-    if !libs.contains_key(root) {
-        let mut lib = Library::open(root).map_err(err)?;
-        // Reconcile with the filesystem the moment a library is opened, rather than
-        // waiting to be asked (ADR-0011). Photographs added or reorganised in Finder
-        // are picked up before anything is drawn, and the common case is cheap because
-        // `scan` skips hashing whenever size and mtime already match. A failure here is
-        // not fatal: an unreadable folder should still open, just stale.
-        if let Err(e) = scan::scan(&mut lib, false) {
-            eprintln!("[openfoto] scan on open failed for {root}: {e}");
+    // Look, then let go. The first scan of a large library takes minutes, and holding
+    // the registry lock across it froze every command for every *other* library too —
+    // adding a folder made the whole window unusable until it finished.
+    {
+        let libs = state.libs.lock().map_err(err)?;
+        if libs.contains_key(root) {
+            return Ok(());
         }
-        libs.insert(root.to_string(), Arc::new(Mutex::new(lib)));
     }
+
+    let mut lib = Library::open(root).map_err(err)?;
+    // Reconcile with the filesystem the moment a library is opened, rather than
+    // waiting to be asked (ADR-0011). Photographs added or reorganised in Finder are
+    // picked up before anything is drawn, and the common case is cheap because `scan`
+    // skips hashing whenever size and mtime already match. A failure here is not
+    // fatal: an unreadable folder should still open, just stale.
+    //
+    // The first scan of a large library is not cheap, so it reports progress against
+    // this source rather than leaving the window with a spinner and no idea.
+    let handle = state.app.lock().ok().and_then(|a| a.clone());
+    let scanned = match &handle {
+        Some(app) => scan::scan_with_progress(&mut lib, false, &emitter(app, "scan", root)),
+        None => scan::scan(&mut lib, false),
+    };
+    if let Err(e) = scanned {
+        eprintln!("[openfoto] scan on open failed for {root}: {e}");
+    }
+    if let Some(app) = &handle {
+        let _ = app.emit("source-ready", root.to_string());
+    }
+
+    // Another thread may have opened the same library while this one was scanning.
+    // Whichever arrives second discards its copy rather than replacing a library that
+    // callers already hold a handle to.
+    let mut libs = state.libs.lock().map_err(err)?;
+    libs.entry(root.to_string()).or_insert_with(|| Arc::new(Mutex::new(lib)));
     Ok(())
 }
 
@@ -357,6 +395,7 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         faces_analysed: analysed,
         thumbs_ready: ready,
         missing: false,
+        indexing: false,
     })
 }
 
@@ -371,7 +410,7 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
                 name: root.rsplit('/').next().unwrap_or(&root).to_string(),
                 path: root,
                 photos: 0, videos: 0, folders: vec![], people: vec![],
-                faces_analysed: 0, thumbs_ready: 0, missing: true,
+                faces_analysed: 0, thumbs_ready: 0, missing: true, indexing: false,
             });
             continue;
         }
@@ -387,15 +426,33 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
 }
 
 #[tauri::command]
-async fn add_source(app: tauri::AppHandle, state: tauri::State<'_, AppState>, path: String) -> R<SourceInfo> {
+/// Register a folder and return at once.
+///
+/// Deliberately does not open the library: the first scan of a phone backup takes
+/// minutes, and making the window wait for it before the folder even appears is what
+/// made adding one feel like a hang. The row shows up immediately and fills in as
+/// `list_sources` opens it in the background.
+async fn add_source(app: tauri::AppHandle, path: String) -> R<SourceInfo> {
     let mut list = load_sources(&app);
     if !list.contains(&path) {
         list.push(path.clone());
         save_sources(&app, &list);
     }
-    with(&state, &path, |lib| {
-        scan::scan(lib, false)?;
-        describe(lib)
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.clone());
+    Ok(SourceInfo {
+        name,
+        path,
+        photos: 0,
+        videos: 0,
+        folders: vec![],
+        people: vec![],
+        faces_analysed: 0,
+        thumbs_ready: 0,
+        missing: false,
+        indexing: true,
     })
 }
 
@@ -413,7 +470,7 @@ async fn autodetect_faces(
     if !model_fetch::specs().iter().all(model_fetch::is_present) {
         return Ok("models not installed".into());
     }
-    let sink = emitter(&app, "faces");
+    let sink = emitter(&app, "faces", &path);
     with(&state, &path, |lib| {
         let st = pipeline::analyze_with_progress(lib, pipeline::DEFAULT_SCORE, &sink)?;
         Ok(format!("{} faces found in {} photos", st.faces, st.photos))
@@ -535,10 +592,8 @@ fn remove_source(
 
 #[tauri::command]
 async fn rescan(state: tauri::State<'_, AppState>, path: String) -> R<SourceInfo> {
-    with(&state, &path, |lib| {
-        scan::scan(lib, false)?;
-        describe(lib)
-    })
+    // `open_lib` scans on the way in, so this does not scan again.
+    with(&state, &path, describe)
 }
 
 // ---------------------------------------------------------------- photos
@@ -616,7 +671,7 @@ async fn build_thumbs(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> R<usize> {
-    let sink = emitter(&app, "thumbs");
+    let sink = emitter(&app, "thumbs", &path);
     with(&state, &path, |lib| {
         let st = analyze::run_with_progress(lib, analyze::Stages::only_thumbs(), &sink)?;
         Ok(st.thumbs)
@@ -633,7 +688,7 @@ async fn analyze_all(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> R<String> {
-    let sink = emitter(&app, "analyze");
+    let sink = emitter(&app, "analyze", &path);
     with(&state, &path, |lib| {
         let st = analyze::run_with_progress(lib, analyze::Stages::default(), &sink)?;
         let mut parts = Vec::new();
@@ -664,7 +719,7 @@ async fn analyze_faces(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> R<String> {
-    let sink = emitter(&app, "faces");
+    let sink = emitter(&app, "faces", &path);
     with(&state, &path, |lib| {
         // Thumbnails ride along: the photograph is being decoded anyway.
         let st = analyze::run_with_progress(
@@ -704,7 +759,7 @@ async fn semantic_index(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> R<String> {
-    let sink = emitter(&app, "semantic");
+    let sink = emitter(&app, "semantic", &path);
     with(&state, &path, |lib| {
         let st = analyze::run_with_progress(
             lib,
@@ -778,7 +833,7 @@ async fn clusters(
     path: String,
     distance: f32,
 ) -> R<Vec<ClusterView>> {
-    let sink = emitter(&app, "clusters");
+    let sink = emitter(&app, "clusters", &path);
     with(&state, &path, |lib| {
         let people = People::load(lib.root())?;
         let p = review::build_with_progress(lib, &people, &assign::Options::default(), distance, &sink)?;
@@ -979,7 +1034,7 @@ async fn models_status() -> R<Vec<ModelStatus>> {
 #[tauri::command]
 async fn models_fetch(app: tauri::AppHandle) -> R<String> {
     let sink = |name: &str, done: usize, total: usize| {
-        let _ = app.emit("progress", ProgressEvent { op: "models", done, total });
+        let _ = app.emit("progress", ProgressEvent { op: "models", done, total, source: "" });
         let _ = name;
     };
     let got = model_fetch::fetch_missing(&sink).map_err(err)?;
@@ -1555,7 +1610,7 @@ async fn plan_op(
     op: String,
     param: Option<f32>,
 ) -> R<PlanView> {
-    let sink = emitter(&app, "plan");
+    let sink = emitter(&app, "plan", &path);
     with(&state, &path, |lib| {
         let p = build_plan(lib, &op, param, false, &sink)?;
         Ok(PlanView {
@@ -1574,7 +1629,7 @@ async fn apply_op(
     op: String,
     param: Option<f32>,
 ) -> R<String> {
-    let sink = emitter(&app, "apply");
+    let sink = emitter(&app, "apply", &path);
     with(&state, &path, |lib| {
         let p = build_plan(lib, &op, param, true, &sink)?;
         if p.is_empty() {
@@ -1832,6 +1887,15 @@ pub fn run() {
         // scrolling crawled while thumbnails were being produced and was fine once
         // they existed. Served on a pool instead, the grid scrolls at full speed while
         // the work happens behind it.
+        .setup(|app| {
+            // Kept so a background scan can report progress against its own source.
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(mut slot) = state.app.lock() {
+                    *slot = Some(app.handle().clone());
+                }
+            }
+            Ok(())
+        })
         .register_asynchronous_uri_scheme_protocol("photo", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             IMAGE_POOL.spawn(move || responder.respond(serve_photo(&app, request)));
