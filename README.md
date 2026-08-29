@@ -69,7 +69,7 @@ Grab the installer for your platform from [**Releases**](https://github.com/notd
 
 | | |
 |---|---|
-| **macOS** | `.dmg` — Apple Silicon and Intel |
+| **macOS** | `.dmg` — Apple Silicon only. ONNX Runtime no longer ships a macOS x64 build, so Intel Macs would need it compiled from source |
 | **Windows** | `.msi` |
 | **Linux** | `.AppImage` and `.deb` — needs glibc 2.38+ (Ubuntu 24.04, Fedora 39, Debian 13 or newer) |
 

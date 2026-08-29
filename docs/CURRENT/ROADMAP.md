@@ -29,7 +29,12 @@ Beyond v1: RAW/HEIC, geotagging, tag hierarchies, plugins.
 
 ## Platforms
 
-**Now: macOS, Windows, Linux.** One desktop application, three targets.
+**Now: macOS (Apple Silicon), Windows, Linux.** One desktop application, three targets.
+
+No Intel Mac build. Microsoft stopped publishing a macOS x64 ONNX Runtime after v1.26,
+so `ort` has no prebuilt binary to fetch for `x86_64-apple-darwin` and the release build
+fails there. Reviving it means compiling ONNX Runtime from source in CI — possible, but
+upstream itself has abandoned that platform.
 
 **Later: phone apps as *clients*.** The phone does not run the library — it connects to
 the desktop app over the network, the way Immich and Ente do. That matters because it

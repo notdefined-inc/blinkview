@@ -16,9 +16,11 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             name: macOS (Apple Silicon)
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-            name: macOS (Intel)
+          # No Intel Mac build. `ort` ships prebuilt ONNX Runtime for eight targets
+          # and x86_64-apple-darwin is not among them, because Microsoft stopped
+          # publishing a macOS x64 build of ONNX Runtime — every release since
+          # v1.27.0 carries osx-arm64 alone. The only route left is compiling ONNX
+          # Runtime from source in CI, which is what upstream itself gave up on.
           # 24.04 is the floor, not a preference: the prebuilt onnxruntime `ort`
           # fetches needs glibc 2.38+. The Linux packages therefore require a
           # distribution of that vintage or newer, which the README says.
