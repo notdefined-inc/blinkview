@@ -321,6 +321,16 @@ kbd{
   cursor:pointer;
 }
 .lb-scope:hover{background:rgba(255,255,255,.18);color:var(--ink)}
+.srcrow{display:flex;align-items:center;gap:4px}
+.srcrow .srcopen{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;
+  color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left;min-width:0}
+.srcrow:hover .sact,.srcrow:focus-within .sact{opacity:1}
+/* The destructive option: present, explained, and deliberately not preselected. */
+.purgerow{display:flex;gap:10px;align-items:flex-start;margin:var(--s4) 0 var(--s2);
+  padding:var(--s3);border:1px solid var(--stroke);border-radius:var(--r-md);cursor:pointer}
+.purgerow input{margin-top:2px}
+.purgerow .asub{display:block;margin-top:2px}
+.purgewarn{color:#f87171}
 .prow{display:flex;align-items:center;gap:4px}
 .prow .prun{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left;min-width:0}
 .pact{opacity:0;transition:opacity .12s}

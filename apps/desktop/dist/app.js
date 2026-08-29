@@ -146,15 +146,16 @@ function renderSidebar() {
   const box = $("#sources");
   box.replaceChildren(...S.sources.map(s => {
     const active = s.path === S.source && !S.folder && !S.person;
-    return el("button", {
-      class: "row" + (s.missing ? " missing" : ""), "aria-current": String(active),
+    return el("div", {
+      class: "row srcrow" + (s.missing ? " missing" : ""), "aria-current": String(active),
       title: s.path,
-      onclick: () => { if (!s.missing) selectSource(s.path); },
-      oncontextmenu: e => { e.preventDefault(); removeSource(s.path); }
     },
-      el("span", { class: "dotmark" }),
-      el("span", { class: "grow" }, s.missing ? `${s.name} (missing)` : s.name),
-      el("span", { class: "n num" }, s.missing ? "" : String(s.photos)));
+      el("button", { class: "grow srcopen", onclick: () => { if (!s.missing) selectSource(s.path); } },
+        el("span", { class: "dotmark" }),
+        el("span", { class: "grow" }, s.missing ? `${s.name} (missing)` : s.name)),
+      el("span", { class: "n num" }, s.missing ? "" : String(s.photos)),
+      el("button", { class: "mini sact", title: `Remove ${s.name} from openfoto`,
+        onclick: e => { e.stopPropagation(); removeSource(s.path); } }, "\u2715"));
   }));
 
   const src = S.sources.find(s => s.path === S.source);
@@ -1536,12 +1537,49 @@ async function autodetect(path) {
     if (unnamed) toast(`${unnamed} people found — name them in the sidebar`, "ok");
   } catch { /* reported by busy */ }
 }
+/* Removing a folder is not deleting photographs, and the dialog has to make that
+   obvious — it is the fear the question raises. Deleting what openfoto wrote is offered
+   in the same breath but is never the default, because half of it (ratings, names)
+   cannot be reproduced by anything (ADR-0007). */
 async function removeSource(path) {
-  const ok = await confirmDialog("Remove this folder",
-    `Remove ${path} from OpenFoto? Your photos are not touched.`,
-    "Remove folder", true);
-  if (!ok) return;
-  await invoke("remove_source", { path });
+  const name = path.split("/").filter(Boolean).pop() || path;
+  let d = {};
+  try { d = await invoke("source_data", { path }); } catch { /* show the plain question */ }
+
+  const mb = (d.cache_bytes || 0) / 1048576;
+  const lost = [];
+  if (d.described) lost.push(`${d.described} rated or labelled`);
+  if (d.people) lost.push(`${d.people} named ${d.people === 1 ? "person" : "people"}`);
+  if (d.saved_searches) lost.push(`${d.saved_searches} saved search${d.saved_searches === 1 ? "" : "es"}`);
+
+  const purge = el("input", { type: "checkbox", id: "purge-data" });
+  const choice = await new Promise(resolve => {
+    const dlg = dialogFrame(`Remove ${name}?`, [
+      el("p", { class: "asktext" },
+        "It stops appearing in openfoto. ",
+        el("b", {}, "Your photographs are not deleted"),
+        " \u2014 the folder and everything in it stays exactly where it is."),
+      el("label", { class: "purgerow", for: "purge-data" },
+        purge,
+        el("span", {},
+          el("b", {}, "Also delete openfoto's own files"),
+          el("span", { class: "asub" },
+            mb >= 0.1 ? ` ${mb.toFixed(mb < 10 ? 1 : 0)} MB of thumbnails and index, which would be rebuilt` : " the cache",
+            lost.length
+              ? el("span", { class: "purgewarn" }, ` \u00B7 and ${lost.join(", ")}, which cannot be recovered`)
+              : null))),
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => dlg.done(null) }, "Cancel"),
+        el("button", { class: "btn", onclick: () => dlg.done(purge.checked) }, "Remove")),
+    ]);
+    dlg.attach(resolve);
+    document.addEventListener("keydown", dlg.onKey, true);
+    document.body.append(dlg.box);
+  });
+  if (choice === null) return;
+
+  const msg = await invoke("remove_source", { path, purge: choice });
+  toast(msg, choice ? "warn" : "ok");
   if (S.source === path) { S.source = null; S.photos = []; S.view = []; renderWelcome(); }
   await refreshSources();
 }

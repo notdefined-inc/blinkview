@@ -177,6 +177,21 @@ the file rows that referenced them, so a photograph that disappears and comes ba
 not re-analysed. Orphans are only reaped on an explicit vacuum — automatic reaping would
 destroy exactly that property.
 
+### Removing a folder
+Each source has a visible ✕ rather than a right-click nobody finds. It asks first, and
+the dialog leads with the thing being feared: **your photographs are not deleted** — the
+folder and everything in it stays where it is, it simply stops appearing in openfoto.
+
+The same dialog offers to delete what openfoto itself wrote, unchecked. It is never the
+default because it covers two unlike things and says so: the cache costs a rescan, while
+ratings, labels, saved searches and names cannot be reproduced by anything (ADR-0007).
+The counts are real — "0.5 MB of thumbnails and index, which would be rebuilt · and 2
+rated or labelled, which cannot be recovered" — so the cost is visible before it is paid.
+
+Verified both ways on a real folder: removing plainly left all twelve photographs, the
+cache and the metadata; removing with the option ticked left all twelve photographs and
+nothing else of openfoto's.
+
 ### Stepping through the viewer
 Arrow keys walk **exactly what is on screen, in the order it is shown** — which, with a
 folder selected, means that folder and everything beneath it.

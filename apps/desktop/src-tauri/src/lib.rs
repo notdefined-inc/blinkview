@@ -420,14 +420,117 @@ async fn autodetect_faces(
     })
 }
 
+/// What openfoto would leave behind, or take away, when a folder is removed.
+///
+/// Shown before asking, because "delete openfoto's data" covers two very different
+/// things: a cache that costs a rescan, and ratings and names that no machine can
+/// reproduce (ADR-0007).
+#[derive(Serialize, Default)]
+pub struct SourceData {
+    /// Bytes under `.openfoto/` — thumbnails, index, journal. Rebuildable.
+    cache_bytes: u64,
+    /// How many `openfoto.json` files, across the folder tree.
+    metadata_files: usize,
+    /// Photographs carrying a rating, a label or an album. Not reproducible.
+    described: usize,
+    /// Named people. Not reproducible.
+    people: usize,
+    saved_searches: usize,
+}
+
+fn dir_bytes(p: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(p) else { return 0 };
+    entries
+        .flatten()
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_bytes(&e.path()),
+            Ok(_) => e.metadata().map(|m| m.len()).unwrap_or(0),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
 #[tauri::command]
-fn remove_source(app: tauri::AppHandle, state: tauri::State<'_, AppState>, path: String) -> R<()> {
+async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<SourceData> {
+    let root = std::path::PathBuf::from(&path);
+    let mut d = SourceData {
+        cache_bytes: dir_bytes(&root.join(openfoto_core::library::VAULT_DIR)),
+        ..Default::default()
+    };
+    // The metadata is read through the library so the cascade is counted the same way
+    // it is everywhere else.
+    let _ = with(&state, &path, |lib| {
+        let set = lib.user_data()?;
+        d.saved_searches = set.searches().len();
+        Ok(())
+    });
+    for e in walk_metadata(&root) {
+        d.metadata_files += 1;
+        if let Ok(bytes) = std::fs::read(&e) {
+            if let Ok(u) = serde_json::from_slice::<openfoto_core::userdata::UserData>(&bytes) {
+                d.described += u.photos.len();
+            }
+        }
+    }
+    if let Ok(people) = People::load(&root) {
+        d.people = people.people.len();
+    }
+    Ok(d)
+}
+
+/// Every `openfoto.json` at or below `root`, skipping the cache and hidden folders.
+fn walk_metadata(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let f = root.join(openfoto_core::userdata::FILE);
+    if f.is_file() {
+        out.push(f);
+    }
+    let Ok(entries) = std::fs::read_dir(root) else { return out };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() && !e.file_name().to_string_lossy().starts_with('.') {
+            out.extend(walk_metadata(&p));
+        }
+    }
+    out
+}
+
+/// Remove a folder from openfoto. The photographs are never touched.
+///
+/// `purge` additionally deletes what openfoto wrote into the folder. That is offered
+/// but never the default: the cache costs only a rescan, while the ratings and names
+/// go for good.
+#[tauri::command]
+fn remove_source(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    purge: Option<bool>,
+) -> R<String> {
     let list: Vec<String> = load_sources(&app).into_iter().filter(|p| p != &path).collect();
     save_sources(&app, &list);
     state.libs.lock().map_err(err)?.remove(&path);
     // Stop watching, or a removed source keeps rescanning a library nothing displays.
     state.watchers.unwatch(&path);
-    Ok(())
+
+    if purge != Some(true) {
+        return Ok("Removed from openfoto. Nothing on disk was changed.".into());
+    }
+
+    let root = std::path::PathBuf::from(&path);
+    let mut removed = 0usize;
+    if std::fs::remove_dir_all(root.join(openfoto_core::library::VAULT_DIR)).is_ok() {
+        removed += 1;
+    }
+    for f in walk_metadata(&root) {
+        if std::fs::remove_file(&f).is_ok() {
+            removed += 1;
+        }
+    }
+    if std::fs::remove_file(openfoto_core::faces::people::People::path(&root)).is_ok() {
+        removed += 1;
+    }
+    Ok(format!("Removed, and deleted {removed} openfoto file(s). Your photographs are untouched."))
 }
 
 #[tauri::command]
@@ -1756,7 +1859,7 @@ pub fn run() {
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,
-            plan_move, apply_move, forget_person, analyze_all
+            plan_move, apply_move, forget_person, analyze_all, source_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");
