@@ -66,6 +66,14 @@ without embedding was previously free; now it means running the combined pass wi
 stage disabled, which the API must express. Memory also rises with worker count, since
 each holds a detector, a face embedder and a vision encoder.
 
+That last sentence was written before anything was measured, and it names the wrong
+term. The three models are about 50 MB per worker; the decoded frames each worker holds
+are up to 36 MB apiece, and what dominates is neither — it is the allocator keeping
+freed large blocks per size class, so a library of mixed resolutions strands a region
+per size. Between two and four workers peak RSS barely moves (1267 MB vs 1315 MB on 953
+photographs); dropping to one roughly halves it, because it halves the images in flight
+rather than the models. See STATUS.md, Memory.
+
 Also costly: a failure in one stage must not abandon the others. A photograph whose face
 detection throws still deserves its thumbnail, so stages are attempted independently and
 report separately.

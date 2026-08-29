@@ -447,6 +447,29 @@ was re-identified by content hash: 12 moved, 0 lost.
 - Build profile matters enormously here: the same cold dedupe takes 28.7s in a debug
   build. Benchmark with `--release` or the numbers are meaningless.
 
+### Memory (measured, release build, peak RSS sampled every 100ms)
+Throughput was the only thing ever measured until a 1,926-photo phone backup drove an
+8 GB Mac into swap. The numbers that matter:
+
+| Run | Peak RSS |
+|---|---|
+| Idle process, no work | 13 MB |
+| 250 photos, all stages | 1525 MB |
+| 953 photos, all stages | 1596 MB |
+| 953 photos, after the allocation fixes below | 1315 MB |
+| 200 photos, 1 worker, one resolution | 507 MB |
+| 200 photos, 1 worker, 33 resolutions | 646 MB |
+
+Peak is flat in library size, so nothing leaks: the footprint is the work in flight.
+What drives it is **allocator retention across image sizes**. macOS keeps freed large
+blocks per size class, so a library of one resolution recycles a single block for ever
+while a mixed library strands a region per size — during a pass `vmmap` showed 48.8M
+live in `MALLOC_LARGE` against 348.0M dirty in 26 *empty* regions. `openfoto-demo` is
+uniformly 4000x1848, which is exactly why dev testing never saw this.
+
+`OPENFOTO_WORKERS=1` roughly halves peak and is the escape hatch until the allocator
+itself is addressed. Between 2 and 4 workers the lever is weak (1267 MB vs 1315 MB).
+
 ## Face assignment accuracy (measured)
 120 real photos across three people, solo shots only as ground truth (a group photo
 filed under one person also contains other faces, so it cannot label a face):
@@ -463,6 +486,11 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- A pass over a library with many distinct resolutions still peaks around 1.3 GB and
+  can push an 8 GB machine into swap, which shows up as sluggish scrolling while
+  analysis runs. The cause is allocator retention, not the algorithm (see Memory
+  above); `OPENFOTO_WORKERS=1` is the workaround. A non-system allocator (mimalloc or
+  jemalloc) is the likely real fix and has not been evaluated.
 - Lightbox zoom is transform-based, so at very high zoom the browser upscales the
   already-decoded bitmap rather than re-decoding at native resolution.
 - `scenery` is not implemented — spec task 11.
@@ -489,6 +517,10 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 Cut peak RSS on a 953-photo pass from 1596 MB to 1315 MB with
+  byte-identical output, by producing the upright image once instead of three times and
+  resizing for detection straight from the borrow rather than through a `DynamicImage`
+  round-trip.
 - 2026-08-27 Repo bootstrapped; ADR-0001..0003 and the v1 spec written.
 - 2026-08-27 `openfoto-core`: library/index/scan/plan/journal/fsops/rename/timesource.
 - 2026-08-27 `openfoto` CLI: scan, status, rename, undo, history. Nothing mutates

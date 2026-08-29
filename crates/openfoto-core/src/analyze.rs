@@ -94,7 +94,16 @@ struct Kit {
 /// Not one per core: ONNX Runtime already threads a single inference, so the measured
 /// gain is about 1.8x on eight cores rather than 8x, while each worker holds its own
 /// models and a decoded frame of up to 36 MB.
+///
+/// `OPENFOTO_WORKERS` overrides it. Workers are the largest single lever on peak
+/// memory — one worker roughly halves it — so a machine that starts swapping during a
+/// pass has somewhere to go without waiting for a release.
 fn workers() -> usize {
+    if let Ok(n) = std::env::var("OPENFOTO_WORKERS").unwrap_or_default().parse::<usize>() {
+        if n > 0 {
+            return n;
+        }
+    }
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 4)
 }
 
@@ -289,6 +298,11 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
         }
     }
 
+    // The thumbnail wanted `full` unrotated so it could rotate the small image instead
+    // of the large one. Everything after this wants it upright, and wants the same
+    // upright image, so it is produced once and `full` is consumed doing it.
+    let upright = imageio::apply_rgb(full, owed);
+
     KIT.with(|cell| {
         let mut kit = cell.borrow_mut();
         if job.faces && want_faces {
@@ -299,7 +313,7 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
             let Kit { det, emb, .. } = &mut *kit;
             match (det.as_mut(), emb.as_mut()) {
                 (Some(det), Some(emb)) => {
-                    match faces_from(root, job, &full, owed, det, emb, &mut st) {
+                    match faces_from(root, job, &upright, det, emb, &mut st) {
                         Ok(f) => out.faces = Some(f),
                         Err(e) => st.errors.push(format!("{}: faces: {e}", job.rel)),
                     }
@@ -313,7 +327,6 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
             }
             if let Some(v) = kit.vision.as_mut() {
                 // CLIP wants a centre crop of the upright image.
-                let upright = imageio::apply_rgb(full.clone(), owed);
                 match v.embed(&upright) {
                     Ok(e) => {
                         out.clip = Some(e);
@@ -329,30 +342,53 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
     out
 }
 
+/// The size `DynamicImage::resize` would settle on for the same request.
+///
+/// `resize` does not use the dimensions handed to it: it refits them to the aspect
+/// ratio in f64 and rounds, where the call site had truncated in f32. Resizing the
+/// borrowed image directly skips a 36 MB copy, but only mirrors `faces::pipeline` if it
+/// lands on exactly the same size, and the two disagree more often than they look like
+/// they would: 186 photographs out of 1926 in a real phone backup, enough of them with
+/// faces to change the count.
+fn fit_dimensions(w: u32, h: u32, nw: u32, nh: u32) -> (u32, u32) {
+    let ratio = (nw as f64 / w as f64).min(nh as f64 / h as f64);
+    let rw = ((w as f64 * ratio).round() as u64).max(1);
+    let rh = ((h as f64 * ratio).round() as u64).max(1);
+    (rw.min(u32::MAX as u64) as u32, rh.min(u32::MAX as u64) as u32)
+}
+
 /// Detect and embed faces, writing the crops. Mirrors `faces::pipeline` exactly, so the
 /// two produce the same rows for the same photograph.
 fn faces_from(
     root: &std::path::Path,
     job: &Job,
-    full: &image::RgbImage,
-    owed: u16,
+    upright: &image::RgbImage,
     det: &mut detect::Detector,
     emb: &mut embed::Embedder,
     st: &mut Stats,
 ) -> Result<Vec<StoredFace>> {
-    let upright = imageio::apply_rgb(full.clone(), owed);
-    let img = image::DynamicImage::ImageRgb8(upright);
-    let img = if img.width().max(img.height()) > pipeline::ANALYSIS_LONG_EDGE {
-        let s = pipeline::ANALYSIS_LONG_EDGE as f32 / img.width().max(img.height()) as f32;
-        img.resize(
-            (img.width() as f32 * s) as u32,
-            (img.height() as f32 * s) as u32,
+    // Detection runs at 1280 on the long edge, so the full-resolution image is resized
+    // straight from the borrow. Wrapping it in a `DynamicImage` first would copy all
+    // 36 MB of a 12 MP photograph, and `to_rgb8` on an already-RGB image copies again;
+    // both are pure allocator churn on the way to a 3.7 MB buffer.
+    let long = upright.width().max(upright.height());
+    let rgb = if long > pipeline::ANALYSIS_LONG_EDGE {
+        let s = pipeline::ANALYSIS_LONG_EDGE as f32 / long as f32;
+        let (w, h) = fit_dimensions(
+            upright.width(),
+            upright.height(),
+            (upright.width() as f32 * s) as u32,
+            (upright.height() as f32 * s) as u32,
+        );
+        std::borrow::Cow::Owned(image::imageops::resize(
+            upright,
+            w,
+            h,
             image::imageops::FilterType::Triangle,
-        )
+        ))
     } else {
-        img
+        std::borrow::Cow::Borrowed(upright)
     };
-    let rgb = img.to_rgb8();
     let (w, h) = (rgb.width() as usize, rgb.height() as usize);
 
     let found = det.detect(rgb.as_raw(), w, h, pipeline::DEFAULT_SCORE, pipeline::DEFAULT_NMS)?;
@@ -374,7 +410,7 @@ fn faces_from(
         let y0 = (f.y - m).max(0.0) as u32;
         let cw = ((f.w + 2.0 * m) as u32).min(w as u32 - x0).max(1);
         let ch = ((f.h + 2.0 * m) as u32).min(h as u32 - y0).max(1);
-        let crop = image::imageops::crop_imm(&rgb, x0, y0, cw, ch).to_image();
+        let crop = image::imageops::crop_imm(rgb.as_ref(), x0, y0, cw, ch).to_image();
         let sq = image::imageops::resize(
             &crop,
             pipeline::FACE_CROP,
@@ -401,4 +437,43 @@ fn faces_from(
         st.faces += 1;
     }
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `fit_dimensions` must agree with `DynamicImage::resize` on every shape.
+    ///
+    /// The resolutions here are the ones a real phone backup produced where the two
+    /// disagree — 186 photographs out of 1926, nearly a tenth of the library. Detection
+    /// runs on the resized pixels, so a single row of difference is enough to change how
+    /// many faces come back.
+    #[test]
+    fn the_resize_shortcut_lands_where_dynamic_image_would() {
+        for (w, h) in [
+            (1899, 1148),
+            (1599, 722),
+            (2944, 2208),
+            (12544, 2032),
+            (11008, 1808),
+            (840, 1425),
+            (2005, 4096),
+            (1076, 1859),
+            (4032, 2268),
+            (4032, 3024),
+            (1472, 3264),
+            (1281, 1281),
+        ] {
+            let s = pipeline::ANALYSIS_LONG_EDGE as f32 / w.max(h) as f32;
+            let (nw, nh) = ((w as f32 * s) as u32, (h as f32 * s) as u32);
+            let want = image::DynamicImage::ImageRgb8(image::RgbImage::new(w, h))
+                .resize(nw, nh, image::imageops::FilterType::Triangle);
+            assert_eq!(
+                fit_dimensions(w, h, nw, nh),
+                (want.width(), want.height()),
+                "{w}x{h}"
+            );
+        }
+    }
 }
