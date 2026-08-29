@@ -7,7 +7,7 @@ version = "0.0.1"
 edition = "2021"
 rust-version = "1.85"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/notdefined/openfoto"
+repository = "https://github.com/notdefined-inc/openfoto"
 description = "A photo manager that treats your folders as the truth."
 
 [workspace.dependencies]

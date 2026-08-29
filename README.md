@@ -65,7 +65,7 @@ Everything else — thumbnails, the index, face embeddings — lives in a `.open
 
 ## Install
 
-Grab the installer for your platform from [**Releases**](https://github.com/notdefined/openfoto/releases/latest).
+Grab the installer for your platform from [**Releases**](https://github.com/notdefined-inc/openfoto/releases/latest).
 
 | | |
 |---|---|
@@ -82,7 +82,7 @@ The app is not code-signed yet, so the first launch needs a nudge: on macOS, rig
 You need [Rust](https://rustup.rs) 1.85+ and [Node](https://nodejs.org) (for the frontend tests only — there's no bundler, no build step, no `node_modules`).
 
 ```bash
-git clone https://github.com/notdefined/openfoto
+git clone https://github.com/notdefined-inc/openfoto
 cd openfoto
 
 cargo run -p openfoto-desktop --release      # the app
