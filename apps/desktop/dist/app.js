@@ -54,6 +54,7 @@ const S = {
   lbScope: "view",         // "view" = everything on screen, "folder" = just this one
   busy: {},                // per-source progress: { [path]: { op, done, total } }
   resetScroll: false,      // set by navigation, never by background refreshes
+  loading: false,          // a library's photographs are on their way
   sel: new Set(),          // selected photo hashes
   lastIndex: -1,           // anchor for shift-range selection
   zoom: 1, panX: 0, panY: 0,
@@ -114,6 +115,13 @@ async function busy(msg, fn, source = null) {
   const bar = el("div", { class: "tbar", hidden: true }, fill);
   const t = el("div", { class: "toast", "data-kind": "busy", role: "status" },
     el("div", { class: "trow" }, el("span", { class: "sp" }), label, pct), bar);
+  // A banner belongs to the library it is about. Work on one folder followed the user
+  // to every other one, claiming the window while they were somewhere else; the source
+  // row shows it instead.
+  if (source) {
+    t.dataset.src = source;
+    t.hidden = source !== S.source;
+  }
   $("#toasts").append(t);
   const prev = liveToast;
   liveToast = { label, pct, bar, fill, msg, source };
@@ -175,6 +183,13 @@ const OP_SHORT = {
   scan: "indexing", faces: "faces", thumbs: "thumbnails",
   semantic: "reading", analyze: "analysing", clusters: "grouping",
 };
+
+/** Show only the banners belonging to the library on screen. */
+function syncToastScope() {
+  for (const t of document.querySelectorAll("#toasts .toast[data-src]")) {
+    t.hidden = t.dataset.src !== S.source;
+  }
+}
 
 /** Draw a source's own progress on its own row, without rebuilding the sidebar. */
 function paintSourceProgress(source) {
@@ -563,6 +578,12 @@ function renderGrid() {
   if (!S.view.length) {
     stage.className = "";
     stage.style.height = "";
+    if (S.loading && !S.photos.length) {
+      stage.replaceChildren(el("div", { class: "welcome" },
+        el("div", { class: "art pulse" }, el("span", {}, "\u25F4")),
+        el("h2", {}, "Opening\u2026")));
+      return;
+    }
     const scanning = S.busy[S.source]?.op === "scan";
     if (scanning && !S.photos.length) {
       const b = S.busy[S.source];
@@ -1229,23 +1250,31 @@ async function migrateAlbums() {
 
 const loadSeq = {};
 
+/* Keyed by kind *and* source. A single counter per kind was wrong in a way that showed
+   up as an empty grid: a background load for the library you just left would bump the
+   counter, discarding the load for the library you just opened — and then discard
+   itself too, because its own source no longer matched. Nothing ever set the
+   photographs, so "Nothing here yet" stayed up for good. */
 function beginLoad(kind) {
-  loadSeq[kind] = (loadSeq[kind] || 0) + 1;
-  return { kind, seq: loadSeq[kind], source: S.source };
+  const key = `${kind}\u0000${S.source || ""}`;
+  loadSeq[key] = (loadSeq[key] || 0) + 1;
+  return { key, seq: loadSeq[key], source: S.source };
 }
 
-/** False once a newer load of the same kind started, or the source moved on. */
+/** False once a newer load of the same kind *for the same source* started. */
 function stillCurrent(t) {
-  return t.seq === loadSeq[t.kind] && t.source === S.source;
+  return t.seq === loadSeq[t.key] && t.source === S.source;
 }
 
 async function loadPhotos() {
   const t = beginLoad("photos");
   if (!t.source) return;
+  S.loading = true;
   // Ask for the library this load is *for*, not whatever S.source happens to be by
   // the time the request is built.
   const photos = hydrate(await invoke("photos", { path: t.source, folder: null, person: null }));
   if (!stillCurrent(t)) return;
+  S.loading = false;
   S.photos = photos;
   applyFilter();
 }
@@ -1552,6 +1581,7 @@ async function selectSource(path) {
   S.resetScroll = true;
   refreshSemanticStatus();
   renderSidebar();
+  syncToastScope();
   renderGrid();
   await busy("Loading library…", loadPhotos, path);
   refreshPeople();
@@ -1768,6 +1798,9 @@ async function removeSource(path) {
   if (choice === null) return;
 
   const msg = await invoke("remove_source", { path, purge: choice });
+  // Its banner and its row are going; so is any progress recorded against it.
+  delete S.busy[path];
+  for (const t of document.querySelectorAll(`#toasts .toast[data-src="${CSS.escape(path)}"]`)) t.remove();
   toast(msg, choice ? "warn" : "ok");
   if (S.source === path) { S.source = null; S.photos = []; S.view = []; renderWelcome(); }
   await refreshSources();

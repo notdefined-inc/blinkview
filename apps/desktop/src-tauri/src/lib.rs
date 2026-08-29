@@ -87,6 +87,9 @@ pub struct AppState {
     /// on a real library. The registry lock cannot do this job, because holding it
     /// across a scan blocks every other library.
     opening: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Libraries whose background work should stop. Removing a folder should not leave
+    /// its analysis burning CPU for a folder nobody can see any more.
+    cancelled: Mutex<std::collections::HashSet<String>>,
     /// Held open for the life of the window. Loading the text tower costs ~270 ms
     /// against ~15 ms to embed a phrase, so a fresh load per keystroke would dominate
     /// the search. Built on first use, not at startup — a library nobody searches
@@ -510,7 +513,16 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
 /// minutes, and making the window wait for it before the folder even appears is what
 /// made adding one feel like a hang. The row shows up immediately and fills in as
 /// `list_sources` opens it in the background.
-async fn add_source(app: tauri::AppHandle, path: String) -> R<SourceInfo> {
+async fn add_source(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<SourceInfo> {
+    // A folder removed earlier is still marked cancelled; adding it back must undo
+    // that, or nothing will ever analyse it again.
+    if let Ok(mut c) = state.cancelled.lock() {
+        c.remove(&path);
+    }
     let mut list = load_sources(&app);
     if !list.contains(&path) {
         list.push(path.clone());
@@ -549,9 +561,15 @@ async fn autodetect_faces(
         return Ok("models not installed".into());
     }
     let sink = emitter(&app, "faces", &path);
+    let stop = cancel_flag(&state, &path);
     with(&state, &path, |lib| {
-        let st = pipeline::analyze_with_progress(lib, pipeline::DEFAULT_SCORE, &sink)?;
-        Ok(format!("{} faces found in {} photos", st.faces, st.photos))
+        let st = analyze::run_cancellable(
+            lib,
+            analyze::Stages { thumbs: true, faces: true, semantic: false },
+            &sink,
+            &stop,
+        )?;
+        Ok(format!("{} faces found in {} photos", st.faces, st.decoded))
     })
 }
 
@@ -647,6 +665,10 @@ fn remove_source(
     state.libs.lock().map_err(err)?.remove(&path);
     // Stop watching, or a removed source keeps rescanning a library nothing displays.
     state.watchers.unwatch(&path);
+    // Stop any analysis still running on it.
+    if let Ok(mut c) = state.cancelled.lock() {
+        c.insert(path.clone());
+    }
 
     if purge != Some(true) {
         return Ok("Removed from openfoto. Nothing on disk was changed.".into());
@@ -750,10 +772,23 @@ async fn build_thumbs(
     path: String,
 ) -> R<usize> {
     let sink = emitter(&app, "thumbs", &path);
+    let stop = cancel_flag(&state, &path);
     with(&state, &path, |lib| {
-        let st = analyze::run_with_progress(lib, analyze::Stages::only_thumbs(), &sink)?;
+        let st = analyze::run_cancellable(lib, analyze::Stages::only_thumbs(), &sink, &stop)?;
         Ok(st.thumbs)
     })
+}
+
+/// A predicate the analysis loop consults to know whether to stop.
+fn cancel_flag<'a>(state: &'a AppState, path: &str) -> impl Fn() -> bool + Sync + 'a {
+    let path = path.to_string();
+    move || {
+        state
+            .cancelled
+            .lock()
+            .map(|c| c.contains(&path))
+            .unwrap_or(false)
+    }
 }
 
 /// Everything a photograph needs, from one decode (ADR-0013).
@@ -767,8 +802,9 @@ async fn analyze_all(
     path: String,
 ) -> R<String> {
     let sink = emitter(&app, "analyze", &path);
+    let stop = cancel_flag(&state, &path);
     with(&state, &path, |lib| {
-        let st = analyze::run_with_progress(lib, analyze::Stages::default(), &sink)?;
+        let st = analyze::run_cancellable(lib, analyze::Stages::default(), &sink, &stop)?;
         let mut parts = Vec::new();
         if st.thumbs > 0 {
             parts.push(format!("{} thumbnails", st.thumbs));
@@ -798,12 +834,14 @@ async fn analyze_faces(
     path: String,
 ) -> R<String> {
     let sink = emitter(&app, "faces", &path);
+    let stop = cancel_flag(&state, &path);
     with(&state, &path, |lib| {
         // Thumbnails ride along: the photograph is being decoded anyway.
-        let st = analyze::run_with_progress(
+        let st = analyze::run_cancellable(
             lib,
             analyze::Stages { thumbs: true, faces: true, semantic: false },
             &sink,
+            &stop,
         )?;
         Ok(format!("{} photos analysed · {} faces found", st.decoded, st.faces))
     })
@@ -839,11 +877,13 @@ async fn analyze_resume(
     semantic: bool,
 ) -> R<String> {
     let sink = emitter(&app, "analyze", &path);
+    let stop = cancel_flag(&state, &path);
     with(&state, &path, |lib| {
-        let st = analyze::run_with_progress(
+        let st = analyze::run_cancellable(
             lib,
             analyze::Stages { thumbs: true, faces, semantic },
             &sink,
+            &stop,
         )?;
         Ok(format!("{} photos finished", st.decoded))
     })
@@ -906,11 +946,13 @@ async fn semantic_index(
     path: String,
 ) -> R<String> {
     let sink = emitter(&app, "semantic", &path);
+    let stop = cancel_flag(&state, &path);
     with(&state, &path, |lib| {
-        let st = analyze::run_with_progress(
+        let st = analyze::run_cancellable(
             lib,
             analyze::Stages { thumbs: true, faces: false, semantic: true },
             &sink,
+            &stop,
         )?;
         Ok(match (st.embedded, st.errors.len()) {
             (0, 0) => "Everything was already understood.".to_string(),

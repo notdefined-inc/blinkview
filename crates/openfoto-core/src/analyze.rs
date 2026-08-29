@@ -107,6 +107,20 @@ pub fn run_with_progress(
     stages: Stages,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<Stats> {
+    run_cancellable(lib, stages, progress, &|| false)
+}
+
+/// As [`run_with_progress`], stopping early when `stop` says to.
+///
+/// Checked per photograph rather than per batch: removing a folder should stop work on
+/// it promptly, and every result is already committed on its own, so stopping loses
+/// nothing but the photograph in flight.
+pub fn run_cancellable(
+    lib: &mut Library,
+    stages: Stages,
+    progress: &(dyn Fn(usize, usize) + Sync),
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<Stats> {
     // A stage whose model is absent is simply not run; the rest still are.
     let want_faces = stages.faces && models::find(models::YUNET).is_ok();
     let want_semantic = stages.semantic && semantic::ImageEncoder::available();
@@ -176,6 +190,9 @@ pub fn run_with_progress(
 
         pool.install(|| {
             todo.par_iter().for_each_with(tx, |tx, job| {
+                if stop() {
+                    return;
+                }
                 counter.tick();
                 let out = process(&root, job, want_faces);
                 let _ = tx.send(out);

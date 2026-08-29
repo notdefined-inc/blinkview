@@ -234,6 +234,13 @@ start burning CPU by itself the next time the app opens; one that was half-analy
 finishes. Verified by killing a pass at 36 of 40 photographs and reopening the folder:
 it completed to 40 without being asked, and a second open started nothing.
 
+### Work belongs to its folder
+A banner names the library it is about and is hidden while you are looking at another
+one; the source row carries the progress instead. Analysis can be stopped: removing a
+folder cancels whatever is running on it, checked per photograph, and adding it back
+clears that so it can run again. Verified by removing a folder mid-pass — the embedding
+count froze at 204 and stayed there — and re-adding it, which resumed.
+
 ### Removing a folder
 Each source has a visible ✕ rather than a right-click nobody finds. It asks first, and
 the dialog leads with the thing being feared: **your photographs are not deleted** — the

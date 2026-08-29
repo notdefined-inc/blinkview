@@ -170,6 +170,13 @@ scanning concurrently — including the pass that deletes rows for files it did 
 A real library lost 1,900 of 2,433 rows. **When work leaves a lock, ask what that lock
 was excluding, and give that job to a narrower one.**
 
+**19. A shared sequence number that is not shared work.** Load ordering used one counter
+per *kind*, so a background load for the library you just left bumped it, discarding the
+load for the library you just opened — and then discarded itself, because its own source
+no longer matched. Nothing set the photographs and "Nothing here yet" stayed up for
+good. **Key a staleness token by everything that makes two calls different**, not just
+by what they do.
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.
