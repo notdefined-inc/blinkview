@@ -32,6 +32,11 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.platform }}
 
+    # The repository hands workflows a read-only token by default, which builds
+    # four installers fine and then cannot create the release to put them in.
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
