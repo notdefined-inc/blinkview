@@ -74,21 +74,69 @@ impl TextEncoder {
     }
 }
 
+/// The vision half on its own.
+///
+/// Analysis embeds photographs and never a phrase, so loading the 161 MB text tower
+/// alongside it bought nothing — and cost that much again for every worker thread
+/// once the pass went parallel (ADR-0013).
+pub struct ImageEncoder {
+    session: Session,
+    input: String,
+}
+
+impl ImageEncoder {
+    pub fn load() -> Result<Self> {
+        let vp = crate::faces::models::find(VISION)?;
+        let session = Session::builder()?.commit_from_file(&vp)?;
+        Ok(Self { input: session.inputs()[0].name().to_string(), session })
+    }
+
+    pub fn available() -> bool {
+        crate::faces::models::find(VISION).is_ok()
+    }
+
+    /// Embed a photograph read from disk.
+    pub fn embed_path(&mut self, path: &Path) -> Result<Vec<f32>> {
+        self.embed(&imageio::load_rgb(path)?)
+    }
+
+    /// Embed pixels already in hand — the shared decode of ADR-0013.
+    ///
+    /// Preprocessing follows the model's own config: shortest edge to 256, centre crop,
+    /// scale to 0..1, and **no mean/std normalisation**, which is unusual for CLIP and
+    /// silently wrong if the usual defaults are assumed.
+    pub fn embed(&mut self, img: &image::RgbImage) -> Result<Vec<f32>> {
+        let (w, h) = (img.width(), img.height());
+        let scale = SIDE as f32 / w.min(h) as f32;
+        let rw = ((w as f32 * scale).round() as u32).max(SIDE);
+        let rh = ((h as f32 * scale).round() as u32).max(SIDE);
+        let resized = image::imageops::resize(img, rw, rh, image::imageops::FilterType::CatmullRom);
+        let cropped =
+            image::imageops::crop_imm(&resized, (rw - SIDE) / 2, (rh - SIDE) / 2, SIDE, SIDE)
+                .to_image();
+
+        let mut input = Array4::<f32>::zeros((1, 3, SIDE as usize, SIDE as usize));
+        for (x, y, p) in cropped.enumerate_pixels() {
+            for c in 0..3 {
+                input[[0, c, y as usize, x as usize]] = f32::from(p[c]) / 255.0;
+            }
+        }
+        let out = self
+            .session
+            .run(ort::inputs![self.input.as_str() => ort::value::Tensor::from_array(input)?])?;
+        let (_, data) = out[0].try_extract_tensor::<f32>()?;
+        Ok(unit(data))
+    }
+}
+
 pub struct Encoder {
-    vision: Session,
+    vision: ImageEncoder,
     text: TextEncoder,
-    vision_input: String,
 }
 
 impl Encoder {
     pub fn load() -> Result<Self> {
-        let vp = crate::faces::models::find(VISION)?;
-        let vision = Session::builder()?.commit_from_file(&vp)?;
-        Ok(Self {
-            vision_input: vision.inputs()[0].name().to_string(),
-            vision,
-            text: TextEncoder::load()?,
-        })
+        Ok(Self { vision: ImageEncoder::load()?, text: TextEncoder::load()? })
     }
 
     /// True when the models are installed, so callers can degrade rather than fail.
@@ -104,27 +152,7 @@ impl Encoder {
     /// scale to 0..1, and **no mean/std normalisation** — `do_normalize` is false for
     /// this model, which is unusual and silently wrong if CLIP's defaults are assumed.
     pub fn embed_image(&mut self, path: &Path) -> Result<Vec<f32>> {
-        let img = imageio::load_rgb(path)?;
-        let (w, h) = (img.width(), img.height());
-        let scale = SIDE as f32 / w.min(h) as f32;
-        let rw = ((w as f32 * scale).round() as u32).max(SIDE);
-        let rh = ((h as f32 * scale).round() as u32).max(SIDE);
-        let resized = image::imageops::resize(&img, rw, rh, image::imageops::FilterType::CatmullRom);
-        let cropped =
-            image::imageops::crop_imm(&resized, (rw - SIDE) / 2, (rh - SIDE) / 2, SIDE, SIDE)
-                .to_image();
-
-        let mut input = Array4::<f32>::zeros((1, 3, SIDE as usize, SIDE as usize));
-        for (x, y, p) in cropped.enumerate_pixels() {
-            for c in 0..3 {
-                input[[0, c, y as usize, x as usize]] = f32::from(p[c]) / 255.0;
-            }
-        }
-        let out = self
-            .vision
-            .run(ort::inputs![self.vision_input.as_str() => ort::value::Tensor::from_array(input)?])?;
-        let (_, data) = out[0].try_extract_tensor::<f32>()?;
-        Ok(unit(data))
+        self.vision.embed_path(path)
     }
 
     /// Embed a search phrase into the same space.

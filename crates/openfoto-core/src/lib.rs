@@ -10,6 +10,7 @@
 //!   mutation is previewable and reversible.
 
 pub mod albums;
+pub mod analyze;
 pub mod cluster;
 pub mod dedupe;
 pub mod edit;

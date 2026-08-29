@@ -202,15 +202,33 @@ Measured on a 25GB phone backup with `examples/bench`, mean 7.8 MP:
 
 | | per photo |
 |---|---|
-| thumbnail | 33 ms |
 | face detection (decode + shrink + detect) | 98 ms |
 | — of which inference at 1280px | **15 ms** |
 | semantic embedding (decode + embed) | 124 ms |
 | — of which inference at 256px | **33 ms** |
 
 **The models are not the cost; the JPEG decode is.** Detecting faces spends 85% of its
-time turning twelve megapixels into pixels it immediately shrinks to 1280. Three passes
-— thumbnails, faces, embeddings — each decode the same photograph again.
+time turning twelve megapixels into pixels it immediately shrinks to 1280.
+
+So analysis is **one pass** (ADR-0013): decode each photograph once, and take the
+thumbnail, the faces and the embedding from that frame. A photograph needing nothing is
+never opened; one needing only a thumbnail uses the camera's embedded preview instead of
+a decode. Measured against running the three passes separately, `examples/passes`:
+
+| | per photo | 200,000 photographs |
+|---|---|---|
+| three separate passes | 262.9 ms | 14.6 h |
+| **one pass** | **86.9 ms** | **4.8 h** |
+
+That is 3.0x, and it comes from doing less rather than from more threads — the pass runs
+four photographs at a time, not one per core, because ONNX Runtime already threads a
+single inference. End to end on a 40-photograph library the release binary takes 4.4s
+at 459% CPU, producing every thumbnail, face and embedding.
+
+The equivalence is tested rather than assumed: `tests/analyze_pass.rs` runs both the old
+passes and the new one over the same photographs and requires the same face boxes to
+within a pixel and the same embeddings to cosine 0.9999 — because ADR-0003 and ADR-0008
+fixed their thresholds against those exact outputs.
 
 Two things that do *not* help, both measured rather than assumed:
 

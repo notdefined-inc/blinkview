@@ -76,6 +76,15 @@ enum Cmd {
     History,
     /// Build the thumbnail cache.
     Thumbs,
+    /// Do everything a photograph needs from one decode: thumbnail, faces, embedding.
+    Analyze {
+        /// Skip face detection.
+        #[arg(long)]
+        no_faces: bool,
+        /// Skip semantic embedding.
+        #[arg(long)]
+        no_semantic: bool,
+    },
     /// Search photos by what is in them.
     Find {
         /// A phrase, e.g. "a dog on a beach".
@@ -400,9 +409,30 @@ fn main() -> Result<()> {
             }
         }
         Cmd::Thumbs => {
-            let lib = open(&cli)?;
-            let n = openfoto_core::thumbs::build_with_progress(&lib, &cli_progress("thumbnails"))?;
-            println!("built {n} thumbnails");
+            let mut lib = open(&cli)?;
+            let st = openfoto_core::analyze::run_with_progress(
+                &mut lib,
+                openfoto_core::analyze::Stages::only_thumbs(),
+                &cli_progress("thumbnails"),
+            )?;
+            println!("built {} thumbnails ({} from an embedded preview)", st.thumbs, st.from_preview);
+        }
+        Cmd::Analyze { no_faces, no_semantic } => {
+            let mut lib = open(&cli)?;
+            let stages = openfoto_core::analyze::Stages {
+                thumbs: true,
+                faces: !no_faces,
+                semantic: !no_semantic,
+            };
+            let st = openfoto_core::analyze::run_with_progress(
+                &mut lib, stages, &cli_progress("analysing"))?;
+            println!(
+                "{} photographs · {} decoded ({} from a preview) · {} thumbnails · {} faces · {} understood",
+                st.considered, st.decoded, st.from_preview, st.thumbs, st.faces, st.embedded
+            );
+            for e in st.errors.iter().take(5) {
+                eprintln!("  {e}");
+            }
         }
         Cmd::Models { cmd } => {
             use openfoto_core::faces::{fetch, models};

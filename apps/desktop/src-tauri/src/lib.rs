@@ -14,7 +14,7 @@ use openfoto_core::{
     userdata::{PhotoMeta, UserDataSet},
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
-    plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
+    analyze, plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
 };
 mod watch;
 
@@ -501,7 +501,45 @@ async fn build_thumbs(
     path: String,
 ) -> R<usize> {
     let sink = emitter(&app, "thumbs");
-    with(&state, &path, |lib| thumbs::build_with_progress(lib, &sink))
+    with(&state, &path, |lib| {
+        let st = analyze::run_with_progress(lib, analyze::Stages::only_thumbs(), &sink)?;
+        Ok(st.thumbs)
+    })
+}
+
+/// Everything a photograph needs, from one decode (ADR-0013).
+///
+/// Three separate passes each decoded the same photograph; together they cost 263 ms
+/// per photograph against 87 ms for this one.
+#[tauri::command]
+async fn analyze_all(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<String> {
+    let sink = emitter(&app, "analyze");
+    with(&state, &path, |lib| {
+        let st = analyze::run_with_progress(lib, analyze::Stages::default(), &sink)?;
+        let mut parts = Vec::new();
+        if st.thumbs > 0 {
+            parts.push(format!("{} thumbnails", st.thumbs));
+        }
+        if st.faces > 0 {
+            parts.push(format!("{} faces", st.faces));
+        }
+        if st.embedded > 0 {
+            parts.push(format!("{} understood", st.embedded));
+        }
+        Ok(if parts.is_empty() {
+            "Everything was already analysed.".to_string()
+        } else {
+            let mut msg = parts.join(" · ");
+            if !st.errors.is_empty() {
+                msg.push_str(&format!(" · {} could not be read", st.errors.len()));
+            }
+            msg
+        })
+    })
 }
 
 #[tauri::command]
@@ -512,8 +550,13 @@ async fn analyze_faces(
 ) -> R<String> {
     let sink = emitter(&app, "faces");
     with(&state, &path, |lib| {
-        let st = pipeline::analyze_with_progress(lib, pipeline::DEFAULT_SCORE, &sink)?;
-        Ok(format!("{} photos analysed · {} faces found", st.photos, st.faces))
+        // Thumbnails ride along: the photograph is being decoded anyway.
+        let st = analyze::run_with_progress(
+            lib,
+            analyze::Stages { thumbs: true, faces: true, semantic: false },
+            &sink,
+        )?;
+        Ok(format!("{} photos analysed · {} faces found", st.decoded, st.faces))
     })
 }
 
@@ -547,7 +590,11 @@ async fn semantic_index(
 ) -> R<String> {
     let sink = emitter(&app, "semantic");
     with(&state, &path, |lib| {
-        let st = semantic::analyze(lib, &sink)?;
+        let st = analyze::run_with_progress(
+            lib,
+            analyze::Stages { thumbs: true, faces: false, semantic: true },
+            &sink,
+        )?;
         Ok(match (st.embedded, st.errors.len()) {
             (0, 0) => "Everything was already understood.".to_string(),
             (n, 0) => format!("{n} photos understood."),
@@ -1669,7 +1716,7 @@ pub fn run() {
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,
-            plan_move, apply_move, forget_person
+            plan_move, apply_move, forget_person, analyze_all
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");

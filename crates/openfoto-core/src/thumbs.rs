@@ -32,6 +32,38 @@ pub fn render_to(src: &std::path::Path, dst: &std::path::Path, is_video: bool) -
     if is_video { render_video(src, dst) } else { render_one(src, dst) }
 }
 
+/// Write a thumbnail from pixels already decoded, applying the rotation still owed.
+///
+/// The shared-decode entry point (ADR-0013): the analysis pass has the frame in hand
+/// and must not open the file again to get it.
+pub fn render_from_rgb(img: &image::RgbImage, orientation: u16, dst: &std::path::Path) -> Result<()> {
+    let (w, h) = (img.width(), img.height());
+    let scale = THUMB_LONG as f32 / w.max(h) as f32;
+    let shrunk = if scale < 1.0 {
+        image::imageops::resize(
+            img,
+            (w as f32 * scale).round().max(1.0) as u32,
+            (h as f32 * scale).round().max(1.0) as u32,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        img.clone()
+    };
+    write_jpeg(&imageio::apply_rgb(shrunk, orientation), dst)
+}
+
+fn write_jpeg(img: &image::RgbImage, dst: &std::path::Path) -> Result<()> {
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img.clone())
+        .write_to(&mut buf, image::ImageFormat::Jpeg)
+        .context("encoding thumbnail")?;
+    std::fs::write(dst, buf.into_inner())?;
+    Ok(())
+}
+
 fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     // The camera's own preview first: reading 37 KB and decoding a 512px image instead
     // of twelve megapixels is the difference between minutes and seconds over a phone

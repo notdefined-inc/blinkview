@@ -68,13 +68,13 @@ vision encoder.
 
 ## Tasks
 
-- [ ] 1. `ImageEncoder`: vision-only, so analysis skips the text tower (core) — 9
-- [ ] 2. `analyze::run`: one decode, three stages, per-stage commit (core) — 1, 2, 3, 7
-- [ ] 3. Parallelise across photographs, models per worker (core) — 10
-- [ ] 4. Equivalence tests against the existing passes (tests) — 4, 5, 6
-- [ ] 5. Resumability test: interrupt and finish (tests) — 8
-- [ ] 6. One app command with progress; old commands delegate (app)
-- [ ] 7. Re-measure with `examples/bench` and `examples/throughput`, update STATUS.md — 10
+- [x] 1. `ImageEncoder`: vision-only, so analysis skips the text tower (core) — 9
+- [x] 2. `analyze::run`: one decode, three stages, per-stage commit (core) — 1, 2, 3, 7
+- [x] 3. Parallelise across photographs, models per worker (core) — 10
+- [x] 4. Equivalence tests against the existing passes (tests) — 4, 5, 6
+- [x] 5. Resumability test: interrupt and finish (tests) — 8
+- [x] 6. One app command with progress; old commands delegate (app)
+- [x] 7. Re-measure with `examples/bench` and `examples/throughput`, update STATUS.md — 10
 
 ## Risks
 
@@ -85,3 +85,32 @@ against the existing passes directly rather than trusting that a refactor is fai
 **Memory.** Each worker holds ~85 MB of models plus a decoded frame of up to 36 MB.
 Four workers is ~500 MB; the worker count is capped rather than taken from the core
 count.
+
+## Outcome
+
+Shipped. Ten of ten criteria met.
+
+Measured 3.03x against the three separate passes — 262.9 ms per photograph down to
+86.9 ms, which puts 200,000 photographs at 4.8 hours rather than 14.6. The spec asked
+for 1.6x.
+
+The equivalence criteria were the point of the exercise and they held: the same face
+boxes to within a pixel, the same face embeddings and the same image embeddings to
+cosine 0.9999, so nothing measured in ADR-0003 or ADR-0008 moved underneath.
+
+Two things worth recording:
+
+- The earlier estimate of "about an hour" for 200k was wrong, and wrong in a specific
+  way: it divided by the core count twice. 86.9 ms per photograph is already the
+  parallel wall clock, so 200,000 of them is 4.8 hours. The gain is real; the projection
+  was not.
+- Running the app in a debug build makes analysis look catastrophically slow — about
+  12 s per photograph rather than 87 ms. Dependencies are optimised in the dev profile
+  but our own preprocessing loops are not, and the detector fills a 3.7-million-pixel
+  tensor in one of them.
+
+## Not done here
+
+The `photos` payload. A source switch is ~3.8 s projected at 200,000 photographs,
+because every photograph is serialised across the IPC bridge on every switch. It needs
+its own measurement of where that time actually goes before anything is changed.
