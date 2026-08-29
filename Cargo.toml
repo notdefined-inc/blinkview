@@ -5,7 +5,9 @@ members = ["crates/openfoto-core", "crates/openfoto-cli", "apps/desktop/src-taur
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.85"
+# `slice::as_chunks` is stable from here, and clippy asks for it over
+# `chunks_exact` with a constant size.
+rust-version = "1.88"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/notdefined-inc/openfoto"
 description = "A photo manager that treats your folders as the truth."

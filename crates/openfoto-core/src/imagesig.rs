@@ -44,7 +44,9 @@ fn decode_jpeg_scaled(path: &Path, target: u16) -> Result<image::GrayImage> {
     let gray: Vec<u8> = match info2.pixel_format {
         jpeg_decoder::PixelFormat::L8 => pixels,
         jpeg_decoder::PixelFormat::RGB24 => pixels
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| {
                 ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as u8
             })

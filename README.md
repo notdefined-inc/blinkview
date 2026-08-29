@@ -79,7 +79,7 @@ The app is not code-signed yet, so the first launch needs a nudge: on macOS, rig
 
 ## Build it yourself
 
-You need [Rust](https://rustup.rs) 1.85+ and [Node](https://nodejs.org) (for the frontend tests only — there's no bundler, no build step, no `node_modules`).
+You need [Rust](https://rustup.rs) 1.88+ and [Node](https://nodejs.org) (for the frontend tests only — there's no bundler, no build step, no `node_modules`).
 
 ```bash
 git clone https://github.com/notdefined-inc/openfoto
