@@ -159,26 +159,42 @@ pub struct PersonInfo {
     cover: Option<String>,
 }
 
+/// One photograph, as the window sees it.
+///
+/// Every field here is multiplied by the size of the library — at 200,000 photographs
+/// this struct *is* the cost of switching source, since the bridge and `JSON.parse`
+/// charge by the byte. So anything derivable is derived on the other side and anything
+/// absent is omitted rather than sent as a default. `name`, `folder` and `ext` are all
+/// inside `path` and are split out on arrival rather than sent three more times.
 #[derive(Serialize, Clone)]
 pub struct PhotoInfo {
     kind: String,
+    #[serde(skip_serializing_if = "is_zero_u8")]
     rating: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     albums: Vec<String>,
-    /// Uppercase extension, for filtering by type.
-    ext: String,
     bytes: u64,
     hash: String,
+    /// Relative to the library root. The window prepends the source it asked about,
+    /// rather than being told the same prefix a hundred thousand times.
     path: String,
-    name: String,
-    folder: String,
-    thumb: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     taken_at: Option<i64>,
+    #[serde(skip_serializing_if = "is_zero_usize")]
     faces: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     people: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     width: u32,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     height: u32,
 }
+
+fn is_zero_u8(n: &u8) -> bool { *n == 0 }
+fn is_zero_u32(n: &u32) -> bool { *n == 0 }
+fn is_zero_usize(n: &usize) -> bool { *n == 0 }
 
 /// Begin watching a library, so changes made in Finder reach the window.
 ///
@@ -473,23 +489,20 @@ async fn photos(
                     rating: meta.rating,
                     label: meta.label.clone(),
                     albums: meta.albums.clone(),
-                    ext: r.path.rsplit('.').next().unwrap_or("").to_uppercase(),
                     bytes: r.size.max(0) as u64,
-                    name: r.path.rsplit('/').next().unwrap_or(&r.path).to_string(),
-                    folder: r.path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
-                    thumb: thumbs::thumb_path(lib, &r.hash).display().to_string(),
                     taken_at: r.taken_at,
                     faces: nfaces.get(&r.hash).copied().unwrap_or(0),
                     people: who.get(&r.hash).cloned().unwrap_or_default(),
                     width: sig.as_ref().map(|s| s.width).unwrap_or(0),
                     height: sig.as_ref().map(|s| s.height).unwrap_or(0),
                     hash: r.hash.clone(),
-                    path: lib.abs(&r.path).display().to_string(),
+                    path: r.path.clone(),
                 }
             })
             .collect();
         // Newest first, which is what a photo library defaults to.
-        out.sort_by(|a, b| b.taken_at.cmp(&a.taken_at).then(a.name.cmp(&b.name)));
+        let name = |p: &PhotoInfo| p.path.rsplit('/').next().unwrap_or(&p.path).to_string();
+        out.sort_by(|a, b| b.taken_at.cmp(&a.taken_at).then(name(a).cmp(&name(b))));
         Ok(out)
     })
 }
@@ -970,6 +983,31 @@ async fn apply_album_migration(state: tauri::State<'_, AppState>, path: String) 
         lib.invalidate_user_data();
         Ok(format!("{n} photos moved into folders · undo id {}", j.id))
     })
+}
+
+/// How long does the bridge take to carry N photographs?
+///
+/// Debug builds only. Projecting a 200,000-photograph library from a 2,433-photograph
+/// measurement has been wrong twice; this answers it at the real size instead.
+#[cfg(debug_assertions)]
+#[tauri::command]
+async fn bench_payload(n: usize) -> R<Vec<PhotoInfo>> {
+    Ok((0..n)
+        .map(|i| PhotoInfo {
+            kind: "photo".into(),
+            rating: 0,
+            label: None,
+            albums: vec![],
+            bytes: 3_500_000,
+            hash: format!("{:064x}", i as u128 * 0x9E3779B97F4A7C15),
+            path: format!("DCIM/Camera/20230501_{:06}.jpg", i),
+            taken_at: Some(1_700_000_000 + i as i64),
+            faces: 0,
+            people: vec![],
+            width: 4032,
+            height: 3024,
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------- commands
@@ -1706,6 +1744,8 @@ pub fn run() {
     builder
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
+            #[cfg(debug_assertions)]
+            bench_payload,
             list_sources, add_source, remove_source, rescan,
             photos, build_thumbs, analyze_faces,
             clusters, name_clusters,

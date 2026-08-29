@@ -5,7 +5,32 @@ const { listen } = window.__TAURI__.event;
 
 /* Photos are served by our own `photo://` scheme (see serve_photo in lib.rs), which
    only serves files inside folders the user has added as a source. */
-const photoUrl = p => "photo://localhost" + encodeURIComponent(p).replace(/%2F/g, "/");
+/* Photographs arrive with a path relative to their library, since repeating the same
+   root a hundred thousand times is most of what a source switch costs. Absolute paths
+   still work: face crops and thumbnails inside the cache are handed over whole. */
+/* Split what the backend did not repeat.
+   `name`, `folder` and `ext` all live inside `path`, and sending them again cost about
+   a third of the payload — which at 200,000 photographs is the difference the bridge
+   charges for. Doing it here is a string split per photograph; sending it was megabytes. */
+function hydrate(list) {
+  for (const p of list) {
+    const cut = p.path.lastIndexOf("/");
+    p.name = cut < 0 ? p.path : p.path.slice(cut + 1);
+    p.folder = cut < 0 ? "" : p.path.slice(0, cut);
+    const dot = p.name.lastIndexOf(".");
+    p.ext = dot < 0 ? "" : p.name.slice(dot + 1).toUpperCase();
+    p.rating ||= 0;
+    p.faces ||= 0;
+    p.albums ||= [];
+    p.people ||= [];
+  }
+  return list;
+}
+
+const photoUrl = p => {
+  const abs = p.startsWith("/") ? p : `${S.source}/${p}`;
+  return "photo://localhost" + encodeURIComponent(abs).replace(/%2F/g, "/");
+};
 const dialog = window.__TAURI__.dialog;
 
 const S = {
@@ -1038,7 +1063,7 @@ async function loadPhotos() {
   if (!t.source) return;
   // Ask for the library this load is *for*, not whatever S.source happens to be by
   // the time the request is built.
-  const photos = await invoke("photos", { path: t.source, folder: null, person: null });
+  const photos = hydrate(await invoke("photos", { path: t.source, folder: null, person: null }));
   if (!stillCurrent(t)) return;
   S.photos = photos;
   applyFilter();

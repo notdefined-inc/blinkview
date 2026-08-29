@@ -262,6 +262,34 @@ count, because ONNX Runtime already threads a single inference internally. Face
 detection and embedding both still loop one photograph at a time; only thumbnails use
 rayon.
 
+### Switching source at scale
+A source switch sends every photograph to the window, so the payload *is* the cost. It
+was 513 bytes per photograph; it is now 175.
+
+- `thumb` was never read by the frontend — a hundred bytes of dead weight each.
+- `path` is relative to the library. The window prepends the source it asked about
+  rather than being told the same prefix a hundred thousand times.
+- `name`, `folder` and `ext` all live inside `path` and are split out on arrival. That
+  is a string split per photograph, against megabytes on the wire.
+- Absent things are omitted rather than sent as defaults — no rating, no label, no
+  albums, no people, no faces.
+
+Measured across the bridge at real size with `bench_payload`, rather than extrapolated:
+
+| photographs | bridge | deriving the split fields |
+|---|---|---|
+| 20,000 | 89 ms | 5 ms |
+| 100,000 | 410 ms | 10 ms |
+| 200,000 | **794 ms** | 32 ms |
+
+The Rust side is not the cost — building and serialising 2,433 photographs takes 4.8 ms,
+of which serialisation is 0.9 ms. Reading the whole folder tree for `openfoto.json` costs
+200 ms, but only the first time a library is opened.
+
+An earlier projection of 3.8 s for a 200,000-photograph switch was extrapolated from a
+measurement taken *before* the metadata cascade was cached — a number that had already
+stopped existing.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in
