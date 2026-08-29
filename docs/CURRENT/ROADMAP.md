@@ -10,7 +10,7 @@ Nothing in flight. All three planned phases have shipped; the v1 spec is in
 - **Packaging.** `bundle.active` is false, so there is no installable .app yet.
 - **Detection thresholds.** The 4% scenery ratio was tuned on the older YuNet export and
   has not been re-confirmed against the current one (ADR-0004).
-- **Two `saurabh -> Me` misassignments** in the accuracy fixture, cause unresolved:
+- **Two `Sam -> Me` misassignments** in the accuracy fixture, cause unresolved:
   matcher error or a mislabel in a fixture that a semi-automatic process produced.
 
 ## Later

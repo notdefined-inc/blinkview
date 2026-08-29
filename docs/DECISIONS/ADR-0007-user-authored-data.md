@@ -7,7 +7,7 @@ Status: Accepted (supersedes the first draft of this ADR, see Correction)
 
 Two things in this project cannot be recomputed from the photographs:
 
-- **Names.** Clustering faces is derivable; knowing a cluster is called "Nikhil" is not.
+- **Names.** Clustering faces is derivable; knowing a cluster is called "Alex" is not.
 - **Ratings, labels, albums.** A star exists nowhere but in someone's head until it is
   recorded.
 

@@ -1,7 +1,7 @@
 //! Named identities and their reference faces.
 //!
 //! Lives at the **library root**, not in `.openfoto/`. Clustering is recomputable;
-//! knowing a cluster is called "Nikhil" is not. Keeping the names inside a cache the
+//! knowing a cluster is called "Alex" is not. Keeping the names inside a cache the
 //! documentation calls disposable would mean `rm -rf .openfoto` throws away work no
 //! machine can reproduce. At the root it survives that, and travels with the folder.
 //! See ADR-0007.

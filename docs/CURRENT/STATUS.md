@@ -475,7 +475,7 @@ face alone, which is the intended bias. Reproduce with
 - Detection uses the YuNet `2026may` export, not the `2023mar` one the thresholds were
   tuned against (ADR-0004). The 4% scenery ratio in particular is still unconfirmed
   against the new export.
-- Two `saurabh -> Me` misassignments persist across seed counts. Not yet established
+- Two `Sam -> Me` misassignments persist across seed counts. Not yet established
   whether these are matcher errors or mislabels in the fixture, which was itself
   produced by a semi-automatic process.
 - Model files are not committed (37MB). `openfoto models fetch` is not implemented yet;
@@ -512,7 +512,7 @@ disagreeing with the camera filename in 13% of cases by exactly one second. EXIF
 authoritative. See ADR-0003.
 
 ## Origin
-The workflow this tool automates was first executed by hand against a real 2519-file
-library (`/Volumes/Notdefined/Swissgreece`). That library and its CSV manifests in
-`tests/fixtures/` are the ground truth for regression tests. `reference/prototype/` holds
-the original Python implementation as executable documentation.
+The workflow this tool automates was first executed by hand against a real 2,519-file
+photo library — nine days of travel, three recurring people — and the thresholds in
+ADR-0003 come from measuring that run rather than from a paper. The library itself is
+private, so the numbers are recorded here and in the ADRs while the photographs are not.

@@ -14,7 +14,7 @@ The user's stated goal is "what Obsidian is to Markdown": the files on disk are 
 the app is a fast lens over them. A survey found no existing product in this niche.
 
 There is also direct evidence for the constraint. While the prototype was mid-run, the user
-renamed `Person1/` to `Nikhil/` in Finder. A path-keyed tool treats that as corruption — the
+renamed `Person1/` to `Alex/` in Finder. A path-keyed tool treats that as corruption — the
 run crashed and silently failed to move two files. A folder-as-truth tool must treat it as
 ordinary.
 

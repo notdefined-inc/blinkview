@@ -100,13 +100,13 @@ fn survives_a_folder_renamed_externally() {
     let mut lib = Library::open(&dir).unwrap();
     scan::scan(&mut lib, false).unwrap();
 
-    std::fs::rename(dir.join("Person1"), dir.join("Nikhil")).unwrap();
+    std::fs::rename(dir.join("Person1"), dir.join("Alex")).unwrap();
 
     let st = scan::scan(&mut lib, false).unwrap();
     assert_eq!(st.moved, 2, "files should be re-identified by hash");
     assert_eq!(st.removed, 0, "nothing should be considered deleted");
     assert_eq!(lib.index.count().unwrap(), 2);
-    assert!(lib.index.all().unwrap().iter().all(|r| r.path.starts_with("Nikhil/")));
+    assert!(lib.index.all().unwrap().iter().all(|r| r.path.starts_with("Alex/")));
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -236,7 +236,7 @@ fn deleting_the_cache_preserves_names_and_ratings() {
     let hash = lib.index.all().unwrap()[0].hash.clone();
 
     let mut people = People::default();
-    people.add_references("Nikhil", vec![vec![1.0, 0.0, 0.0]]);
+    people.add_references("Alex", vec![vec![1.0, 0.0, 0.0]]);
     people.save(lib.root()).unwrap();
 
     let mut user = UserData::default();
@@ -252,7 +252,7 @@ fn deleting_the_cache_preserves_names_and_ratings() {
     scan::scan(&mut lib, false).unwrap();
     assert_eq!(
         People::load(lib.root()).unwrap().people[0].name,
-        "Nikhil",
+        "Alex",
         "names must survive deleting the cache"
     );
     let back = UserData::load(lib.root()).unwrap();

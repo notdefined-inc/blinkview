@@ -109,7 +109,7 @@ mod tests {
     fn assigns_a_clear_match() {
         let me = unit(vec![1.0, 0.0, 0.0]);
         let other = unit(vec![0.0, 1.0, 0.0]);
-        let p = people_with(&[("Me", vec![me.clone()]), ("Nikhil", vec![other])]);
+        let p = people_with(&[("Me", vec![me.clone()]), ("Alex", vec![other])]);
         let a = assign(&me, &p, &Options::default());
         assert_eq!(a.person(), Some("Me"));
     }

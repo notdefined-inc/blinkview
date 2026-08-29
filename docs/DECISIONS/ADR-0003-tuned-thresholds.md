@@ -6,7 +6,7 @@ Status: Accepted
 ## Context
 
 Every number below was established empirically against a real 2519-file library
-(`/Volumes/Notdefined/Swissgreece`, 9 days of travel photos, 3 recurring people). Most were
+(9 days of travel photographs, 3 recurring people, 2,519 files). Most were
 found by first getting them wrong and seeing the damage in a rendered contact sheet.
 
 They are recorded here because they are the expensive part of this project. The code that

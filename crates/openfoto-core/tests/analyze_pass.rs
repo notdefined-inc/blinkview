@@ -7,9 +7,13 @@
 use openfoto_core::{analyze, semantic, Library};
 use std::path::PathBuf;
 
+/// A scratch library of real photographs.
+///
+/// Detection finds nothing in synthetic images, so these tests need real ones. Point
+/// `OPENFOTO_TEST_PHOTOS` at a folder of JPEGs to run them; without it they skip, which
+/// is what happens on a machine that has no such folder.
 fn fixture(name: &str) -> Option<PathBuf> {
-    // Real photographs, since detection on synthetic images finds nothing.
-    let src = PathBuf::from("/Users/notdefined/Desktop/openfoto-demo");
+    let src = PathBuf::from(std::env::var("OPENFOTO_TEST_PHOTOS").ok()?);
     if !src.is_dir() {
         return None;
     }
