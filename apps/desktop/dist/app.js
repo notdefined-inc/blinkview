@@ -169,21 +169,49 @@ function scheduleIndexingRefresh() {
   loadPhotos().catch(() => {});
 }
 
+/* Short labels for the sidebar, where there is room for two words and no more. */
+const OP_SHORT = {
+  scan: "indexing", faces: "faces", thumbs: "thumbnails",
+  semantic: "reading", analyze: "analysing", clusters: "grouping",
+};
+
 /** Draw a source's own progress on its own row, without rebuilding the sidebar. */
 function paintSourceProgress(source) {
   const row = document.querySelector(`#sources [data-src="${CSS.escape(source)}"]`);
   if (!row) return;
   const b = S.busy[source];
   let bar = row.querySelector(".srcbar");
-  if (!b) { bar?.remove(); row.classList.remove("working"); return; }
+  const count = row.querySelector(".n");
+
+  if (!b) {
+    bar?.remove();
+    row.classList.remove("working");
+    if (count && count.dataset.was !== undefined) {
+      count.textContent = count.dataset.was;
+      delete count.dataset.was;
+    }
+    return;
+  }
+  // A rescan of an unchanged library takes a third of a second — showing a bar for it
+  // is a flicker that reads as "indexing again" when nothing was reindexed.
+  const started = (b.since ||= performance.now());
+  if (b.op === "scan" && performance.now() - started < 400) return;
+
   row.classList.add("working");
+  // Say which job it is. A bar alone left the user guessing whether a folder was being
+  // indexed or having its faces detected.
+  if (count) {
+    if (count.dataset.was === undefined) count.dataset.was = count.textContent;
+    const pct = b.total ? Math.round((b.done / b.total) * 100) : 0;
+    count.textContent = `${OP_SHORT[b.op] || b.op} ${pct}%`;
+  }
   if (!bar) {
     bar = el("span", { class: "srcbar" }, el("span", { class: "srcfill" }));
     row.append(bar);
   }
   bar.querySelector(".srcfill").style.width =
     Math.round((b.done / Math.max(b.total, 1)) * 100) + "%";
-  bar.title = `${OP_LABEL[b.op] || b.op} — ${b.done} of ${b.total}`;
+  bar.title = `${OP_LABEL[b.op] || b.op} — ${b.done.toLocaleString()} of ${b.total.toLocaleString()}`;
 }
 
 /* ---------------- date helpers ---------------- */

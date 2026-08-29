@@ -207,6 +207,17 @@ Before this, switching left the last library's photographs on screen under the n
 library's name, because the query blocked behind the scan while the grid kept what it
 had.
 
+Reads never queue behind a write. A library being analysed holds its lock for hours, so
+a read tries the lock and, if it is busy, opens a second connection and serves the
+committed state instead of waiting. Measured while face detection ran over 1,900
+photographs: queries returned in 74-263 ms.
+
+Each source row names the job running on it — "analysing 2%", "indexing 40%" — with the
+exact counts on hover. A bar alone left it ambiguous whether a folder was being indexed
+or having its faces detected. Scan progress waits 400 ms before appearing, because
+rescanning an unchanged library takes 0.38 s and a bar for that reads as "indexing
+again" when nothing was reindexed.
+
 ### Picking up where a session stopped
 Analysis is resumable by construction — every stage commits per photograph — and it now
 resumes on its own when a folder is opened, rather than waiting to be asked again.

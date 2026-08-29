@@ -157,6 +157,12 @@ whatever progress event arrived, so two operations at once fought over it and a
 background scan narrated itself over the thing the user was doing. Progress events now
 carry the library they belong to, and the banner ignores the ones that are not its own.
 
+**17. A read that waits on a write it will outlive.** Reads bypassed the library lock
+only when the library was *not yet open*; once open and analysing, they queued behind
+hours of work, so re-adding a folder showed no library at all while its faces were
+detected. **Try the lock, and on failure read the committed state instead of waiting** —
+WAL exists for exactly this.
+
 ## Traps hit here before
 - cargo silently ignores `cfg(debug_assertions)` when selecting dependencies. Dev-only
   dependencies must be real features, or they ship in release builds.

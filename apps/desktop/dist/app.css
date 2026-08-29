@@ -331,7 +331,7 @@ kbd{
 .srcbar{position:absolute;left:var(--s3);right:var(--s3);bottom:2px;height:2px;
   border-radius:2px;background:rgba(128,128,128,.25);overflow:hidden}
 .srcfill{display:block;height:100%;background:var(--accent);transition:width .2s ease}
-.srcrow.working .n{opacity:.5}
+.srcrow.working .n{opacity:.75;font-size:10px;letter-spacing:.02em;text-transform:none}
 .srcrow .srcopen{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;
   color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left;min-width:0}
 .srcrow:hover .sact,.srcrow:focus-within .sact{opacity:1}

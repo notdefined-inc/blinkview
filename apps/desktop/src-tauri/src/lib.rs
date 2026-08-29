@@ -302,6 +302,16 @@ fn with_readable<T>(
         libs.get(root).cloned()
     };
     if let Some(lib) = open {
+        // Free? Use it. Busy? Do not queue behind it. A library being analysed holds
+        // its lock for hours, and waiting was why re-adding a folder left the window
+        // with no library to show while faces were detected.
+        if let Ok(mut guard) = lib.try_lock() {
+            return f(&mut guard).map_err(err);
+        }
+        if let Ok(mut ro) = Library::open_readable(root) {
+            return f(&mut ro).map_err(err);
+        }
+        // No index to read from, so waiting is the only option left.
         let mut guard = lib.lock().map_err(err)?;
         return f(&mut guard).map_err(err);
     }
