@@ -58,9 +58,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop/src-tauri
+          # The `--` matters: everything after it goes to cargo, and without it
+          # `tauri build` rejects --no-default-features as its own unknown flag.
           # The UI-verification bridge opens a WebSocket and is compiled out of any
           # build that ships.
-          args: --target ${{ matrix.target }} --no-default-features
+          args: --target ${{ matrix.target }} -- --no-default-features
           tagName: ${{ github.ref_name }}
           releaseName: "OpenFoto ${{ github.ref_name }}"
           releaseBody: |
