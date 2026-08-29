@@ -6,7 +6,9 @@ members = ["crates/openfoto-core", "crates/openfoto-cli", "apps/desktop/src-taur
 version = "0.0.1"
 edition = "2021"
 rust-version = "1.85"
-license = "MIT"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/notdefined/openfoto"
+description = "A photo manager that treats your folders as the truth."
 
 [workspace.dependencies]
 anyhow = "1"

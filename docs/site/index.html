@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenFoto — your folders are the photo library</title>
+<meta name="description" content="A photo manager that reads the folders you already have. No import, no cloud, no account, no subscription. Face recognition and scene search run on your machine.">
+<meta property="og:title" content="OpenFoto">
+<meta property="og:description" content="Your photos are already organised. They're in folders. Why does no app believe you?">
+<meta property="og:type" content="website">
+<link rel="icon" href="logo.png">
+<style>
+  :root{
+    --ink:#12121a; --dim:#57576a; --faint:#8b8b9c;
+    --bg:#fbfbfd; --panel:#fff; --line:#e6e6ee;
+    --accent:#2563eb; --warm:#f97316;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --ink:#ececf4; --dim:#a6a6b8; --faint:#75758a;
+           --bg:#0b0b0f; --panel:#131319; --line:#23232e; --accent:#7dd3fc; }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
+  a{color:var(--accent)}
+
+  header{padding:88px 0 56px;text-align:center}
+  header img{width:96px;height:96px;filter:drop-shadow(0 6px 24px rgba(0,0,0,.18))}
+  h1{font-size:clamp(40px,7vw,60px);line-height:1.05;letter-spacing:-.035em;margin:22px 0 0}
+  .tag{font-size:clamp(19px,2.6vw,23px);line-height:1.4;color:var(--dim);margin:18px auto 0;max-width:30ch}
+  .tag b{color:var(--ink);font-weight:650}
+
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:36px 0 10px}
+  .btn{
+    display:inline-block;padding:13px 26px;border-radius:999px;text-decoration:none;
+    font-weight:640;font-size:15px;background:var(--ink);color:var(--bg);
+    border:1px solid var(--ink);
+  }
+  .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+  .plat{color:var(--faint);font-size:13.5px;margin-top:6px}
+
+  section{padding:52px 0;border-top:1px solid var(--line)}
+  h2{font-size:29px;letter-spacing:-.022em;margin:0 0 20px}
+  h3{font-size:17px;margin:30px 0 6px;letter-spacing:-.01em}
+  p{margin:0 0 17px;color:var(--dim)}
+  p strong,li strong{color:var(--ink);font-weight:640}
+  .lede{font-size:18.5px;color:var(--ink)}
+
+  .split{display:grid;gap:18px;grid-template-columns:1fr 1fr}
+  @media(max-width:640px){.split{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px}
+  .card h4{margin:0 0 7px;font-size:15.5px}
+  .card p{margin:0;font-size:14.5px;line-height:1.6}
+
+  .feat{margin:0;padding:0;list-style:none}
+  .feat li{padding:17px 0;border-bottom:1px solid var(--line)}
+  .feat li:last-child{border-bottom:0}
+  .feat b{display:block;margin-bottom:3px;font-size:16.5px;color:var(--ink)}
+  .feat span{color:var(--dim);font-size:15px}
+
+  code,kbd{font-family:var(--mono);font-size:.9em}
+  pre{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13.5px;
+    line-height:1.7;color:var(--ink)
+  }
+  pre .c{color:var(--faint)}
+  .no{color:var(--ink);font-weight:640}
+  footer{padding:44px 0 72px;color:var(--faint);font-size:14px;text-align:center;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <img src="logo.png" alt="">
+  <h1>OpenFoto</h1>
+  <p class="tag">Your photos are already organised. They're in folders.<br><b>Why does no app believe you?</b></p>
+  <div class="cta">
+    <a class="btn" href="https://github.com/notdefined/openfoto/releases/latest">Download</a>
+    <a class="btn ghost" href="https://github.com/notdefined/openfoto">Source on GitHub</a>
+  </div>
+  <p class="plat">macOS · Windows · Linux — free, and free of charge, permanently</p>
+</header>
+
+<section class="wrap">
+  <h2>The problem nobody will fix</h2>
+  <p class="lede">You have a hard drive. On it, a folder called <code>Trip</code>, and inside it <code>Greece Day 1</code>, <code>Greece Day 2</code>, <code>Swiss Day 1</code>. You made those folders. You know exactly what's in them.</p>
+  <p>Now try to look at them.</p>
+  <p><strong>Apple</strong> — a company worth more than most countries' economies — ships an operating system whose photo app cannot do this. Photos wants to <em>import</em> your pictures into a library it controls, in a location it chooses, under a structure it invents. Your folders are not welcome. You can point Finder at the folder and press space, which is a file previewer wearing a photo app's coat: no faces, no search, no dates, no grid worth the name.</p>
+  <p>So you look elsewhere, and the market splits neatly in two.</p>
+
+  <div class="split">
+    <div class="card">
+      <h4>The free ones that aren't</h4>
+      <p>They install cheerfully. Then face recognition is a subscription. Then export is Pro. Then a modal appears every third launch, warmly explaining that your memories deserve better, for £39.99 a year. Your photos have become a recurring revenue line on someone's dashboard.</p>
+    </div>
+    <div class="card">
+      <h4>The genuinely free ones that look it</h4>
+      <p>Some are magnificent — decades of engineering, given away by people who owed you nothing. And they were designed when Windows XP was current. Nested toolbars. Nine-step import wizards. A simple thing made to feel like filing a tax return.</p>
+    </div>
+  </div>
+
+  <p style="margin-top:20px">Then the self-hosted generation arrived — and they're <em>good</em>. But they want a Docker daemon, a Postgres container, a reverse proxy, and a mental model where photos live inside a server. Wonderful, if you wanted to run a server. You wanted to look at your holiday.</p>
+  <p>Every one of them, free or paid, old or new, makes the same move: <strong>it takes your photos and puts them somewhere it owns.</strong></p>
+</section>
+
+<section class="wrap">
+  <h2>The idea</h2>
+  <p class="lede">What Obsidian is to Markdown, OpenFoto is to your photo library.</p>
+  <p><strong>The folders are the database.</strong> Not a metaphor. There is no library file, no import step, no proprietary container. Point OpenFoto at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.</p>
+  <p>Delete OpenFoto tomorrow and you lose <em>nothing</em>. Your folders sit exactly where they were, named exactly what you named them — plus a small readable <code>openfoto.json</code> beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.</p>
+  <p>Everything else — thumbnails, the index, face embeddings — lives in a <code>.openfoto/</code> folder that is <strong>safe to delete</strong>. Delete it and it rebuilds. That isn't a caveat; it's the promise the whole design is built to keep.</p>
+</section>
+
+<section class="wrap">
+  <h2>What it actually does</h2>
+  <ul class="feat">
+    <li><b>Finds faces, offline</b><span>Detection and recognition run on your machine. Nothing is uploaded. Name someone once and OpenFoto files the rest — and when it isn't sure, it says so and leaves the photo alone, because a confidently wrong answer is worse than an honest shrug.</span></li>
+    <li><b>Searches by what's in the picture</b><span>Type <code>a church</code> and get the church. <code>snowy mountains</code> and get the mountains. No tagging, no training. Ask for <code>the sea</code> in a library with no sea and it returns nothing, on purpose.</span></li>
+    <li><b>Understands sentences</b><span><code>a church sam 18 august 2026</code> is a scene, a person and a date, and gives you two photographs. Not a language model — a grammar, which is faster, works offline, and never invents a folder that doesn't exist.</span></li>
+    <li><b>Does what you tell it</b><span><code>move all my august photos to Trip/Greece Day3</code> shows exactly what will happen, then waits. Every change is journalled, and ⌘Z undoes the file move <em>and</em> the ratings that travelled with it.</span></li>
+    <li><b>Finds the duplicates you actually have</b><span>Burst shots, three seconds apart. Perceptual hashing to find candidates, real pixel comparison to confirm, and clustering that never mistakes a chain of vaguely-similar photos for a pile of duplicates.</span></li>
+    <li><b>Edits without destroying</b><span>Crop, straighten, rotate, exposure. The original moves to a visible <code>Originals/</code> folder, because "non-destructive" should mean you can see the thing that wasn't destroyed.</span></li>
+    <li><b>Stays quick when it gets big</b><span>200,000 photos render with about 55 cells alive. The camera's own embedded preview is used when it's there — reading 37 KB instead of decoding twelve megapixels — and analysis decodes each photo once for the thumbnail, the faces and the search index together.</span></li>
+  </ul>
+</section>
+
+<section class="wrap">
+  <h2>What it deliberately doesn't do</h2>
+  <p><span class="no">No cloud, no account, no sync.</span> There is nowhere to sign in.<br>
+     <span class="no">No telemetry.</span> Nothing is measured, collected or sent. There is no analytics code to audit because there is none to write.<br>
+     <span class="no">No paid tier.</span> There is no feature behind a wall, because there is no wall.<br>
+     <span class="no">No library format.</span> If OpenFoto vanished tomorrow, your folders wouldn't notice.</p>
+</section>
+
+<section class="wrap">
+  <h2>Or start from the command line</h2>
+  <p>Everything the app does, the CLI does — the honest way to try this on a library you care about.</p>
+<pre><span class="c"># index a folder; never modifies a photograph</span>
+openfoto scan    -C ~/Photos
+
+<span class="c"># thumbnails, faces and scene search, one decode each</span>
+openfoto analyze -C ~/Photos
+
+<span class="c"># search by what a photograph shows</span>
+openfoto find    -C ~/Photos "a night sky"
+
+<span class="c"># find burst duplicates — previews before it moves anything</span>
+openfoto dedupe  -C ~/Photos
+
+<span class="c"># reverse any of it</span>
+openfoto undo    -C ~/Photos</pre>
+</section>
+
+<footer class="wrap">
+  <p>Free software under <a href="https://github.com/notdefined/openfoto/blob/main/LICENSE">GPL-3.0-or-later</a>.<br>
+  Built in Rust with <a href="https://tauri.app">Tauri</a>. No trackers, no accounts, no subscription — permanently.</p>
+</footer>
+
+</body>
+</html>
