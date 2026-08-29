@@ -310,6 +310,10 @@ kbd{
   border-radius:5px;background:none;color:var(--ink-faint);font-size:11px;cursor:pointer;
 }
 .rowact:hover{background:rgba(128,128,128,.25);color:var(--ink)}
+/* The cached thumbnail standing in until the full image arrives. Slightly soft rather
+   than pixelated, so a fast walk through a folder reads as photographs resolving
+   instead of a grid of artefacts. */
+#lb-img.provisional{filter:blur(.4px)}
 .prow{display:flex;align-items:center;gap:4px}
 .prow .prun{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left;min-width:0}
 .pact{opacity:0;transition:opacity .12s}

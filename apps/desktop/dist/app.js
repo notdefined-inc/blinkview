@@ -764,6 +764,47 @@ function openViewer(list, index) {
   $("#lightbox").hidden = false;
   paintLightbox();
 }
+/* Stepping through a folder must not wait on a full-size decode.
+   The thumbnail is already cached, so it goes up immediately and the full image
+   replaces it when it arrives — if the viewer is still on that photograph. Holding an
+   arrow key then costs a cached thumbnail per frame instead of twelve megapixels. */
+let lbLoadSeq = 0;
+
+function showFull(p) {
+  const img = $("#lb-img");
+  const seq = ++lbLoadSeq;
+  const full = photoUrl(p.path) + "?full=" + p.hash;
+  const thumb = photoUrl(p.path) + "?t=" + p.hash;
+
+  img.classList.add("provisional");
+  img.src = thumb;
+
+  const hi = new Image();
+  hi.decoding = "async";
+  hi.onload = () => {
+    if (seq !== lbLoadSeq) return;   // moved on; this photograph is no longer showing
+    img.src = full;
+    img.classList.remove("provisional");
+  };
+  hi.onerror = () => {
+    if (seq !== lbLoadSeq) return;
+    img.src = full;                  // let the <img> report the failure itself
+    img.classList.remove("provisional");
+  };
+  hi.src = full;
+}
+
+/** Warm the neighbours, so the next arrow press is already decoded. */
+function preloadAround(i) {
+  for (const d of [1, -1, 2, -2]) {
+    const q = S.lbList[(i + d + S.lbList.length) % S.lbList.length];
+    if (!q || q.kind === "video") continue;
+    const im = new Image();
+    im.decoding = "async";
+    im.src = photoUrl(q.path) + "?full=" + q.hash;
+  }
+}
+
 function paintLightbox() {
   const p = S.lbList[S.lbIndex];
   if (!p) return;
@@ -773,11 +814,14 @@ function paintLightbox() {
   const img = $("#lb-img");
   img.hidden = isVideo;
   if (isVideo) {
-    const v = el("video", { id: "lb-video", src: photoUrl(p.path), controls: true, autoplay: true });
+    lbLoadSeq++;                     // cancel any full-size load still in flight
+    const v = el("video", {
+      id: "lb-video", src: photoUrl(p.path), controls: true, autoplay: true,
+      preload: "auto", playsinline: true,
+    });
     stage.append(v);
   } else {
-    // Pass the hash so the handler can cache a transcode when the format needs one.
-    img.src = photoUrl(p.path) + "?full=" + p.hash;
+    showFull(p);
   }
   resetZoom();
   $("#lb-name").textContent = p.name;
@@ -796,15 +840,27 @@ function paintLightbox() {
   const WIN = 30;
   const from = Math.max(0, S.lbIndex - WIN);
   const to = Math.min(S.lbList.length, S.lbIndex + WIN + 1);
-  strip.replaceChildren(...S.lbList.slice(from, to).map((q, k) => {
-    const i = from + k;
-    return el("img", {
-      src: photoUrl(q.path) + "?t=" + q.hash, alt: q.name, loading: "lazy", decoding: "async",
-      "aria-current": String(i === S.lbIndex),
-      onclick: () => { S.lbIndex = i; paintLightbox(); }
-    });
-  }));
+  // Rebuilding sixty-one <img> elements on every arrow press is most of the cost of
+  // stepping. The window only has to change when the cursor nears its edge; the rest
+  // of the time moving the highlight is enough.
+  const fresh = strip.dataset.from !== String(from) || strip.dataset.to !== String(to);
+  if (fresh) {
+    strip.dataset.from = String(from);
+    strip.dataset.to = String(to);
+    strip.replaceChildren(...S.lbList.slice(from, to).map((q, k) => {
+      const i = from + k;
+      return el("img", {
+        src: photoUrl(q.path) + "?t=" + q.hash, alt: q.name, loading: "lazy", decoding: "async",
+        "data-i": String(i),
+        onclick: () => { S.lbIndex = i; paintLightbox(); }
+      });
+    }));
+  }
+  for (const n of strip.children) {
+    n.setAttribute("aria-current", String(Number(n.dataset.i) === S.lbIndex));
+  }
   strip.querySelector('[aria-current="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
+  preloadAround(S.lbIndex);
   paintStars();
   if (!$("#infopanel").hidden) { $("#infopanel").hidden = true; toggleInfo(); }
 }

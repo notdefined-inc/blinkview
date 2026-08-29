@@ -191,6 +191,9 @@ fn start_watching(app: &tauri::AppHandle, state: &AppState, root: &str) {
         let Some(state) = app.try_state::<AppState>() else { return };
         let changed = with(&state, &root_owned, |lib| {
             let st = scan::scan(lib, false)?;
+            // Folders may have appeared or vanished, so the cascade is no longer known
+            // good — a metadata file could have arrived with them.
+            lib.invalidate_user_data();
             Ok(st.hashed + st.moved + st.removed)
         });
         match changed {
@@ -275,10 +278,12 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
     }
     let folders = total;
     let analysed = rows.iter().filter(|r| lib.faces_done(&r.hash).unwrap_or(false)).count();
-    let ready = rows
-        .iter()
-        .filter(|r| r.kind == "photo" && thumbs::thumb_path(lib, &r.hash).exists())
-        .count();
+    // One directory read, not one `stat` per photograph. At 200k photos the old form
+    // was 200k syscalls every time the sidebar refreshed.
+    let ready = std::fs::read_dir(lib.root().join(openfoto_core::library::VAULT_DIR).join("thumbs"))
+        .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "jpg")).count())
+        .unwrap_or(0)
+        .min(photos);
 
     let people_file = People::load(lib.root())?;
     let opt = assign::Options::default();
@@ -428,7 +433,7 @@ async fn photos(
 ) -> R<Vec<PhotoInfo>> {
     with(&state, &path, |lib| {
         let people_file = People::load(lib.root())?;
-        let user = UserDataSet::load(lib.root())?;
+        let user = lib.user_data()?.clone();
         let opt = assign::Options::default();
         let mut who: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut nfaces: BTreeMap<String, usize> = BTreeMap::new();
@@ -844,7 +849,9 @@ fn edit_each(
         let folder = folders.get(h).cloned().unwrap_or_default();
         set.edit(h, &folder, |u| f(u, h));
     }
-    set.save(lib.root())
+    set.save(lib.root())?;
+    lib.invalidate_user_data();
+    Ok(())
 }
 
 #[tauri::command]
@@ -913,6 +920,7 @@ async fn apply_album_migration(state: tauri::State<'_, AppState>, path: String) 
         let mut set = UserDataSet::load(lib.root())?;
         set.clear_albums();
         set.save(lib.root())?;
+        lib.invalidate_user_data();
         Ok(format!("{n} photos moved into folders · undo id {}", j.id))
     })
 }
@@ -988,7 +996,9 @@ async fn save_search(
     with(&state, &path, |lib| {
         let mut set = UserDataSet::load(lib.root())?;
         set.set_search(name.trim(), &query);
-        set.save(lib.root())
+        set.save(lib.root())?;
+        lib.invalidate_user_data();
+        Ok(())
     })
 }
 
@@ -1052,7 +1062,7 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             kind: row.kind.clone(),
             faces,
             people,
-            meta: UserDataSet::load(lib.root())?.get(&hash, folder_of(&row.path)),
+            meta: lib.user_data()?.get(&hash, folder_of(&row.path)),
             hash,
         })
     })
@@ -1513,10 +1523,78 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
         }
     };
 
-    match std::fs::read(&serve) {
-        Ok(bytes) => ok_response(bytes, &serve),
-        Err(_) => deny(404),
+    // Videos are streamed, not swallowed. A range request reads only the slice asked
+    // for; without this a 500MB clip had to be read into memory and handed over whole
+    // before playback could begin, and every seek did it again.
+    let range = request
+        .headers()
+        .get("Range")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    match serve_file(&serve, range.as_deref()) {
+        Some(res) => res,
+        None => deny(404),
     }
+}
+
+/// The most a single response will carry.
+///
+/// A player asking for "bytes=0-" means "whatever you have"; answering with an entire
+/// film would put it back in memory, which is the thing being fixed.
+const RANGE_CHUNK: u64 = 4 * 1024 * 1024;
+
+/// Serve a file, honouring a `Range` header.
+fn serve_file(path: &std::path::Path, range: Option<&str>) -> Option<http::Response<Vec<u8>>> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+
+    let Some((start, end)) = range.and_then(|r| parse_range(r, len)) else {
+        // No range asked for. Small files go whole; anything large still advertises
+        // that it can be seeked, so the player will come back with ranges.
+        let mut buf = Vec::with_capacity(len as usize);
+        file.read_to_end(&mut buf).ok()?;
+        let mut res = ok_response(buf, path);
+        res.headers_mut().insert("Accept-Ranges", "bytes".parse().ok()?);
+        return Some(res);
+    };
+
+    let end = end.min(start.saturating_add(RANGE_CHUNK - 1)).min(len.saturating_sub(1));
+    let n = end.saturating_sub(start) + 1;
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = vec![0u8; n as usize];
+    file.read_exact(&mut buf).ok()?;
+
+    let mut res = ok_response(buf, path);
+    *res.status_mut() = http::StatusCode::PARTIAL_CONTENT;
+    let h = res.headers_mut();
+    h.insert("Accept-Ranges", "bytes".parse().ok()?);
+    h.insert("Content-Range", format!("bytes {start}-{end}/{len}").parse().ok()?);
+    // A partial response must not be cached as if it were the whole file.
+    h.insert("Cache-Control", "no-store".parse().ok()?);
+    Some(res)
+}
+
+/// `bytes=START-END`, either end optional. Suffix ranges (`bytes=-500`) included.
+fn parse_range(header: &str, len: u64) -> Option<(u64, u64)> {
+    let spec = header.trim().strip_prefix("bytes=")?;
+    // Multiple ranges are legal but no player we serve asks for them; one is enough.
+    let (a, b) = spec.split_once('-')?;
+    let (a, b) = (a.trim(), b.trim());
+    if a.is_empty() {
+        let n: u64 = b.parse().ok()?;
+        if n == 0 || len == 0 {
+            return None;
+        }
+        return Some((len.saturating_sub(n), len - 1));
+    }
+    let start: u64 = a.parse().ok()?;
+    if start >= len {
+        return None;
+    }
+    let end = if b.is_empty() { len - 1 } else { b.parse::<u64>().ok()?.min(len - 1) };
+    (start <= end).then_some((start, end))
 }
 
 fn ok_response(bytes: Vec<u8>, path: &std::path::Path) -> http::Response<Vec<u8>> {
@@ -1531,6 +1609,9 @@ fn ok_response(bytes: Vec<u8>, path: &std::path::Path) -> http::Response<Vec<u8>
         .header("Content-Type", mime)
         .header("Cache-Control", "max-age=31536000")
         .header("Access-Control-Allow-Origin", "*")
+        // Without this the range headers are invisible to anything using fetch, which
+        // makes a streaming problem impossible to diagnose from the page.
+        .header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
         .body(bytes)
         .unwrap()
 }
@@ -1597,6 +1678,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranges_are_parsed_the_way_a_player_sends_them() {
+        // The common opening move: "send me what you have from the start".
+        assert_eq!(parse_range("bytes=0-", 1000), Some((0, 999)));
+        assert_eq!(parse_range("bytes=100-199", 1000), Some((100, 199)));
+        // A seek near the end.
+        assert_eq!(parse_range("bytes=900-", 1000), Some((900, 999)));
+        // Suffix range: the last 500 bytes, used to read an MP4 trailer atom.
+        assert_eq!(parse_range("bytes=-500", 1000), Some((500, 999)));
+        // Past the end must be refused, not clamped into a bogus slice.
+        assert_eq!(parse_range("bytes=1000-", 1000), None);
+        assert_eq!(parse_range("bytes=5000-6000", 1000), None);
+        // An end beyond the file is clamped, which is legal and expected.
+        assert_eq!(parse_range("bytes=990-5000", 1000), Some((990, 999)));
+        // Nonsense is refused rather than guessed at.
+        assert_eq!(parse_range("chunks=0-10", 1000), None);
+        assert_eq!(parse_range("bytes=abc", 1000), None);
+        assert_eq!(parse_range("bytes=50-10", 1000), None);
+    }
 
     #[test]
     fn a_folder_contains_everything_beneath_it() {

@@ -112,6 +112,43 @@ fn main() -> Result<()> {
         println!("(models not installed)");
     }
 
+    println!("\n--- the query path (what a source switch costs) ---");
+    let t = Instant::now();
+    let rows = lib.index.all()?;
+    let all_ms = ms(t.elapsed());
+    println!("{:<34} {:>8.1} ms   ({} rows)", "index.all()", all_ms, rows.len());
+
+    let t = Instant::now();
+    let people = openfoto_core::faces::people::People::load(lib.root())?;
+    println!("{:<34} {:>8.1} ms   ({} people)", "People::load", ms(t.elapsed()), people.people.len());
+
+    let t = Instant::now();
+    let faces = lib.all_faces()?;
+    let faces_ms = ms(t.elapsed());
+    println!("{:<34} {:>8.1} ms   ({} faces)", "all_faces()", faces_ms, faces.len());
+
+    let t = Instant::now();
+    let opt = openfoto_core::faces::assign::Options::default();
+    let mut hits = 0usize;
+    for f in &faces {
+        if let Some(e) = f.embedding.as_ref() {
+            if openfoto_core::faces::assign::assign(e, &people, &opt).person().is_some() {
+                hits += 1;
+            }
+        }
+    }
+    let assign_ms = ms(t.elapsed());
+    println!("{:<34} {:>8.1} ms   ({hits} assigned)", "assign every face", assign_ms);
+
+    let t = Instant::now();
+    let ud = openfoto_core::userdata::UserDataSet::load(lib.root())?;
+    println!("{:<34} {:>8.1} ms", "UserDataSet::load", ms(t.elapsed()));
+    let _ = ud;
+
+    let total = all_ms + faces_ms + assign_ms;
+    println!("{:<34} {:>8.1} ms  -> {:.1} s at 200k photos",
+        "sum", total, total / rows.len().max(1) as f64 * 200_000.0 / 1000.0);
+
     let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     println!("\n--- projection for 200,000 photos on {cores} cores ---");
     println!("thumbnails  {:>8.1} min", full * 200_000.0 / 1000.0 / 60.0 / cores as f64);

@@ -168,7 +168,7 @@ fn ancestors(folder: &str) -> Vec<String> {
 /// folder in Finder carry its ratings and names along with it.
 ///
 /// Loaded once and held, never walked per photograph.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct UserDataSet {
     /// Keyed by folder path relative to the library root; the root itself is `""`.
     by_folder: BTreeMap<String, UserData>,
@@ -180,6 +180,10 @@ impl UserDataSet {
     ///
     /// A library written before ADR-0010 has only the root file. That still works — the
     /// root is simply the outermost level of the cascade.
+    ///
+    /// This walks the whole tree, which on a phone backup measured 100 ms — too much to
+    /// repeat on every query. Callers that read it repeatedly should hold one and reload
+    /// when something changes; [`Library::user_data`] does exactly that.
     pub fn load(root: &Path) -> Result<Self> {
         let mut by_folder = BTreeMap::new();
         by_folder.insert(String::new(), UserData::load(root)?);

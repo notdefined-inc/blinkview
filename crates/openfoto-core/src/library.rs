@@ -11,6 +11,13 @@ pub const VAULT_DIR: &str = ".openfoto";
 pub struct Library {
     root: PathBuf,
     pub index: Index,
+    /// The metadata cascade, held rather than re-walked.
+    ///
+    /// Reading it means walking every folder for an `openfoto.json` — 100 ms on a phone
+    /// backup, and every query wanted it. Held here and dropped whenever something
+    /// writes to it or the folder tree changes, so the walk happens when the answer
+    /// could actually have changed instead of once per question.
+    user_data: Option<crate::userdata::UserDataSet>,
 }
 
 impl Library {
@@ -30,9 +37,23 @@ impl Library {
                 .with_context(|| format!("creating {}", vault.join(sub).display()))?;
         }
         let index = Self::open_index(&vault.join("index.sqlite"))?;
-        let lib = Self { root, index };
+        let lib = Self { root, index, user_data: None };
         lib.rescue_user_data();
         Ok(lib)
+    }
+
+    /// The metadata cascade, loaded once and reused.
+    pub fn user_data(&mut self) -> Result<&crate::userdata::UserDataSet> {
+        if self.user_data.is_none() {
+            self.user_data = Some(crate::userdata::UserDataSet::load(&self.root)?);
+        }
+        Ok(self.user_data.as_ref().expect("just loaded"))
+    }
+
+    /// Forget the cached cascade. Call after anything writes an `openfoto.json`, or
+    /// after the folder tree changes underneath us.
+    pub fn invalidate_user_data(&mut self) {
+        self.user_data = None;
     }
 
     /// Open the index, rebuilding it if it is unusable.
