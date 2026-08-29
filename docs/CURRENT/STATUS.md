@@ -197,6 +197,31 @@ Naming an unrecognised face offers the people already known, one click each. Ret
 name risks a second spelling of someone who is already there, and merging is usually
 what was meant.
 
+### Where the time goes
+Measured on a 25GB phone backup with `examples/bench`, mean 7.8 MP:
+
+| | per photo |
+|---|---|
+| thumbnail | 33 ms |
+| face detection (decode + shrink + detect) | 98 ms |
+| — of which inference at 1280px | **15 ms** |
+| semantic embedding (decode + embed) | 124 ms |
+| — of which inference at 256px | **33 ms** |
+
+**The models are not the cost; the JPEG decode is.** Detecting faces spends 85% of its
+time turning twelve megapixels into pixels it immediately shrinks to 1280. Three passes
+— thumbnails, faces, embeddings — each decode the same photograph again.
+
+Two things that do *not* help, both measured rather than assumed:
+
+- **A faster JPEG decoder.** `image` already uses zune-jpeg, and turbojpeg came in at
+  60.4 ms against 60.1 ms on 12 MP. Asking for a scaled decode saves only 22%, because
+  the entropy coding has to be walked in full whatever size you want out.
+- **CoreML.** Slower than CPU on these models: YuNet 32.6 ms against 18.5 ms, MobileCLIP
+  42.4 ms against 32.6 ms. They are small enough that partitioning and transfer cost
+  more than the acceleration returns. DirectML and CUDA are worth measuring on their own
+  platforms before being believed.
+
 ### Progress reporting
 The four slow operations — face detection, thumbnails, face grouping, duplicate
 analysis — report `(done, total)` through `progress::Counter`. The app shows a bar in

@@ -94,12 +94,30 @@ fn main() -> Result<()> {
     println!("\n--- face detection ---");
     if let Ok(model) = openfoto_core::faces::models::find("yunet.onnx") {
         let mut det = openfoto_core::faces::detect::Detector::load(&model)?;
-        // Detection needs pixels, so this includes the same full decode thumbnails pay.
-        timed("decode + detect", &sample, |p| {
-            let img = openfoto_core::imageio::load_rgb(p)?;
+        // What the pipeline really does: decode, shrink to ANALYSIS_LONG_EDGE, detect.
+        let long = openfoto_core::faces::pipeline::ANALYSIS_LONG_EDGE;
+        let shrink = |img: image::RgbImage| {
+            let (w, h) = (img.width(), img.height());
+            if w.max(h) <= long { return img; }
+            let s = long as f32 / w.max(h) as f32;
+            image::imageops::resize(&img, (w as f32*s) as u32, (h as f32*s) as u32,
+                                    image::imageops::FilterType::Triangle)
+        };
+        timed("decode + shrink + detect (real)", &sample, |p| {
+            let img = shrink(openfoto_core::imageio::load_rgb(p)?);
             let (w, h) = (img.width() as usize, img.height() as usize);
             det.detect(img.as_raw(), w, h, 0.6, 0.3).map(|v| v.len())
         });
+        // Inference alone, on an image already the right size.
+        let ready: Vec<image::RgbImage> = sample.iter()
+            .filter_map(|p| openfoto_core::imageio::load_rgb(p).ok())
+            .map(&shrink).collect();
+        let t = Instant::now();
+        for img in &ready {
+            let _ = det.detect(img.as_raw(), img.width() as usize, img.height() as usize, 0.6, 0.3);
+        }
+        println!("{:<34} {:>8.1} ms/photo   (inference only)", "detect at 1280px",
+            ms(t.elapsed()) / ready.len().max(1) as f64);
     } else {
         println!("(models not installed)");
     }
@@ -107,7 +125,7 @@ fn main() -> Result<()> {
     println!("\n--- semantic embedding ---");
     if openfoto_core::semantic::Encoder::available() {
         let mut enc = openfoto_core::semantic::Encoder::load()?;
-        timed("embed image", &sample, |p| enc.embed_image(p));
+        timed("decode + embed (real)", &sample, |p| enc.embed_image(p));
     } else {
         println!("(models not installed)");
     }
