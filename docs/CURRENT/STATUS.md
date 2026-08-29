@@ -177,6 +177,23 @@ the file rows that referenced them, so a photograph that disappears and comes ba
 not re-analysed. Orphans are only reaped on an explicit vacuum — automatic reaping would
 destroy exactly that property.
 
+### Stepping through the viewer
+Arrow keys walk **exactly what is on screen, in the order it is shown** — which, with a
+folder selected, means that folder and everything beneath it.
+
+This used to fall back to the photograph's own folder when nothing was filtered, which
+was the Picasa rule. It stopped fitting once the grid began rolling up subfolders:
+clicking a clip in a mixed, date-sorted grid walked `WhatsApp Video` — thirty-seven
+videos and no photographs — so the arrows appeared to skip every picture. Picasa's grid
+*was* per-folder, so "the folder" and "what you are looking at" were the same thing
+there; only the first half of that rule survived the move to rolled-up folders.
+
+Both scopes are still wanted, so the viewer says which one it is in and offers the
+other. Standing in `Trip` on a picture from `Greece Day3`, **▣ this folder** narrows to
+it — including its own children, because a folder always means itself and what is inside
+it (ADR-0009) — and **↔ all** goes back. `f` toggles. The control only appears when the
+two scopes are actually different sets.
+
 ### Selection and people
 Selection works the way a file manager's does: click, shift-click for a range, ⌘A for
 everything, and **shift with the arrow keys** to extend from the last photograph touched

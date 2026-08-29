@@ -51,6 +51,7 @@ const S = {
   view: [],              // filtered/sorted photos currently on screen
   lbIndex: -1,
   lbList: [],
+  lbScope: "view",         // "view" = everything on screen, "folder" = just this one
   sel: new Set(),          // selected photo hashes
   lastIndex: -1,           // anchor for shift-range selection
   zoom: 1, panX: 0, panY: 0,
@@ -772,13 +773,68 @@ async function emptyTrash() {
 }
 
 /* ---------------- lightbox ---------------- */
+/* Two scopes, because both are wanted at different moments.
+   By default the viewer steps through everything on screen, which is what every photo
+   app does and what makes a rolled-up folder browse the way it looks. But standing in
+   `Trip` and reaching a picture from `Greece Day3`, it is reasonable to want just that
+   day — so the scope is a control rather than a rule, and it says which one it is. */
+function setLbScope(mode) {
+  const cur = S.lbList[S.lbIndex];
+  if (!cur) return;
+  S.lbScope = mode;
+  // A folder always means the folder *and* everything beneath it — the same rule the
+  // sidebar and the grid use (ADR-0009). Narrowing to a parent must not hide its
+  // children.
+  const list = mode === "folder"
+    ? S.view.filter(q => inFolder(q.folder, cur.folder))
+    : S.view.slice();
+  if (!list.length) return;
+  S.lbList = list;
+  S.lbIndex = Math.max(0, list.findIndex(q => q.hash === cur.hash));
+  paintLightbox();
+}
+
+function renderScope(p) {
+  const el2 = $("#lb-folder");
+  const narrowed = S.lbScope === "folder";
+  const where = S.person
+    ? `\u{1F464} ${S.person}`
+    : (narrowed ? p.folder || "root" : S.folder || "everything in view");
+  const count = `${S.lbIndex + 1} of ${S.lbList.length}`;
+  // Offer the other scope only when it would actually be a different set.
+  const otherSize = narrowed
+    ? S.view.length
+    : S.view.filter(q => inFolder(q.folder, p.folder)).length;
+  const canSwitch = !S.person && otherSize !== S.lbList.length && otherSize > 0;
+
+  el2.replaceChildren(document.createTextNode(`${where} \u00B7 ${count}`));
+  if (!canSwitch) return;
+  const b = el("button", {
+    class: "lb-scope",
+    title: narrowed
+      ? "Step through everything on screen"
+      : `Step through ${p.folder || "the root folder"} and anything inside it`,
+  }, narrowed ? `\u2194 all ${S.view.length}` : `\u25A3 this folder (${otherSize})`);
+  b.onclick = () => setLbScope(narrowed ? "view" : "folder");
+  el2.append(b);
+}
+
 function openLightbox(photo) {
-  // Navigation follows what you are actually looking at. Filtered to a person or a
-  // folder, stepping through stays inside that set; browsing unfiltered, it falls back
-  // to the photo's own folder, which is the Picasa behaviour.
-  const filtered = S.person || S.folder || $("#search").value.trim();
-  const list = filtered ? S.view.slice() : S.photos.filter(p => p.folder === photo.folder);
-  openViewer(list, list.findIndex(p => p.hash === photo.hash));
+  // Step through exactly what is on screen, in the order it is shown.
+  //
+  // This used to fall back to the photograph's own folder when nothing was filtered,
+  // which was the Picasa rule and stopped fitting once the grid began rolling up
+  // subfolders: clicking a clip in a mixed, date-sorted grid walked `WhatsApp Video`
+  // — thirty-seven videos and no photographs — so the arrow keys appeared to skip
+  // every picture. It also ignored the sort, since that list came from S.photos in
+  // backend order rather than S.view in the order displayed.
+  //
+  // The folder context that rule existed for is still there: the filmstrip shows the
+  // neighbours either side of wherever you are.
+  S.lbScope = "view";
+  const list = S.view.slice();
+  const at = list.findIndex(p => p.hash === photo.hash);
+  openViewer(list, at >= 0 ? at : 0);
 }
 
 /* Any ordered set of photos can drive the viewer — the grid's view, a folder, or an
@@ -855,8 +911,7 @@ function paintLightbox() {
     p.width ? `${p.width}×${p.height}` : null,
     p.people.length ? p.people.join(", ") : (p.faces ? `${p.faces} face${p.faces > 1 ? "s" : ""}` : null),
   ].filter(Boolean).join("   ·   ");
-  const scope = S.person ? `👤 ${S.person}` : (S.folder || p.folder || "root");
-  $("#lb-folder").textContent = `${scope} · ${S.lbIndex + 1} of ${S.lbList.length}`;
+  renderScope(p);
 
   // Render a window around the current photo rather than the whole folder. A few
   // hundred thumbnails in one flex row is both slow and, on WKWebView, enough to
@@ -2300,6 +2355,10 @@ addEventListener("keydown", e => {
     if (e.key === "+" || e.key === "=") zoomAt(1.4, innerWidth / 2, innerHeight / 2);
     if (e.key === "-" || e.key === "_") zoomAt(1 / 1.4, innerWidth / 2, innerHeight / 2);
     if (e.key === "0") resetZoom();
+    // F narrows to this photograph's folder, and back out again.
+    if (e.key.toLowerCase() === "f" && !S.cropping) {
+      setLbScope(S.lbScope === "folder" ? "view" : "folder");
+    }
     return;
   }
   if (e.key === "Escape") { hideCtx(); if (!$("#sheet").hidden) $("#sheet").hidden = true; else if (S.sel.size) clearSel(); }

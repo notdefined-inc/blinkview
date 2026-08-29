@@ -164,4 +164,16 @@ assert.equal(G.isCommand("movie night photos"), false, "...but still not a comma
 assert.equal(G.isCommand("mvoe the greece photos to X"), false,
   "a typo'd verb is not a command either — the caller offers a correction");
 
+// --- the viewer's narrow scope means folder AND children ---------------------
+
+// Narrowing from "everything in view" to a folder must behave like the sidebar and the
+// grid: a folder is itself plus everything beneath it. Standing on a clip in
+// "WhatsApp Video" and narrowing must not hide "WhatsApp Video/Sent".
+assert.equal(G.inFolder("WhatsApp Video", "WhatsApp Video"), true);
+assert.equal(G.inFolder("WhatsApp Video/Sent", "WhatsApp Video"), true);
+assert.equal(G.inFolder("WhatsApp Video/Private", "WhatsApp Video"), true);
+assert.equal(G.inFolder("WhatsApp Images", "WhatsApp Video"), false);
+// And still not a name-prefixed sibling.
+assert.equal(G.inFolder("WhatsApp Video2/x", "WhatsApp Video"), false);
+
 console.log("grammar: all assertions passed");
