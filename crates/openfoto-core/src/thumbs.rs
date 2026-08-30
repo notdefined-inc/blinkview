@@ -115,9 +115,37 @@ fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
 const FFMPEG_FALLBACKS: &[&str] =
     &["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"];
 
-/// The ffmpeg to run: whatever PATH offers, else the first well-known path present.
-fn ffmpeg_bin() -> Option<std::ffi::OsString> {
-    let runs = |cmd: &std::ffi::OsStr| {
+/// The environment variable naming an exact ffmpeg to use.
+///
+/// The desktop app sets this to its bundled sidecar at startup (ADR-0014). It wins over
+/// everything else so that a packaged build never depends on what the host happens to
+/// have installed, or on which of two ffmpegs `PATH` reaches first.
+pub const FFMPEG_ENV: &str = "OPENFOTO_FFMPEG";
+
+/// Where to look for ffmpeg, in order.
+///
+/// Taking the override as an argument rather than reading the environment keeps this
+/// orderable in a test without mutating process-global state, which parallel tests
+/// cannot do safely.
+fn candidates(explicit: Option<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let mut out = Vec::with_capacity(FFMPEG_FALLBACKS.len() + 2);
+    out.extend(explicit);
+    out.push(std::ffi::OsString::from("ffmpeg"));
+    out.extend(FFMPEG_FALLBACKS.iter().map(std::ffi::OsString::from));
+    out
+}
+
+/// The first candidate that answers `-version` successfully.
+///
+/// Running it is the test, not its presence on disk: a path can exist and be a broken
+/// symlink, the wrong architecture, or not ffmpeg at all.
+fn first_runnable(candidates: Vec<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    candidates.into_iter().find(|cmd| {
+        // A bare name is resolved through PATH by the OS; an absolute path that is not
+        // there would spawn and fail, so skip it rather than pay for the attempt.
+        if std::path::Path::new(cmd).is_absolute() && !std::path::Path::new(cmd).exists() {
+            return false;
+        }
         std::process::Command::new(cmd)
             .arg("-version")
             .stdout(std::process::Stdio::null())
@@ -125,15 +153,13 @@ fn ffmpeg_bin() -> Option<std::ffi::OsString> {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
-    };
-    let bare = std::ffi::OsString::from("ffmpeg");
-    if runs(&bare) {
-        return Some(bare);
-    }
-    FFMPEG_FALLBACKS
-        .iter()
-        .map(std::ffi::OsString::from)
-        .find(|c| std::path::Path::new(c).exists() && runs(c))
+    })
+}
+
+/// The ffmpeg to run: the bundled sidecar if the app named one, else whatever PATH
+/// offers, else the first well-known install path that works.
+fn ffmpeg_bin() -> Option<std::ffi::OsString> {
+    first_runnable(candidates(std::env::var_os(FFMPEG_ENV)))
 }
 
 /// Grab a frame from a video via ffmpeg, if it is installed.
@@ -204,4 +230,72 @@ pub fn build_with_progress(
         eprintln!("[thumbs] {made} built, first failure: {e:#}");
     }
     Ok(made)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    /// A script that answers `-version` like ffmpeg does, and reports which one it is.
+    fn fake_ffmpeg(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, "#!/bin/sh\necho \"$0\"\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    }
+
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("openfoto-ffmpeg-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The sidecar the app names must beat anything else, including a working `PATH`
+    /// ffmpeg — a packaged build must not depend on what the host has installed.
+    #[test]
+    fn an_explicit_ffmpeg_wins_over_path() {
+        let d = tmpdir("explicit");
+        let bundled = fake_ffmpeg(&d, "bundled");
+        let order = candidates(Some(OsString::from(&bundled)));
+        assert_eq!(order.first(), Some(&OsString::from(&bundled)));
+        assert_eq!(order.get(1), Some(&OsString::from("ffmpeg")));
+        assert_eq!(first_runnable(order), Some(OsString::from(&bundled)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// With nothing named, `PATH` is tried before the hard-coded install prefixes.
+    #[test]
+    fn without_an_override_path_is_tried_first() {
+        let order = candidates(None);
+        assert_eq!(order.first(), Some(&OsString::from("ffmpeg")));
+        assert_eq!(order.len(), 1 + FFMPEG_FALLBACKS.len());
+    }
+
+    /// Presence is not enough: a candidate that cannot run is skipped, and when none
+    /// can run the answer is None rather than a path that will fail later.
+    #[test]
+    fn a_candidate_that_cannot_run_is_not_chosen() {
+        let d = tmpdir("broken");
+        let broken = d.join("not-executable");
+        std::fs::write(&broken, "this is not a program").unwrap();
+        let missing = d.join("does-not-exist");
+        assert!(broken.exists());
+        assert_eq!(
+            first_runnable(vec![OsString::from(&missing), OsString::from(&broken)]),
+            None
+        );
+        let working = fake_ffmpeg(&d, "works");
+        assert_eq!(
+            first_runnable(vec![OsString::from(&broken), OsString::from(&working)]),
+            Some(OsString::from(&working)),
+            "a broken candidate must not stop the search"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

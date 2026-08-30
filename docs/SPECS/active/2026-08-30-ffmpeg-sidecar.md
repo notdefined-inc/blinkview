@@ -1,5 +1,5 @@
 # Bundle ffmpeg as a sidecar
-Status: Draft   Owner: notdefined   Date: 2026-08-30
+Status: Agreed   Owner: notdefined   Date: 2026-08-30
 
 ## Problem
 
@@ -32,9 +32,22 @@ Contract between the app and core, which is the whole of the coupling:
 | `OPENFOTO_FFMPEG` | absolute path to an ffmpeg binary. Set by the desktop app at startup from the resolved sidecar path. Unset elsewhere. |
 | `thumbs::ffmpeg_bin() -> Option<OsString>` | resolves `OPENFOTO_FFMPEG` → `PATH` → `FFMPEG_FALLBACKS`, returning the first that answers `-version` with success. |
 
-Binaries live in `apps/desktop/src-tauri/binaries/`, are git-ignored, and are fetched by
-`tools/fetch-ffmpeg.sh` against `tools/ffmpeg.lock` (URL + SHA-256 + licence + build
-flags per triple). CI runs that script before `tauri build`.
+Binaries live in `apps/desktop/src-tauri/binaries/`, are git-ignored, and are produced
+by `tools/build-ffmpeg.sh` against `tools/ffmpeg.lock` (source tarball URL + SHA-256 +
+configure flags per triple). CI runs it before `tauri build`, cached on the lock hash.
+
+**Prebuilt binaries were investigated first and rejected on evidence (2026-08-30):**
+
+| source | covers | verdict |
+|---|---|---|
+| BtbN/FFmpeg-Builds | Windows, Linux (no macOS at all) | verifiable — GitHub publishes a per-asset sha256 digest — but the linux64 GPL archive alone is 121 MB |
+| evermeet.cx | macOS **x86_64 only** | wrong architecture for the only Mac target we ship |
+| osxexperts.net | macOS arm64 | **integrity claims do not hold.** The page lists two different SHA-256 values for `ffmpeg9arm.zip`, `591260c9…` and `df3f1e3f…`; the served file is `d0c06c5c…` on two independent downloads. A binary whose publisher's own checksum is wrong cannot be pinned, and must not be signed into our bundle. |
+
+That leaves no verifiable prebuilt arm64 macOS binary, and the full builds that do exist
+are far over budget — osxexperts' arm64 static ffmpeg is 49.7 MB on its own, against a
+16 MB installer today. Building from source fixes both at once: integrity because we
+build it, and size because the configure flags carry only the codecs criterion 7 names.
 
 Rejected: `tauri-plugin-shell`'s sidecar API — it adds a plugin and a capability
 permission to run a subprocess the Rust side already spawns directly.
@@ -61,10 +74,10 @@ something reproducible from a pinned URL.
 
 ## Tasks
 
-- [ ] 1. `tools/ffmpeg.lock` + `tools/fetch-ffmpeg.sh`, with checksum verification and
-      recorded build flags and licence per triple (touches: tools/)
-- [ ] 2. `ffmpeg_bin()` honours `OPENFOTO_FFMPEG` first; unit tests for criteria 2 and 3
-      (touches: crates/openfoto-core/src/thumbs.rs)
+- [x] 2. `ffmpeg_bin()` honours `OPENFOTO_FFMPEG` first; unit tests for criteria 2 and 3
+      (touches: crates/openfoto-core/src/thumbs.rs) — done, three tests
+- [ ] 1. `tools/ffmpeg.lock` + `tools/build-ffmpeg.sh`: pinned source tarball, checksum,
+      minimal configure per triple, CI cache keyed on the lock (touches: tools/)
 - [ ] 3. `externalBin` config; app exports `OPENFOTO_FFMPEG` at startup from the resolved
       sidecar path (touches: apps/desktop/src-tauri/)
 - [ ] 4. Release workflow runs the fetch script before `tauri build`; verify criteria 6,
