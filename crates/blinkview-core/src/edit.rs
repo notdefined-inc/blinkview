@@ -249,6 +249,14 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
         anyhow::bail!("nothing to apply");
     }
     let src = lib.abs(rel_path);
+    // This function ends in `rename(tmp, src)`. On a RAW that would put JPEG bytes in a
+    // file still called `.CR3` — the negative destroyed and the name now a lie. We read
+    // a RAW from the preview the camera embedded and never write one back (ADR-0018).
+    if crate::raw::is_raw(&src) {
+        anyhow::bail!(
+            "{rel_path} is a camera RAW: blinkview shows the preview inside it and never rewrites it"
+        );
+    }
     let mut img = imageio::load_rgb(&src).with_context(|| format!("reading {rel_path}"))?;
 
     // Order matters and is not arbitrary: rotate and flip first, then crop. The user
@@ -323,6 +331,26 @@ mod tests {
             );
             assert!(flat.contains(&want), "app.js is missing or disagrees on {want}");
         }
+    }
+
+    /// The guard that keeps a negative a negative. Applying an edit writes a JPEG over
+    /// the source, so a RAW has to be refused before a single pixel is read.
+    #[test]
+    fn a_raw_is_never_rewritten() {
+        let dir = std::env::temp_dir().join(format!("blinkview-rawedit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"not really a CR3, and it must survive anyway").unwrap();
+        let before = std::fs::read(&raw).unwrap();
+
+        let lib = Library::open(&dir).unwrap();
+        let err = match apply(&lib, "IMG_0001.CR3", &edit(Rotate::Cw90)) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a camera RAW must never be rewritten"),
+        };
+        assert!(err.contains("camera RAW"), "{err}");
+        assert_eq!(std::fs::read(&raw).unwrap(), before, "the file must be untouched");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

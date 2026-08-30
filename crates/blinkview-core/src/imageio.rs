@@ -54,10 +54,17 @@ pub fn apply_luma(img: GrayImage, o: u16) -> GrayImage {
 }
 
 /// Formats the `image` crate cannot decode, which macOS can.
+///
+/// Camera RAW is here as a *fallback*: [`camera_preview`] reads the JPEG the camera
+/// embedded, on every platform, and only a file that declares no usable preview reaches
+/// `sips`. On Linux and Windows that last resort fails, and the file is listed without
+/// a thumbnail rather than failing the scan — the same bargain video makes without
+/// ffmpeg.
 pub fn needs_conversion(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "heic" | "heif"))
+        || crate::raw::is_raw(path)
 }
 
 /// Decode a HEIC/HEIF by asking macOS to transcode it first.
@@ -136,6 +143,25 @@ pub fn embedded_preview(bytes: &[u8], min_long: u32) -> Option<RgbImage> {
     Some(img.to_rgb8())
 }
 
+/// The picture the camera already rendered, whichever container it is in.
+///
+/// A JPEG carries it in the EXIF APP1 segment; a RAW declares it in its directory
+/// (`raw::preview`). Both are the same bargain — read a megabyte and decode a small
+/// image, rather than decode the whole frame and throw most of it away — and for RAW it
+/// is not an optimisation but the only way we read the format at all.
+pub fn camera_preview(path: &Path, min_long: u32) -> Option<RgbImage> {
+    if crate::raw::is_raw(path) {
+        let preview = crate::raw::preview(path)?;
+        if preview.width.max(preview.height) < min_long {
+            return None;
+        }
+        let img = image::load_from_memory_with_format(&preview.jpeg, image::ImageFormat::Jpeg)
+            .ok()?;
+        return Some(img.to_rgb8());
+    }
+    embedded_preview(&std::fs::read(path).ok()?, min_long)
+}
+
 /// Width and height from the first SOF marker, without decoding anything.
 fn jpeg_size(b: &[u8]) -> Option<(u32, u32)> {
     if b.len() < 4 || b[0] != 0xFF || b[1] != 0xD8 {
@@ -193,9 +219,16 @@ fn find_app1_jpeg(b: &[u8]) -> Option<&[u8]> {
 }
 
 pub fn load_rgb(path: &Path) -> Result<RgbImage> {
+    // A RAW is read from its preview wherever one exists, which is every file we have
+    // measured. `sips` below is what catches the ones that do not.
+    if crate::raw::is_raw(path) {
+        if let Some(img) = camera_preview(path, 1) {
+            return Ok(apply_rgb(img, orientation(path)));
+        }
+    }
     if needs_conversion(path) {
         let tmp = std::env::temp_dir().join(format!(
-            "blinkview-heic-{}-{}.jpg",
+            "blinkview-convert-{}-{}.jpg",
             std::process::id(),
             path.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
         ));

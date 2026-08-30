@@ -76,7 +76,15 @@ pub fn from_filename(name: &str) -> Option<NaiveDateTime> {
 pub fn from_exif(path: &Path) -> Option<NaiveDateTime> {
     let file = std::fs::File::open(path).ok()?;
     let mut buf = std::io::BufReader::new(file);
-    let exif = exif::Reader::new().read_from_container(&mut buf).ok()?;
+    let exif = match exif::Reader::new().read_from_container(&mut buf) {
+        Ok(e) => e,
+        // A CR3 or RAF keeps its EXIF somewhere no container reader looks. Without this
+        // every one of them is dated by its file timestamp, and the timeline — which is
+        // ordered by exactly that — puts a 2017 frame under today.
+        Err(_) => exif::Reader::new()
+            .read_raw(crate::raw::exif_block(path)?)
+            .ok()?,
+    };
     for tag in [exif::Tag::DateTimeOriginal, exif::Tag::DateTime] {
         if let Some(f) = exif.get_field(tag, exif::In::PRIMARY) {
             let s = f.display_value().to_string();

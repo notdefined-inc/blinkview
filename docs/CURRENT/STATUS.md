@@ -64,6 +64,16 @@ Removing a source matches on the resolved path. The list holds the folder as it 
 added, while the sidebar shows it resolved, so a folder added through a symlink came
 back under a name that did not match its own entry and Remove removed nothing.
 
+Camera RAW is indexed and shown. CR3, CR2, NEF, ARW, RAF and DNG are read from the JPEG
+the camera embedded rather than developed (ADR-0018) — on the reference samples that is
+the full frame for CR3 (6000x4000), DNG (5760x3840) and NEF (4928x3264), and a 1616x1080
+or 1920x1280 preview for ARW and RAF. Extraction reads 0.9-3.0 MB of a 12-50 MB file in
+1.6-11.3 ms. Finding it is structural: a Canon CR2 keeps its sensor data as a lossless
+JPEG bigger in one dimension than the real preview, so the frame marker decides — SOF3 is
+sensor data, SOF0/1/2 is a photograph. RAW is never written: crop, colour and metadata
+writes refuse it, in the window and again at the core, because applying an edit ends in a
+rename over the source and would leave JPEG bytes in a file still called `.CR3`.
+
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 

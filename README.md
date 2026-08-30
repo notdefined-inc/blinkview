@@ -52,6 +52,8 @@ Everything else — thumbnails, the index, face embeddings — lives in a `.blin
 
 **Finds the duplicates you actually have.** Burst shots, near-identical, three seconds apart. Perceptual hashing to find candidates, real pixel comparison to confirm, and complete-linkage clustering so a chain of vaguely-similar photos never gets mistaken for a pile of duplicates.
 
+**Reads your camera's RAW files.** CR3, CR2, NEF, ARW, RAF and DNG appear in the grid like anything else — Blinkview shows the JPEG your camera already made and never touches the negative. No demosaicing, so a 50 MB frame thumbnails in the time it takes to read a megabyte of it. Crop and colour are switched off for RAW rather than quietly writing a JPEG into a file still called `.CR3`.
+
 **Edits without destroying.** Crop, straighten, rotate, exposure. The original moves to a visible `Originals/` folder by default, because "non-destructive" should mean you can see the thing that wasn't destroyed.
 
 **Stays quick when it gets big.** The grid is virtualised: 200,000 photos render with about 55 cells alive. Thumbnails are produced as you scroll, and the camera's own embedded preview is used when it's there — reading 37 KB instead of decoding twelve megapixels. Analysis decodes each photo *once* and takes the thumbnail, the faces and the search embedding from that single pass.

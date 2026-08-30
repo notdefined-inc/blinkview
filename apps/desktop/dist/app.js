@@ -90,6 +90,12 @@ const S = {
 
 const TRASH = "Trash";
 
+/* Camera RAW. Blinkview reads the preview the camera embedded and never writes one
+   back (ADR-0018), so the controls that rewrite a file are turned off for these rather
+   than left to fail on the way to disk. Kept in step with `raw::RAW_EXT`. */
+const RAW_EXT = ["cr2", "cr3", "dng", "nef", "arw", "raf"];
+const isRaw = path => RAW_EXT.includes(String(path).split(".").pop().toLowerCase());
+
 /* A folder contains everything beneath it (ADR-0009). Compared segment-wise, so
    `Trip2` is not read as living inside `Trip` — the same rule as `in_folder` in the
    backend, and the two must agree or the grid and the counts disagree. */
@@ -953,13 +959,21 @@ function hideCtx() { $("#ctx").hidden = true; }
     preview, because forty previews is not a preview. The originals are kept, which is
     what makes the batch safe to try. */
 async function colourSelectedPrompt() {
-  const hashes = [...S.sel];
-  if (!hashes.length) return;
+  // A preset writes a new JPEG over each file, which a camera RAW never accepts
+  // (ADR-0018). Drop them here and say so, rather than reporting failures afterwards.
+  const raws = S.photos.filter(p => S.sel.has(p.hash) && isRaw(p.path));
+  const hashes = [...S.sel].filter(h => !raws.some(r => r.hash === h));
+  if (!hashes.length) {
+    return toast(raws.length
+      ? "Camera RAW files are shown from the preview inside them and never rewritten"
+      : "Nothing selected");
+  }
   const chosen = await new Promise(resolve => {
     let d;
     d = dialogFrame(`Colour ${hashes.length} photograph${hashes.length === 1 ? "" : "s"}`, [
       el("p", { class: "asktext" },
-        "Each original is kept in Originals/, so this can be undone by hand if it is wrong."),
+        "Each original is kept in Originals/, so this can be undone by hand if it is wrong."
+        + (raws.length ? ` ${raws.length} camera RAW ${raws.length === 1 ? "file is" : "files are"} left alone.` : "")),
       el("div", { class: "movepicks" }, PRESETS.map(([name, vals]) =>
         el("button", { class: "sugg-pill", onclick: () => d.done(vals) }, name))),
       el("div", { class: "askrow" },
@@ -1387,6 +1401,17 @@ function paintLightbox() {
     p.people.length ? p.people.join(", ") : (p.faces ? `${p.faces} face${p.faces > 1 ? "s" : ""}` : null),
   ].filter(Boolean).join("   ·   ");
   renderScope(p);
+  // Rotate, flip, crop and adjust all end in a JPEG written over the source.
+  const raw = isRaw(p.path);
+  for (const id of ["#lb-rot-l", "#lb-rot-r", "#lb-flip", "#lb-crop", "#lb-adjust"]) {
+    const b = $(id);
+    if (!b) continue;
+    b.dataset.title ||= b.title;          // remembered before the reason replaces it
+    b.disabled = raw;
+    b.title = raw
+      ? "A camera RAW is shown from the preview inside it, and never rewritten"
+      : b.dataset.title;
+  }
 
   // Render a window around the current photo rather than the whole folder. A few
   // hundred thumbnails in one flex row is both slow and, on WKWebView, enough to

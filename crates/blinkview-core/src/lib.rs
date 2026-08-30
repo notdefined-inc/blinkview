@@ -25,6 +25,7 @@ pub mod library;
 pub mod metadata;
 pub mod plan;
 pub mod progress;
+pub mod raw;
 pub mod rename;
 pub mod scan;
 pub mod semantic;

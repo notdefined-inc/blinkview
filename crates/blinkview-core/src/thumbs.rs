@@ -71,10 +71,7 @@ fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     // disagrees with the photograph, so this is a fast path, never a guess.
     // `o` is the rotation still owed. The HEIC route rotates inside `load_rgb`, so it
     // owes nothing further — applying it twice would turn a portrait upside down.
-    let (img, o) = match std::fs::read(src)
-        .ok()
-        .and_then(|b| imageio::embedded_preview(&b, THUMB_LONG))
-    {
+    let (img, o) = match imageio::camera_preview(src, THUMB_LONG) {
         Some(preview) => (preview, imageio::orientation(src)),
         None if imageio::needs_conversion(src) => (imageio::load_rgb(src)?, 1),
         None => (imageio::load_rgb_unrotated(src)?, imageio::orientation(src)),
@@ -125,10 +122,7 @@ pub fn preview_path_at(root: &std::path::Path, hash: &str) -> std::path::PathBuf
 /// decode it at any size), and an embedded camera preview of 2,000 px or more is used
 /// in preference to a full decode, exactly as thumbnails do.
 pub fn render_preview(src: &std::path::Path, dst: &std::path::Path) -> Result<bool> {
-    let (img, o, full_decode) = match std::fs::read(src)
-        .ok()
-        .and_then(|b| imageio::embedded_preview(&b, PREVIEW_LONG))
-    {
+    let (img, o, full_decode) = match imageio::camera_preview(src, PREVIEW_LONG) {
         Some(preview) => (preview, imageio::orientation(src), false),
         None if imageio::needs_conversion(src) => (imageio::load_rgb(src)?, 1, true),
         None => (imageio::load_rgb_unrotated(src)?, imageio::orientation(src), true),

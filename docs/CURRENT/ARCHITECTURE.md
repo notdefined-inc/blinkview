@@ -75,8 +75,16 @@ JPEG and PNG decode in-process. HEIC is transcoded by macOS `sips` and cached �
 ADR-0005, which is also the project's only macOS-only dependency. Video thumbnails come
 from ffmpeg when it is installed, and simply do not exist when it is not.
 
+Camera RAW — CR3, CR2, NEF, ARW, RAF, DNG — is read from the JPEG the camera embedded,
+never developed and never written back (ADR-0018). `raw::preview` follows the tag that
+*declares* a preview and accepts only SOF0/1/2, because inside a RAW an SOF3 frame is
+sensor data. Pure Rust, so it works on every platform; `sips` catches a file that
+declares no usable preview, on macOS.
+
 `imageio` is the single decode seam: everything goes through it, which is what makes
-EXIF orientation and HEIC handling uniform rather than per-caller.
+EXIF orientation, HEIC and RAW handling uniform rather than per-caller.
+`imageio::camera_preview` is the one call that means "the picture the camera already
+made", whichever container it is in.
 
 ## Serving pixels to the UI
 

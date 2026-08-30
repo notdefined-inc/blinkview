@@ -23,6 +23,12 @@ pub const PHOTO_EXT: &[&str] = &[
     "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff", "bmp", "ico",
     "tga", "qoi", "pbm", "pgm", "ppm", "pnm", "hdr", "dds",
 ];
+
+/// Every extension a photograph can have, camera RAW included. RAW is indexed from the
+/// preview the camera embedded rather than developed (`crate::raw`).
+fn is_photo_ext(ext: &str) -> bool {
+    PHOTO_EXT.contains(&ext) || crate::raw::RAW_EXT.contains(&ext)
+}
 pub const VIDEO_EXT: &[&str] = &["mp4", "mov", "m4v"];
 
 #[derive(Debug, Default, PartialEq)]
@@ -40,7 +46,7 @@ pub struct ScanStats {
 
 pub fn kind_of(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-    if PHOTO_EXT.contains(&ext.as_str()) {
+    if is_photo_ext(ext.as_str()) {
         Some("photo")
     } else if VIDEO_EXT.contains(&ext.as_str()) {
         Some("video")

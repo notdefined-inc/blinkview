@@ -376,11 +376,7 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
             Ok(()) => {
                 st.thumbs += 1;
                 // Whether the preview was used is knowable without redoing the work.
-                if std::fs::read(&job.path)
-                    .ok()
-                    .and_then(|b| imageio::embedded_preview(&b, thumbs::THUMB_LONG))
-                    .is_some()
-                {
+                if imageio::camera_preview(&job.path, thumbs::THUMB_LONG).is_some() {
                     st.from_preview += 1;
                 } else {
                     st.decoded += 1;
