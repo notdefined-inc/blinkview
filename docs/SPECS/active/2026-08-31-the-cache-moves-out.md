@@ -1,6 +1,6 @@
 # The cache moves out of your photo folders
 
-Status: Draft   Owner: somesh   Date: 2026-08-31
+Status: Agreed   Owner: somesh   Date: 2026-08-31
 
 ## Problem
 
@@ -87,22 +87,27 @@ than discarded, so no identity is lost by upgrading.
 ### Order of migration, on first open
 
 1. Resolve or mint the id; write `.blinkview-id`.
-2. If `<root>/.blinkview/` exists, move it into the cache root. `rename` first; on EXDEV —
-   an external drive to the home disk, which is the 1.9 GB case — copy with progress, then
-   remove. Same fallback as `move_to_system_trash`.
-3. Convert `blinkview-people.json` to v2 against the now-present `faces` table.
+2. If `<root>/.blinkview/` exists, `rename` it into the cache root. A rename is a
+   metadata hop, so this is instant for a library on the boot disk and **fails on an
+   external drive**, where the cache root is on another filesystem.
+3. On that failure, do not copy. Start a fresh cache, leave the old `.blinkview/` exactly
+   where it is, and say so. Re-deriving costs a scan; copying gigabytes to save it is the
+   more expensive and more interruptible of the two, and the owner has said these caches
+   are not worth carrying.
+4. Convert `blinkview-people.json` to v2 against the `faces` table, when one is there.
 
-Steps 2 and 3 are each idempotent and safe to interrupt: an interrupted copy leaves the
-original in place, and a v1 people file is still readable.
+Every step is idempotent and safe to interrupt. Nothing is ever deleted from inside a
+photo folder: an abandoned `.blinkview/` is reported, not removed.
 
 ## Acceptance criteria
 
 1. A library opened by this build has no `.blinkview/` directory and a `.blinkview-id`
    file of 32 hex characters; its index, thumbnails, faces and journal are all intact and
    no rescan is triggered.
-2. Migrating the 26 GB reference library moves 1.9 GB across a filesystem boundary,
-   reports progress, and ends with the source vault gone.
-3. Interrupting that copy leaves the original `.blinkview/` intact and the library usable.
+2. A library on the same filesystem as the cache root migrates by rename: instant, no
+   rescan, journal and faces intact.
+3. A library on another filesystem opens with a fresh cache, re-indexes, and leaves its
+   old `.blinkview/` untouched with a message naming it.
 4. Renaming a library folder in Finder keeps its cache — `survives_a_folder_renamed_externally`
    passes unchanged.
 5. Copying a library folder elsewhere and opening the copy re-indexes it, and does not
@@ -126,7 +131,7 @@ original in place, and a v1 people file is still readable.
 
 - [ ] 1. `cache.rs`: root resolution, id minting, `.blinkview-id` read/write, path-derived fallback (touches: new `cache.rs`)
 - [ ] 2. `Library::open` resolves the cache through it; `VAULT_DIR` stops being a path fragment (touches: `library.rs`, every `VAULT_DIR` caller)
-- [ ] 3. Migration: move an existing vault, with cross-filesystem copy and progress (touches: `library.rs`, `lib.rs`)
+- [ ] 3. Migration: rename an existing vault into the cache root, or start fresh and report the one left behind (touches: `library.rs`)
 - [ ] 4. People v2: `faces` pointers, v1 conversion, inline fallback for unmatched vectors (touches: `faces/people.rs`, `faces/assign.rs`)
 - [ ] 5. `purge` and `cache list` / `cache prune` (touches: `lib.rs`, `blinkview-cli`)
 - [ ] 6. Tests: migration keeps the journal, rename still works, copy does not collide, read-only opens, people round-trip (touches: `tests/lifecycle.rs`, `faces`)
