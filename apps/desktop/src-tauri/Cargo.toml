@@ -27,6 +27,13 @@ rayon = { workspace = true }
 semver = "1"
 ureq = { workspace = true }
 
+# UI-verification bridge. cargo cannot select dependencies on cfg(debug_assertions),
+# so this is a real feature, on by default for development and dropped from a release
+# build with --no-default-features. Not macOS-only: `build.rs` installs its capability
+# wherever the feature is on, so a platform that enabled the feature without the
+# dependency failed the build on a permission naming a plugin that was not there.
+tauri-plugin-mcp-bridge = { version = "0.12", optional = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Narrow native adapters: AppKit supplies the system share picker and `drag` supplies
 # real outbound file drags. Both receive only paths resolved from content hashes here.
@@ -34,11 +41,6 @@ drag = "2.1.1"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSResponder", "NSSharingService", "NSView", "NSWorkspace"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSString", "NSURL"] }
-
-# UI-verification bridge. cargo cannot select dependencies on cfg(debug_assertions),
-# so this is a real feature, on by default for development and dropped from a release
-# build with --no-default-features.
-tauri-plugin-mcp-bridge = { version = "0.12", optional = true }
 
 [features]
 default = ["ui-bridge"]
