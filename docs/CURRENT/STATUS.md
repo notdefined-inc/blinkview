@@ -10,7 +10,11 @@ re-suggestion, selection with context menu, delete to a recoverable `Trash/`, pe
 rename, per-person untagging, and the organize sheet (preview then apply).
 Near-duplicate bursts and re-takes are reviewed one day (or GPS-labelled trip week) at
 a time, with sharpness scores, side-by-side compare, Like, and journalled bulk
-Keep/Trash via Reclaim Space. `Set Date & Time` writes a corrected capture time into
+Keep/Trash via Reclaim Space. **Keep all suggestions** stages the sharpest frame in
+every burst for anyone who trusts the score and does not want to open 88 of them; a
+keeper chosen by hand is never overwritten by it. Accepting the last burst moves to
+whatever was skipped earlier rather than standing still, and when nothing is left the
+review says so and puts the cursor on the Trash button. `Set Date & Time` writes a corrected capture time into
 the file's EXIF, the way Set Location writes GPS. MOV, MP4 and M4V play under a floating
 transport pill; stem-matched still/MOV pairs behave as Live Photos; the timeline has
 newest/oldest and month jump; selections share through the macOS picker, drag into

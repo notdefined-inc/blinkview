@@ -2417,8 +2417,18 @@ function renderDuplicateReview() {
   $("#dup-apply").disabled = DUP.reviewed.size === 0;
   const atStart = DUP.batch === 0 && DUP.group === 0;
   const atEnd = DUP.batch === DUP.batches.length - 1 && DUP.group === batch.groups.length - 1;
+  const undecided = DUP.data.groups.length - DUP.reviewed.size;
   $("#dup-prev").disabled = atStart;
-  $("#dup-next").textContent = atEnd ? "Accept keeper" : "Next →";
+  // Nothing left to accept: say so rather than offering a button that re-renders the
+  // same frame, which is indistinguishable from a dead one.
+  $("#dup-next").textContent = undecided === 0
+    ? "All bursts reviewed"
+    : (atEnd ? "Accept keeper" : "Next →");
+  $("#dup-next").disabled = undecided === 0;
+  $("#dup-accept-all").disabled = undecided === 0;
+  $("#dup-accept-all").textContent = undecided && undecided < DUP.data.groups.length
+    ? `Keep the remaining ${undecided}`
+    : "Keep all suggestions";
 }
 
 function reviewDuplicateKeep() {
@@ -2429,15 +2439,54 @@ function reviewDuplicateKeep() {
   renderDuplicateReview();
 }
 
+/** The first burst still without a decision, in reading order. Reviewing is not
+    linear — the day list jumps around — so the end of the last day is not the end of
+    the work. */
+function firstUndecided() {
+  for (let b = 0; b < DUP.batches.length; b++) {
+    const groups = DUP.batches[b].groups;
+    for (let g = 0; g < groups.length; g++) {
+      if (!DUP.reviewed.has(groups[g].id)) return { batch: b, group: g };
+    }
+  }
+  return null;
+}
+
 function stepDuplicate(direction) {
   const batch = DUP.batches[DUP.batch];
   if (!batch) return;
   if (direction > 0) DUP.reviewed.add(dupCurrentGroup().id); // accepts the current suggestion
   let group = DUP.group + direction, batchIndex = DUP.batch;
-  if (group >= batch.groups.length) { batchIndex = Math.min(DUP.batches.length - 1, batchIndex + 1); group = batchIndex === DUP.batch ? DUP.group : 0; }
+  if (group >= batch.groups.length) {
+    if (batchIndex + 1 < DUP.batches.length) { batchIndex += 1; group = 0; }
+    else {
+      // Off the end of the last day. Anything skipped earlier is still waiting, and
+      // standing still on a burst already decided is what made this look broken.
+      const next = firstUndecided();
+      if (!next) return finishDuplicateReview();
+      batchIndex = next.batch; group = next.group;
+    }
+  }
   if (group < 0) { batchIndex = Math.max(0, batchIndex - 1); group = batchIndex === DUP.batch ? 0 : DUP.batches[batchIndex].groups.length - 1; }
   DUP.batch = batchIndex; DUP.group = group; DUP.focus = null;
   renderDuplicateReview();
+}
+
+/** Every burst has a keeper. Nothing has moved yet — the Trash step still confirms. */
+function finishDuplicateReview() {
+  renderDuplicateReview();
+  const rejected = DUP.data.groups.flatMap(g => g.items.filter(i => i.path !== DUP.keepers.get(g.id)));
+  const bytes = rejected.reduce((sum, item) => sum + item.bytes, 0);
+  toast(`All ${DUP.data.groups.length} bursts reviewed — ${rejected.length} frames, ${bytesLabel(bytes)} ready`, "ok");
+  $("#dup-apply").focus();
+}
+
+/** Take the suggested keeper everywhere it has not been overruled.
+    For someone who trusts the sharpness score and does not want to open 88 bursts. */
+function acceptAllSuggestions() {
+  if (!DUP.data) return;
+  for (const group of DUP.data.groups) DUP.reviewed.add(group.id);
+  finishDuplicateReview();
 }
 
 async function toggleDuplicateLike() {
@@ -3861,6 +3910,7 @@ $("#dup-next").onclick = () => stepDuplicate(1);
 $("#dup-like").onclick = toggleDuplicateLike;
 $("#dup-share").onclick = () => { const item = dupFocusedItem(); if (item) shareHashes([item.hash]); };
 $("#dup-move").onclick = moveDuplicateCurrent;
+$("#dup-accept-all").onclick = acceptAllSuggestions;
 $("#dup-apply").onclick = applyDuplicateReview;
 addEventListener("click", e => { if (!e.target.closest("#ctx")) hideCtx(); });
 $("#lb-prev").onclick = () => step(-1);

@@ -37,12 +37,31 @@ const sandbox = {
 };
 
 const exported = ["parseClause", "splitClauses", "verbOf", "nearestVerb", "isCommand",
-                  "parseQuery", "inFolder", "sectionFor", "stripFiller", "hydrate", "bytesLabel"];
+                  "parseQuery", "inFolder", "sectionFor", "stripFiller", "hydrate", "bytesLabel",
+                  "DUP", "firstUndecided"];
 const fn = new Function(
   ...Object.keys(sandbox),
   `${src}\n;return { ${exported.join(", ")} };`
 );
 const G = fn(...Object.values(sandbox));
+
+// --- duplicate review ------------------------------------------------------
+
+// Reviewing is not linear: the day list jumps around, so reaching the end of the last
+// day is not the end of the work. Standing still on a burst already decided is what
+// made "Accept keeper" look like a dead button.
+G.DUP.batches = [
+  { groups: [{ id: "a" }, { id: "b" }] },
+  { groups: [{ id: "c" }] },
+];
+G.DUP.reviewed = new Set(["a", "c"]);
+assert.deepEqual(G.firstUndecided(), { batch: 0, group: 1 }, "skipped bursts are still waiting");
+
+G.DUP.reviewed = new Set(["b"]);
+assert.deepEqual(G.firstUndecided(), { batch: 0, group: 0 }, "reading order, not visit order");
+
+G.DUP.reviewed = new Set(["a", "b", "c"]);
+assert.equal(G.firstUndecided(), null, "nothing left is a distinct answer, not a burst");
 
 // --- verbs -----------------------------------------------------------------
 
