@@ -52,7 +52,31 @@ pub struct Adjust {
     pub saturation: f32,
 }
 
+/// Named starting points, defined here rather than in the window so the CLI and the
+/// app cannot drift apart on what "warm" means.
+///
+/// Each is only a set of the three adjustments — there is no hidden fourth control —
+/// so a preset can be nudged afterwards instead of being a mode you are stuck in.
+pub const PRESETS: [(&str, Adjust); 5] = [
+    // Saturation at -1.0 removes colour entirely; the small contrast lift is what
+    // keeps a black-and-white from reading as a grey wash.
+    ("Mono", Adjust { brightness: 0.0, contrast: 0.12, saturation: -1.0 }),
+    ("Warm", Adjust { brightness: 0.04, contrast: 0.06, saturation: 0.18 }),
+    ("Cool", Adjust { brightness: 0.02, contrast: 0.08, saturation: -0.12 }),
+    ("Punch", Adjust { brightness: 0.0, contrast: 0.28, saturation: 0.3 }),
+    ("Faded", Adjust { brightness: 0.08, contrast: -0.18, saturation: -0.22 }),
+];
+
 impl Adjust {
+    /// The preset by name, if there is one. Case-insensitive: the name travels through
+    /// a UI and a command line before it gets here.
+    pub fn preset(name: &str) -> Option<Adjust> {
+        PRESETS
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
+            .map(|(_, a)| *a)
+    }
+
     pub fn is_neutral(&self) -> bool {
         self.brightness == 0.0 && self.contrast == 0.0 && self.saturation == 0.0
     }
@@ -194,9 +218,32 @@ pub struct Applied {
     pub original: Option<String>,
     pub width: u32,
     pub height: u32,
+    /// The rewritten file's content hash. Everything the user authored is keyed by it
+    /// (ADR-0007), so the caller has to carry ratings and labels across.
+    pub hash: String,
 }
 
 /// Apply an edit to one photo, in place.
+/// Move a photograph into the visible `Originals/` folder, returning where it went.
+///
+/// Shared with metadata stripping, which keeps the original for the same reason
+/// editing does: the result cannot be turned back into what it was.
+pub fn keep_original(lib: &Library, rel_path: &str) -> Result<Option<String>> {
+    let dir = lib.abs(ORIGINALS);
+    std::fs::create_dir_all(&dir)?;
+    let name = rel_path.rsplit('/').next().unwrap_or(rel_path);
+    let mut dest = dir.join(name);
+    // Never clobber an original already kept for a different photograph.
+    let mut n = 2;
+    while dest.exists() {
+        let (stem, ext) = name.rsplit_once('.').unwrap_or((name, "jpg"));
+        dest = dir.join(format!("{stem}_{n}.{ext}"));
+        n += 1;
+    }
+    std::fs::rename(lib.abs(rel_path), &dest).with_context(|| "moving the original aside")?;
+    Ok(lib.rel(&dest))
+}
+
 pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
     if edit.is_noop() {
         anyhow::bail!("nothing to apply");
@@ -238,22 +285,7 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
     }
 
     // Preserve the original before anything is overwritten.
-    let mut original = None;
-    if edit.keep_original {
-        let dir = lib.abs(ORIGINALS);
-        std::fs::create_dir_all(&dir)?;
-        let name = rel_path.rsplit('/').next().unwrap_or(rel_path);
-        let mut dest = dir.join(name);
-        // Never clobber an original already kept for a different photo.
-        let mut n = 2;
-        while dest.exists() {
-            let (stem, ext) = name.rsplit_once('.').unwrap_or((name, "jpg"));
-            dest = dir.join(format!("{stem}_{n}.{ext}"));
-            n += 1;
-        }
-        std::fs::rename(&src, &dest).with_context(|| "moving the original aside")?;
-        original = lib.rel(&dest);
-    }
+    let original = if edit.keep_original { keep_original(lib, rel_path)? } else { None };
 
     // Write beside the target and swap, so a failure never leaves a truncated photo
     // where the original used to be.
@@ -264,12 +296,43 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
         .with_context(|| "writing the edited image")?;
     std::fs::rename(&tmp, &src).with_context(|| "replacing the photo")?;
 
-    Ok(Applied { original, width, height })
+    Ok(Applied { original, width, height, hash: crate::scan::hash_file(&src)? })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window carries the same five presets, in the units its sliders use
+    /// (-100..100 against the core's -1..1). Drift between the two would mean "Warm"
+    /// did one thing in the editor and another in a batch, so the two lists are
+    /// checked against each other rather than kept in step by hand.
+    #[test]
+    fn the_window_and_the_core_agree_on_what_a_preset_means() {
+        let js = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/desktop/dist/app.js");
+        let src = std::fs::read_to_string(&js)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", js.display()));
+        let flat: String = src.chars().filter(|c| !c.is_whitespace()).collect();
+        for (name, a) in PRESETS {
+            let want = format!(
+                "[\"{name}\",{{brightness:{},contrast:{},saturation:{}}}]",
+                (a.brightness * 100.0).round() as i32,
+                (a.contrast * 100.0).round() as i32,
+                (a.saturation * 100.0).round() as i32,
+            );
+            assert!(flat.contains(&want), "app.js is missing or disagrees on {want}");
+        }
+    }
+
+    #[test]
+    fn a_preset_is_found_however_it_is_typed() {
+        assert_eq!(Adjust::preset("mono"), Adjust::preset("Mono"));
+        assert_eq!(Adjust::preset(" WARM "), Adjust::preset("Warm"));
+        assert!(Adjust::preset("sepia").is_none());
+        // Every preset must actually do something, or it is a button that lies.
+        assert!(PRESETS.iter().all(|(_, a)| !a.is_neutral()));
+    }
 
     fn edit(rotate: Rotate) -> Edit {
         Edit {

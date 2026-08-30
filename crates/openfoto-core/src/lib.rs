@@ -21,6 +21,7 @@ pub mod imagesig;
 pub mod index;
 pub mod journal;
 pub mod library;
+pub mod metadata;
 pub mod plan;
 pub mod progress;
 pub mod rename;

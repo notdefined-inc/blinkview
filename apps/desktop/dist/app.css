@@ -978,3 +978,5 @@ body.dropping::after{
 .fopt[disabled]{opacity:.4;cursor:default}
 .qc-wide{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 32%,transparent);
   background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.presets{display:flex;gap:var(--s1);align-items:center}
+.fopt.sm{padding:3px var(--s2);font-size:12px}

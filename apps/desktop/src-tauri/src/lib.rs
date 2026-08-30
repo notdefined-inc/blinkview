@@ -1655,6 +1655,12 @@ pub struct PhotoDetail {
     people: Vec<String>,
     meta: PhotoMeta,
     hash: String,
+    /// What the file says about how it was taken. Absent fields are genuinely absent —
+    /// a screenshot has none of them, and anything through a messaging app has been
+    /// stripped already.
+    exif: openfoto_core::metadata::Exif,
+    /// Whether openfoto could remove that record without re-encoding the pixels.
+    strippable: bool,
 }
 
 #[tauri::command]
@@ -1695,6 +1701,8 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             faces,
             people,
             meta: lib.user_data()?.get(&hash, folder_of(&row.path)),
+            exif: openfoto_core::metadata::read(&lib.abs(&row.path)),
+            strippable: openfoto_core::metadata::strippable(&lib.abs(&row.path)),
             hash,
         })
     })
@@ -1725,10 +1733,130 @@ async fn edit_photo(
         // The file changed, so its hash did: re-scan to re-identify it, and drop the
         // stale thumbnail and face data keyed to the old content.
         let _ = std::fs::remove_file(thumbs::thumb_path(lib, &hash));
+        // Ratings and labels are keyed by that hash too (ADR-0007), so they have to be
+        // carried across or editing a five-star photograph silently unrates it.
+        carry_metadata(lib, &[(folder_of(&row.path).to_string(), hash.clone(), out.hash.clone())])?;
         scan::scan(lib, false)?;
         Ok(match out.original {
             Some(o) => format!("Saved {}x{} · original kept in {}", out.width, out.height, o),
             None => format!("Saved {}x{} · original not kept", out.width, out.height),
+        })
+    })
+}
+
+/// Move ratings and labels onto the hashes rewritten files now have.
+///
+/// One load and one save for the whole batch: `UserDataSet::load` walks the tree, which
+/// was measured at 100 ms on a phone backup and is not something to do per photograph.
+fn carry_metadata(lib: &mut Library, moves: &[(String, String, String)]) -> anyhow::Result<()> {
+    if moves.iter().all(|(_, from, to)| from == to) {
+        return Ok(());
+    }
+    let mut set = UserDataSet::load(lib.root())?;
+    let mut touched = false;
+    for (folder, from, to) in moves {
+        touched |= set.rekey(folder, from, to);
+    }
+    if touched {
+        set.save(lib.root())?;
+        lib.invalidate_user_data();
+    }
+    Ok(())
+}
+
+/// Apply one edit to many photographs.
+///
+/// `keep_original` matters more here than it does for a single photograph, because a
+/// batch multiplies a mistake: forty files changed at once are forty to put back. It
+/// defaults to true exactly as the single-photograph path does.
+///
+/// One rescan at the end rather than one per file: every edit changes the content
+/// hash, and re-identifying the library forty times over would cost more than the
+/// edits.
+#[tauri::command]
+async fn edit_photos(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    edit: openfoto_core::edit::Edit,
+) -> R<String> {
+    let sink = emitter(&app, "edit", &path);
+    with(&state, &path, |lib| {
+        let by_hash: BTreeMap<String, String> = lib
+            .index
+            .all()?
+            .into_iter()
+            .map(|r| (r.hash, r.path))
+            .collect();
+        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let (mut done, mut failed, mut carried) = (0usize, Vec::new(), Vec::new());
+        for h in &hashes {
+            counter.tick();
+            let Some(rel) = by_hash.get(h) else { continue };
+            match openfoto_core::edit::apply(lib, rel, &edit) {
+                Ok(out) => {
+                    // The content changed, so the thumbnail keyed to the old bytes is
+                    // now a picture of something that no longer exists.
+                    let _ = std::fs::remove_file(thumbs::thumb_path(lib, h));
+                    carried.push((folder_of(rel).to_string(), h.clone(), out.hash));
+                    done += 1;
+                }
+                // One unreadable file must not abandon the other thirty-nine.
+                Err(e) => failed.push(format!("{rel}: {e}")),
+            }
+        }
+        carry_metadata(lib, &carried)?;
+        scan::scan(lib, false)?;
+        Ok(match failed.len() {
+            0 => format!("{done} changed"),
+            k => format!("{done} changed · {k} could not be read"),
+        })
+    })
+}
+
+/// Remove what photographs say about how they were taken.
+///
+/// Keeps the original by default (ADR-0015): `taken_at` comes from EXIF first
+/// (ADR-0003), so a stripped photograph falls back to its filename or its mtime for a
+/// date, and that is not something to do to someone's library without a way back.
+#[tauri::command]
+async fn strip_metadata(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    keep_original: Option<bool>,
+) -> R<String> {
+    let keep = keep_original != Some(false);
+    let sink = emitter(&app, "strip", &path);
+    with(&state, &path, |lib| {
+        let by_hash: BTreeMap<String, String> = lib
+            .index
+            .all()?
+            .into_iter()
+            .map(|r| (r.hash, r.path))
+            .collect();
+        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
+        for h in &hashes {
+            counter.tick();
+            let Some(rel) = by_hash.get(h) else { continue };
+            match openfoto_core::metadata::strip_file(lib, rel, keep) {
+                Ok(out) => {
+                    let _ = std::fs::remove_file(thumbs::thumb_path(lib, h));
+                    carried.push((folder_of(rel).to_string(), h.clone(), out.hash));
+                    done += 1;
+                }
+                Err(e) => refused.push(e.to_string()),
+            }
+        }
+        carry_metadata(lib, &carried)?;
+        scan::scan(lib, false)?;
+        let kept = if keep && done > 0 { " · originals kept in Originals/" } else { "" };
+        Ok(match refused.first() {
+            None => format!("{done} stripped{kept}"),
+            Some(why) => format!("{done} stripped{kept} · {} left alone — {why}", refused.len()),
         })
     })
 }
@@ -2581,7 +2709,7 @@ pub fn run() {
             delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
             models_status, models_fetch,
             people_overview, name_cluster, cluster_photos, autodetect_faces,
-            edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
+            edit_photo, edit_photos, strip_metadata, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,
             folder_view, set_folder_view,

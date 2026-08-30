@@ -30,7 +30,8 @@ global database — that is the whole premise (ADR-0001).
 ## What lives where
 
     <library>/
-      openfoto.json          ratings, labels, albums      user-authored
+      openfoto.json          ratings, labels, how the
+                             folder is arranged           user-authored
       openfoto-people.json   names + reference faces      user-authored
       Trash/  Originals/     deleted and pre-edit photos  visible, journalled
       .openfoto/             index, thumbs, faces, …      100% derived, disposable
@@ -51,6 +52,22 @@ without qualification. See ADR-0007.
         people.json         identity names + reference embeddings
 
 Rationale in docs/DECISIONS/ADR-0001-vault-format.md.
+
+## Rewriting a photograph
+
+Editing and metadata stripping are the only operations that change a photograph's bytes
+rather than its name or its folder. Both keep the untouched original in the visible
+`Originals/` folder (ADR-0006, ADR-0015), and both go through `edit::keep_original` so
+the collision-avoiding rule lives in one place.
+
+Both also change the file's **content hash**, which is what ratings, labels and album
+membership are keyed by (ADR-0007). Any such operation therefore has to carry that
+metadata onto the new hash with `UserDataSet::rekey` — the alternative, discovered by
+writing ADR-0015, is that a five-star photograph comes back unrated.
+
+Stripping is a segment rewrite, not a re-encode: `metadata::strip` copies the
+entropy-coded image data through untouched, so the pixels are bit-identical and only
+the records of make, model, exposure and location are dropped.
 
 ## Image formats
 

@@ -185,6 +185,9 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
 
   <div class="adjustbar" id="adjustbar" hidden>
     <span class="croplabel">Adjust</span>
+    <!-- Presets are starting points, not modes: each one only sets the three sliders,
+         which stay editable afterwards. -->
+    <div class="presets" id="adj-presets"></div>
     <label class="slider"><span>☀</span>
       <input type="range" id="adj-brightness" min="-100" max="100" step="1" value="0">
       <span class="sval num" id="adj-brightness-val">0</span></label>

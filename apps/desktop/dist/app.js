@@ -774,6 +774,8 @@ function showCtx(x, y) {
   if (S.person) items.push(item(`Not ${S.person}`, "", untagSelected));
   items.push(el("hr"));
   items.push(item(`Move ${n} to\u2026`, "", moveSelectedPrompt));
+  items.push(item(`Colour ${n}\u2026`, "", colourSelectedPrompt));
+  items.push(item(`Strip metadata from ${n}\u2026`, "", stripSelectedPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
   else {
@@ -792,6 +794,61 @@ function showCtx(x, y) {
 function hideCtx() { $("#ctx").hidden = true; }
 
 /* ---------------- editing ---------------- */
+/** Apply one colour preset to everything selected.
+    The preview is the preset's own name and what it does — there is no per-photograph
+    preview, because forty previews is not a preview. The originals are kept, which is
+    what makes the batch safe to try. */
+async function colourSelectedPrompt() {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  const chosen = await new Promise(resolve => {
+    let d;
+    d = dialogFrame(`Colour ${hashes.length} photograph${hashes.length === 1 ? "" : "s"}`, [
+      el("p", { class: "asktext" },
+        "Each original is kept in Originals/, so this can be undone by hand if it is wrong."),
+      el("div", { class: "movepicks" }, PRESETS.map(([name, vals]) =>
+        el("button", { class: "sugg-pill", onclick: () => d.done(vals) }, name))),
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel")),
+    ]);
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+  });
+  if (!chosen) return;
+  const msg = await busy(`Colouring ${hashes.length}\u2026`, () => invoke("edit_photos", {
+    path: S.source, hashes,
+    edit: {
+      rotate: "none", straighten: 0, flip_h: false, flip_v: false, crop: null,
+      keep_original: true,
+      adjust: {
+        brightness: chosen.brightness / 100,
+        contrast: chosen.contrast / 100,
+        saturation: chosen.saturation / 100,
+      },
+    },
+  }), S.source);
+  toast(msg, "ok");
+  clearSel(); await refreshSources(); await loadPhotos();
+}
+
+/** Remove what the selected photographs say about how they were taken. */
+async function stripSelectedPrompt() {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  const ok = await confirmDialog(
+    `Strip metadata from ${hashes.length} photograph${hashes.length === 1 ? "" : "s"}?`,
+    "Camera, lens, exposure and any location are removed. The pixels are untouched — " +
+    "nothing is re-encoded — and each original is kept in Originals/, because the date " +
+    "openfoto sorts by comes from that metadata. Videos and HEIC are left alone.",
+    "Strip");
+  if (!ok) return;
+  const msg = await busy(`Stripping ${hashes.length}\u2026`,
+    () => invoke("strip_metadata", { path: S.source, hashes }), S.source);
+  toast(msg, "ok");
+  clearSel(); await refreshSources(); await loadPhotos();
+}
+
 /** Delete somewhere other than Trash. Still a journalled move inside the library, so
     ⌘Z reverses it exactly as the Trash route does. */
 async function deleteSelectedTo() {
@@ -2724,6 +2781,13 @@ async function toggleInfo() {
     row("Taken", d.taken_at ? `${DAY(d.taken_at)} · ${TIME(d.taken_at)}` : "Unknown"),
     row("Date from", d.taken_from),
     row("Kind", d.kind),
+    row("Camera", d.exif?.camera),
+    row("Lens", d.exif?.lens),
+    row("Exposure", [d.exif?.exposure, d.exif?.aperture, d.exif?.focal].filter(Boolean).join(" · ") || null),
+    row("ISO", d.exif?.iso),
+    // "Does this say where I live" is the question people actually have, so it is
+    // answered either way rather than only when there is something to report.
+    row("Location", d.exif?.gps || (d.exif?.present ? "not recorded" : null)),
     row("Faces", d.faces || null),
     // Face entries with no name yet come back as nulls; joining them raw prints
     // "null, null" — count the nulls as nobody and keep the row for real names.
@@ -2731,6 +2795,13 @@ async function toggleInfo() {
     row("Rating", d.meta.rating ? "\u2605".repeat(d.meta.rating) : null),
     row("Label", d.meta.label),
     row("Albums", (d.meta.albums || []).join(", ") || null),
+    // Offered where the metadata is being read, which is where someone decides they
+    // would rather not send it to anybody.
+    d.strippable && d.exif?.present
+      ? el("button", { class: "btn ghost sm", style: "margin-top:var(--s3)",
+          onclick: () => { S.sel.clear(); S.sel.add(d.hash); paintSel(); stripSelectedPrompt(); } },
+          "Strip metadata\u2026")
+      : null,
   ].filter(Boolean));
   panel.hidden = false;
 }
@@ -2809,6 +2880,31 @@ $("#lb-adjust").onclick = () => {
   bar.hidden = !bar.hidden;
   if (!bar.hidden && S.cropping) endCrop(true);
 };
+/* The same five the core defines, in the units the sliders use (core works in -1..1,
+   the sliders in -100..100). Kept in step by the test in edit.rs that asserts the two
+   lists match. */
+const PRESETS = [
+  ["Mono",  { brightness: 0,  contrast: 12,  saturation: -100 }],
+  ["Warm",  { brightness: 4,  contrast: 6,   saturation: 18 }],
+  ["Cool",  { brightness: 2,  contrast: 8,   saturation: -12 }],
+  ["Punch", { brightness: 0,  contrast: 28,  saturation: 30 }],
+  ["Faded", { brightness: 8,  contrast: -18, saturation: -22 }],
+];
+
+function applyPreset(vals) {
+  const e = editState();
+  for (const k of ["brightness", "contrast", "saturation"]) {
+    e[k] = vals[k];
+    $(`#adj-${k}`).value = String(vals[k]);
+    $(`#adj-${k}-val`).textContent = String(vals[k]);
+  }
+  applyEditPreview();
+}
+
+$("#adj-presets").replaceChildren(...PRESETS.map(([name, vals]) =>
+  el("button", { class: "fopt sm", title: `Start from ${name}`,
+    onclick: () => applyPreset(vals) }, name)));
+
 $("#adj-done").onclick = () => ($("#adjustbar").hidden = true);
 $("#adj-reset").onclick = () => {
   const e = editState();

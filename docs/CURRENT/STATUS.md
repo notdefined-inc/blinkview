@@ -53,9 +53,31 @@ both survive. Libraries written by an earlier version are migrated when opened.
 
 ### Editing
 Rotate, flip, straighten (with auto-trim of the blank corners), crop with handles and
-aspect presets, and brightness/contrast/saturation. Nothing is written until Save, which
-asks whether to keep the original — keeping it is the default and moves the untouched
-file to a visible `Originals/` folder. See ADR-0006.
+aspect presets (the crop reports the pixel size that will actually be written, live as
+it is dragged), and brightness/contrast/saturation. Five named presets — Mono, Warm,
+Cool, Punch, Faded — are starting points rather than modes: each only sets the three
+sliders, which stay editable. They are defined in core, and a test reads `app.js` to
+assert the window agrees, so "Warm" cannot come to mean two things.
+
+A whole selection can be coloured at once from the context menu. Nothing is written
+until Save, which asks whether to keep the original — keeping it is the default and
+moves the untouched file to a visible `Originals/` folder. See ADR-0006.
+
+**Metadata can be read and removed.** The info panel shows camera, lens, exposure, ISO
+and whether there are coordinates in the file, because "does this say where I live" is
+the question people actually have. Stripping removes EXIF, XMP, IPTC, maker notes and
+comments while keeping JFIF, ICC colour profiles and Adobe's colour marker — those
+decide how the photograph looks, and stripping metadata is not meant to change the
+colours. It is a segment rewrite, never a re-encode: the entropy-coded scan data is
+copied byte for byte, so the decoded pixels are bit-identical (verified). HEIC and video
+are refused by name. The original is kept by default, because `taken_at` comes from EXIF
+(ADR-0003) and a stripped photograph falls back to its filename or mtime for a date —
+see ADR-0015.
+
+Anything that rewrites a photograph changes its content hash, and ratings and labels are
+keyed by that hash (ADR-0007), so they are carried across explicitly. Until 2026-08-30
+they were not: editing silently discarded the rating, the label and any album
+membership, and had done since editing existed. ADR-0015 has the account.
 
 ### Formats
 JPEG, PNG and **HEIC** for photos; MP4/MOV/M4V for video. HEIC is transcoded by macOS
@@ -122,6 +144,11 @@ interior, "green trees" finds foliage, "a laptop computer" finds the desk shots.
 combines with everything else: `a church sam 18 august 2026` intersects scene, person
 and date.
 
+⌘F focuses the field — there is no separate finder, because the field already matches
+filename and path. A query is ANDed with the folder you are standing in, which is what
+makes it a filter rather than a jump; when that hides matches, a chip counts them
+("2 elsewhere — search all of lib") and clears the narrowing in one click.
+
 Below the 0.18 threshold a query returns nothing rather than the least-bad photograph;
 "the sea" against a library with no sea is answered "nothing recognised". A library
 that has not been embedded yet offers **Understand these photos** in place of silence,
@@ -173,6 +200,20 @@ without any app at all — and cross-cutting views are saved searches.
 Selecting a folder shows everything beneath it. The sidebar is a tree with recursive
 counts and remembered expansion; the grid can section by subfolder as well as by date,
 so standing in `Trip` gives `Greece Day1`, `Greece Day2` and `Swiss Day1` in one scroll.
+A ＋ on the Folders heading makes an empty folder inside the selected one — folders are
+the only grouping there is, so making one before there is anything to put in it is how
+you say where things are going to go. Empty folders are listed from disk, since a tree
+derived from the index cannot see them.
+
+**Each folder remembers how it is arranged.** The sort — newest, oldest, name, rating,
+size, or a custom order you drag by hand — lives in that folder's own `openfoto.json`,
+beside the ratings of the photographs it holds, so it survives a relaunch and travels
+with the folder when it is copied in Finder. It is read from that folder alone and
+never inherited: an arrangement is about the folder, unlike a rating, which is about a
+photograph. A custom arrangement draws as one run, because grouping it by day would
+re-sort what was placed by hand, and photographs added later fall in at the end rather
+than vanishing. Arranging is offered only over a whole folder, never a search result or
+a person — there is nowhere honest to record the order of a slice of several folders.
 
 A library that still has albums is offered a migration: each album becomes a folder,
 previewed first and undoable afterwards. Album names were free text and folder names are
@@ -584,12 +625,25 @@ face alone, which is the intended bias. Reproduce with
   produced by a semi-automatic process.
 - Candidate generation in `dedupe` is O(n^2) over dHash. Fine to ~10k photos; a
   100k-photo library needs a BK-tree or LSH bucket step.
-- `rename` rewrites the whole library in one plan; no per-folder scoping yet.
+- `rename` has no find-and-replace or case conversion: one date-and-counter pattern,
+  previewed before it runs. Scope and pattern are both settable now.
 - Rollback on a partly-applied plan is best-effort: if the reverse move also fails
   (disk full, volume unmounted), the library is left mid-plan. The journal records
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 A pass over the things a photo manager is expected to have. ⌘F focuses the
+  search field, and a chip says how many matches the current folder is hiding. Every
+  folder remembers its sort, including a custom order dragged by hand, in its own
+  `openfoto.json`. Folders can be made from the sidebar. Deleting can go to a folder of
+  your choosing rather than only `Trash/`. Bulk rename takes a pattern and a scope — the
+  selection, or the folder you are in — with `%%n` numbering in capture order. Colour
+  presets apply to one photograph or a whole selection. Metadata is readable in the info
+  panel and removable without re-encoding a single pixel. Specs:
+  docs/SPECS/done/2026-08-30-{finding-and-arranging,organising-files,colour-and-metadata}.md.
+  Along the way this found and fixed a silent data loss: **every in-place rewrite
+  discarded the photograph's rating and label**, because they are keyed by content hash
+  and the hash changes — true of editing since editing shipped (ADR-0015).
 - 2026-08-30 Deleting reads honestly. Three faults, one symptom — the numbers not
   moving. The Trash row and the folder counts only refreshed on the next click of the
   source, because `deleteSelected` was the one mutation path that reloaded the grid

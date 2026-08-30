@@ -269,6 +269,32 @@ impl UserDataSet {
         true
     }
 
+    /// Carry a photograph's metadata onto a new content hash.
+    ///
+    /// Editing and stripping rewrite the file, which changes the hash everything here
+    /// is keyed by. Without this, applying a preset to a five-star photograph silently
+    /// unrates it — the rating is still on disk, attached to bytes that no longer
+    /// exist anywhere.
+    pub fn rekey(&mut self, folder: &str, from: &str, to: &str) -> bool {
+        if from == to {
+            return false;
+        }
+        let meta = self.get(from, folder);
+        if meta.is_empty() {
+            return false;
+        }
+        if let Some(u) = self.by_folder.get_mut(folder) {
+            u.photos.remove(from);
+        }
+        self.by_folder
+            .entry(folder.to_string())
+            .or_default()
+            .photos
+            .insert(to.to_string(), meta);
+        self.dirty.insert(folder.to_string());
+        true
+    }
+
     /// Write back only the folders that changed.
     pub fn save(&mut self, root: &Path) -> Result<()> {
         for folder in std::mem::take(&mut self.dirty) {
@@ -566,6 +592,28 @@ mod tests {
         let set = UserDataSet::load(d.path()).unwrap();
         // Photograph is two levels down; the root is the outermost cascade level.
         assert_eq!(set.get("h", "Trip/Greece Day3").rating, 3);
+    }
+
+    #[test]
+    fn a_rewritten_photograph_keeps_its_rating() {
+        // Editing and stripping change the bytes, and so the hash. The rating must
+        // follow the photograph rather than staying with bytes that are gone.
+        let d = Tmp::new("rekey");
+        std::fs::create_dir_all(d.path().join("Trip")).unwrap();
+        let mut set = UserDataSet::default();
+        set.edit("old", "Trip", |u| { u.set_rating("old", 5); u.set_label("old", Some("red".into())); });
+        assert!(set.rekey("Trip", "old", "new"));
+        set.save(d.path()).unwrap();
+
+        let read = UserDataSet::load(d.path()).unwrap();
+        assert_eq!(read.get("new", "Trip").rating, 5);
+        assert_eq!(read.get("new", "Trip").label.as_deref(), Some("red"));
+        // Nothing is left behind under the hash that no longer exists.
+        assert_eq!(read.get("old", "Trip").rating, 0);
+        // An unrated photograph has nothing to carry, and says so rather than
+        // writing an empty entry under the new hash.
+        let mut empty = UserDataSet::default();
+        assert!(!empty.rekey("Trip", "nothing", "else"));
     }
 
     #[test]
