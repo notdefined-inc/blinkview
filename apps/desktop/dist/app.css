@@ -969,43 +969,6 @@ body.dropping::after{
 :root[data-theme="light"] #btn-theme .th-sun{display:block}
 :root[data-theme="light"] #btn-theme .th-moon{display:none}
 
-/* ---------------- Find (⌘F) ----------------
-   Aligned high rather than centred, like every command palette: the list grows
-   downward and the field stays under the eye as it does. */
-.find{align-items:start;padding-top:12vh}
-.find-panel{
-  width:min(640px,92vw);max-height:70vh;display:flex;flex-direction:column;
-  background:var(--glass-3);backdrop-filter:saturate(180%) blur(32px);
-  -webkit-backdrop-filter:saturate(180%) blur(32px);
-  border:1px solid var(--stroke);border-radius:var(--r-xl);
-  box-shadow:var(--shadow-sheet);overflow:hidden;
-}
-.find-head{display:flex;align-items:center;gap:var(--s3);
-  padding:var(--s4);border-bottom:1px solid var(--stroke)}
-.find-ico{color:var(--ink-faint);font-size:16px;line-height:1}
-.find-input{flex:1;min-width:0;background:none;border:0;outline:none;
-  color:var(--ink);font:16px/1.5 inherit}
-.find-input::placeholder{color:var(--ink-faint)}
-.find-count{color:var(--ink-faint);font-size:12px}
-.find-list{overflow:auto;padding:var(--s2);flex:1}
-.find-row{display:flex;align-items:center;gap:var(--s3);width:100%;
-  padding:var(--s2) var(--s3);border:0;background:none;color:var(--ink);
-  text-align:left;border-radius:var(--r);cursor:pointer}
-.find-row:hover{background:rgba(255,255,255,.05)}
-.find-row[aria-selected="true"]{background:var(--accent);color:var(--accent-ink)}
-.find-row[aria-selected="true"] .find-sub{color:var(--accent-ink);opacity:.7}
-.find-thumb{width:36px;height:36px;flex:none;border-radius:var(--r);
-  object-fit:cover;background:var(--glass-1)}
-.find-name{flex:1;min-width:0;font-size:14px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.find-sub{max-width:42%;color:var(--ink-faint);font-size:12px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.find-empty{padding:var(--s6);text-align:center;color:var(--ink-faint);font-size:13px}
-.find-foot{display:flex;gap:var(--s4);flex-wrap:wrap;
-  padding:var(--s2) var(--s4);border-top:1px solid var(--stroke);
-  color:var(--ink-faint);font-size:12px}
-:root[data-theme="light"] .find-row:hover{background:rgba(23,23,45,.05)}
-
 /* Arranging a folder by hand. The cell is what drags — the image inside carries
    -webkit-user-drag:none so the OS does not read a pan as a file drag. */
 .cell[draggable="true"]{-webkit-user-drag:element}
@@ -1013,3 +976,5 @@ body.dropping::after{
 .cell.dropbefore{box-shadow:inset 3px 0 0 var(--accent)}
 .cell.dropafter{box-shadow:inset -3px 0 0 var(--accent)}
 .fopt[disabled]{opacity:.4;cursor:default}
+.qc-wide{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 32%,transparent);
+  background:color-mix(in srgb,var(--accent) 10%,transparent)}

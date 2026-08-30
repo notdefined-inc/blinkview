@@ -19,15 +19,19 @@ one goes first" at all.
 - Sorting stays client-side; no index changes.
 
 ## Design
-**Find (⌘F)** is a modal over the grid. It matches every word, case-insensitively,
-against `name` and `folder` of `S.photos` — the whole library, not the selected folder,
-because "where is that file" is a library-wide question. Rows show thumbnail, name and
-folder; ↑/↓ move, Enter opens the lightbox, ⇧Enter reveals the photograph in the grid
-(selecting its folder and scrolling to it), Esc closes. Capped at 300 rows: past that
-the answer is to type more, not to scroll.
+**Find (⌘F)** focuses the search field. The field already matches filename and path
+(`matchesQuery`), so a second surface for typing a name was a duplicate — a finder
+modal was built first and removed on review for exactly that reason.
 
-Rejected: extending the omnibar with a `file:` prefix — it keeps the parse ambiguity
-that made a dedicated modal worth having, and gives no result list to arrow through.
+What the field could not do was look outside where you are standing: a query is ANDed
+with the selected folder, so searching for a file from another folder answered
+"nothing" while the file sat in the library. So the chip row gains one chip when a
+query matches photographs the current folder or person is hiding — *"2 elsewhere —
+search all of lib"* — which clears the narrowing and keeps the query.
+
+Rejected: making search always library-wide. Filtering the folder you are looking at
+is the common case and the reason the field is ANDed with it; the fix is to say what
+is being hidden, not to stop hiding it.
 
 **Per-folder view** lives in that folder's own `openfoto.json`, beside the ratings of
 the photographs it holds (ADR-0010). A folder describing how it is arranged is the same
@@ -47,14 +51,12 @@ active switches that folder to `custom`, seeded from what is on screen, so the f
 drag never scrambles the rest.
 
 ## Acceptance criteria
-1. ⌘F (and Ctrl+F) opens the modal with the field focused; Esc closes it and returns
-   focus to the grid.
-2. Typing `img_2` lists only photographs whose filename or folder contains `img_2`,
-   from anywhere in the library, including folders that are not selected.
-3. Two words match a photograph only if both appear ("day1 jpg" matches
-   `Trip/Day1/a.jpg`, "day1 zzz" matches nothing).
-4. ↑/↓ move the highlight without leaving the field; Enter opens the highlighted
-   photograph in the lightbox; ⇧Enter selects its folder and scrolls it into view.
+1. ⌘F (and Ctrl+F) focuses and selects the search field, from anywhere including
+   another field.
+2. A query that matches nothing in the selected folder, but something outside it,
+   shows a chip counting the matches elsewhere.
+3. Clicking that chip clears the folder and person, keeps the query, and shows them.
+4. With nothing hidden by the current view, no chip appears.
 5. A folder with no `view` sorts newest-first, as today.
 6. Changing the sort while a folder is selected writes `view.sort` to that folder's
    `openfoto.json`, and reopening the folder — or relaunching — restores it.
@@ -77,11 +79,11 @@ drag never scrambles the rest.
 ## Verification notes
 Driven in the running app against a seven-photograph fixture (root + `Day1`):
 
-- `dsc` from the library root listed both `Day1` files — library-wide, not the
-  selected folder. `day1 img` matched only `IMG_9999.jpg`; `day1 zzz` matched nothing.
-- ↑/↓ moved the highlight 0→1→2→1 with focus never leaving the field. Enter opened
-  `DSC_0001.jpg` and → stepped to `DSC_0002.jpg`. ⇧Enter switched the view to
-  `lib › Day1`, selected `IMG_9999.jpg` and scrolled to it.
+- ⌘F focused the search field (`document.activeElement` = `search`).
+- Standing in `Day1`, searching `beach` — a file at the library root — showed 0 in the
+  folder and the chip *"1 elsewhere — search all of lib"*. Clicking it gave
+  `lib · 1 photos` holding `beach.jpg`, and the chip went away because nothing was
+  hidden any more.
 - Setting Day1 to Name wrote `{"view":{"sort":"name"}}` to `Day1/openfoto.json` and
   left the root with **no file at all** — no inheritance, no litter. Leaving Day1 gave
   Newest; re-entering restored Name.
@@ -95,6 +97,6 @@ Driven in the running app against a seven-photograph fixture (root + `Day1`):
 
 Not verified: the literal ⌘F keystroke. Neither the MCP keyboard bridge nor
 `osascript` can deliver a modified keystroke to the window here (Accessibility
-permission), so the handler was driven with a synthetic `keydown` carrying
-`metaKey` — modal opens, field focused, event `defaultPrevented`. The app installs no
-menu, so nothing claims ⌘F ahead of the page.
+permission), so the handler was driven with a synthetic `keydown` carrying `metaKey`
+— the field takes focus and the event is `defaultPrevented`. The app installs no menu,
+so nothing claims ⌘F ahead of the page.

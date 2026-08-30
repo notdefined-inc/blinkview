@@ -47,6 +47,7 @@ const S = {
   expanded: null,
   sort: "newest",
   order: [],               // custom arrangement of the selected folder, by hash
+  elsewhere: 0,            // query matches hidden by the current folder or person
   group: "date",           // "date" or "folder" — how the grid sections itself
   photos: [],
   view: [],              // filtered/sorted photos currently on screen
@@ -1560,11 +1561,31 @@ function showQueryChips(parsed) {
     b.onclick = c.act;
     return b;
   });
+  // The answer to "I searched and got nothing" is usually "you are standing in a
+  // folder". Say how many the query finds outside it, and offer the one click.
+  if (S.elsewhere > 0) {
+    chips.push(el("button", { class: "qc qc-wide", type: "button",
+      title: "Clear the folder and search the whole library",
+      onclick: widenSearch },
+      `${S.elsewhere} elsewhere \u2014 search all of ${
+        S.sources.find(s => s.path === S.source)?.name || "the library"}`));
+  }
   // Keeping a query is the replacement for making an album, so the offer belongs
   // where the query itself is shown.
   chips.push(el("button", { class: "qc qc-save", type: "button",
     title: "Keep this search in the sidebar", onclick: saveSearchPrompt }, "\u2606 Save"));
   bar.replaceChildren(...chips);
+}
+
+/** Drop whatever is narrowing the view, keeping the query. */
+async function widenSearch() {
+  S.folder = null; S.person = null;
+  S.cluster = null; S.clusterHashes = null;
+  S.resetScroll = true;
+  renderSidebar();
+  await loadFolderView();
+  renderFilters();
+  applyFilter();
 }
 
 function matchesQuery(p, parsed) {
@@ -1611,7 +1632,6 @@ function applyFilter() {
     ? parseQuery(q, S.people.filter(p => p.name).map(p => p.name), S.albums.map(a => a[0]))
     : null;
   scheduleSemantic(parsed && parsed.text.length ? parsed.text.join(" ") : null);
-  showQueryChips(parsed);
   S.view = S.photos.filter(p =>
     // Trash is a real folder, but it should not appear in the library view unless
     // the user deliberately opens it.
@@ -1621,6 +1641,15 @@ function applyFilter() {
     (!S.clusterHashes || S.clusterHashes.has(p.hash)) &&
     (!parsed || matchesQuery(p, parsed)));
   sortView();
+  // Searching inside a folder can hide the very file being looked for: it is in the
+  // library, just not here. Rather than answering "nothing", count what the same query
+  // finds outside this folder so the chip can offer to widen.
+  const narrowed = (S.folder && S.folder !== TRASH) || S.person || S.cluster !== null;
+  S.elsewhere = parsed && narrowed
+    ? Math.max(0, S.photos.filter(p => p.folder !== TRASH && matchesQuery(p, parsed)).length
+                  - S.view.length)
+    : 0;
+  showQueryChips(parsed);
   const src = S.sources.find(s => s.path === S.source);
   $("#crumb").textContent = [
     src?.name, S.folder,
@@ -2598,129 +2627,6 @@ async function toggleInfo() {
   panel.hidden = false;
 }
 
-/* ---------------- find (⌘F) ----------------
-   A file finder, deliberately separate from the omnibar. The omnibar parses a query —
-   dates, people, ratings, what a photograph shows — which is the right tool for "what
-   am I looking for" and the wrong one for "where did IMG_2431 go". This matches
-   literal filename and path, across the whole library rather than the selected folder,
-   because that is the question being asked. */
-
-const FIND_MAX = 300;
-let findHits = [], findAt = 0;
-
-function openFind() {
-  if (!S.source) return toast("Add a folder first");
-  $("#find").hidden = false;
-  const input = $("#find-input");
-  input.select();
-  input.focus();
-  runFind();
-}
-
-function closeFind() {
-  $("#find").hidden = true;
-}
-
-/** Every term must appear in the path, so a second word narrows rather than widens. */
-function findMatches(q) {
-  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!terms.length) return [];
-  return S.photos.filter(p => {
-    const hay = p.path.toLowerCase();
-    return terms.every(t => hay.includes(t));
-  });
-}
-
-function runFind() {
-  const q = $("#find-input").value.trim();
-  const all = findMatches(q);
-  findHits = all.slice(0, FIND_MAX);
-  findAt = 0;
-  // Past the cap the answer is to type more, not to scroll — so say how many were
-  // left out rather than pretending the list is all of them.
-  $("#find-count").textContent = !q ? ""
-    : all.length > FIND_MAX ? `${FIND_MAX} of ${all.length}`
-    : String(all.length);
-  renderFind();
-}
-
-function renderFind() {
-  const list = $("#find-list");
-  if (!findHits.length) {
-    list.replaceChildren(el("div", { class: "find-empty" },
-      $("#find-input").value.trim()
-        ? "No file with that in its name or folder."
-        : "Type part of a filename or a folder."));
-    return;
-  }
-  list.replaceChildren(...findHits.map((p, i) => el("button", {
-    class: "find-row", role: "option", "aria-selected": String(i === findAt),
-    onclick: e => { findAt = i; e.shiftKey ? revealFind() : openFindHit(); },
-  },
-    el("img", { class: "find-thumb", src: photoUrl(p.path) + "?t=" + p.hash,
-      alt: "", loading: "lazy", decoding: "async" }),
-    el("span", { class: "find-name" }, p.name),
-    el("span", { class: "find-sub" }, p.folder || "library root"))));
-  list.children[findAt]?.scrollIntoView({ block: "nearest" });
-}
-
-function moveFind(d) {
-  if (!findHits.length) return;
-  findAt = Math.max(0, Math.min(findHits.length - 1, findAt + d));
-  renderFind();
-}
-
-/** Open the highlighted match, stepping through the matches rather than the grid
-    behind them: the list you were looking at is the list the arrows should walk. */
-function openFindHit() {
-  const p = findHits[findAt];
-  if (!p) return;
-  closeFind();
-  S.lbScope = "view";
-  openViewer(findHits.slice(), findAt);
-}
-
-/** Show the highlighted match where it lives, selected and scrolled to. */
-async function revealFind() {
-  const p = findHits[findAt];
-  if (!p) return;
-  closeFind();
-  // A query in the omnibar could be hiding the very file just found, so revealing it
-  // means clearing whatever was filtering it out.
-  $("#search").value = "";
-  syncClear();
-  S.person = null; S.cluster = null; S.clusterHashes = null;
-  S.folder = p.folder || null;
-  S.resetScroll = false;
-  renderSidebar();
-  // The folder being revealed has its own arrangement.
-  await loadFolderView();
-  renderFilters();
-  applyFilter();
-  S.sel.clear(); S.sel.add(p.hash);
-  S.lastIndex = S.view.findIndex(x => x.hash === p.hash);
-  paintSel();
-  scrollToPhoto(p.hash);
-}
-
-/** Put a photograph's row in the middle of the viewport. */
-function scrollToPhoto(hash) {
-  const b = LAYOUT.blocks.find(b => b.kind === "row" && b.items.some(x => x.p.hash === hash));
-  if (!b) return;
-  const main = $("#main");
-  main.scrollTop = Math.max(0, b.y - main.clientHeight / 2 + b.h / 2);
-  paintViewport();
-}
-
-$("#find-input").addEventListener("input", runFind);
-$("#find-input").addEventListener("keydown", e => {
-  if (e.key === "ArrowDown") { e.preventDefault(); moveFind(1); }
-  else if (e.key === "ArrowUp") { e.preventDefault(); moveFind(-1); }
-  else if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? revealFind() : openFindHit(); }
-  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeFind(); }
-});
-$("#find").addEventListener("click", e => { if (e.target.id === "find") closeFind(); });
-
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
 $("#btn-tools").onclick = openSheet;
@@ -2911,10 +2817,13 @@ addEventListener("keydown", e => {
   }
   if (e.key === "Escape") { hideCtx(); if (!$("#sheet").hidden) $("#sheet").hidden = true; else if (S.sel.size) clearSel(); }
   if (e.key === "/" && document.activeElement !== $("#search")) { e.preventDefault(); $("#search").focus(); }
-  // Before the typing guard: ⌘F is expected to work from inside a field too.
+  // ⌘F goes to the search field rather than to a finder of its own: the field
+  // already matches filename and path, and two places to type a name is one too many.
+  // Before the typing guard, because ⌘F is expected to work from inside a field too.
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
     e.preventDefault();
-    $("#find").hidden ? openFind() : closeFind();
+    $("#search").focus();
+    $("#search").select();
     return;
   }
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "");
