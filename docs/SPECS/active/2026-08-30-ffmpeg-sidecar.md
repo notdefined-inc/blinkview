@@ -94,6 +94,8 @@ something reproducible from a pinned URL.
       done, builds 9.6 MB on arm64 macOS with every format in criterion 7 present
 - [x] 3. `externalBin` config; app exports `OPENFOTO_FFMPEG` at startup from the resolved
       sidecar path (touches: apps/desktop/src-tauri/) — done
+- [x] 5. Doc sync: STATUS.md drops the ffmpeg known issue, README and CONTRIBUTING carry
+      the new build step (touches: docs/, README.md, CONTRIBUTING.md)
 - [x] 4. Release *and* CI run the build script first — `externalBin` is required by any
       `cargo build` of the desktop crate, not only by `tauri build` — with the codec and
       size checks of criteria 7 and 8 run against the produced binary (touches:

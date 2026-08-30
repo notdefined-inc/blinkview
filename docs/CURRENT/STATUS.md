@@ -553,6 +553,12 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 The desktop app bundles its own ffmpeg (ADR-0014), so video support no
+  longer depends on what the host has installed or on a GUI app inheriting a shell's
+  PATH. Built from pinned, checksummed sources by `tools/build-ffmpeg.sh`: 9.6 MB on
+  arm64 macOS and 14.4 MB on x86_64 Linux, against 49.7 MB for a full static build of
+  the same version, and carrying every container and codec a phone or camera produces.
+  `tools/check-ffmpeg.sh` asserts that against the binary on every CI run.
 - 2026-08-30 A failed video thumbnail no longer serves the whole clip to the webview.
   On a 507-video phone backup that put 15.7 GB of MP4 into the render process, which
   macOS killed and restarted — the window going black mid-analysis, then re-requesting

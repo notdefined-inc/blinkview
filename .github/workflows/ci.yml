@@ -43,6 +43,11 @@ jobs:
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: ./tools/build-ffmpeg.sh
 
+      # Criterion 7 is a property of the build configuration, which changes in commits,
+      # so it is checked on every push and not only when a release is cut.
+      - name: Check the bundled ffmpeg
+        run: ./tools/check-ffmpeg.sh
+
       # --all-targets is not optional: without it clippy skips test targets and will
       # report a clean workspace while a test fails to compile.
       - run: cargo clippy --workspace --all-targets -- -D warnings
