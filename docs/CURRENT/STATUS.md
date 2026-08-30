@@ -504,6 +504,12 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- Nothing tells a new user the models exist until they reach a feature that needs them.
+  `models_fetch` is offered from the People pane (`app.js:1852`) and the scene-search
+  empty state (`app.js:3221`), but there is no first-run notice and no settings entry to
+  download them later or see what is installed. Everything else works without them:
+  verified on 25 photographs with the CLIP models absent — 25 thumbnails built, 0 clip
+  rows, no error.
 - The analysis pass filters to `kind == "photo"` (`analyze.rs`), so **no pass ever gives
   a video a thumbnail**. `thumbs::build` handles videos and is now called only from an
   example — the one-pass rewrite orphaned it. Videos still get a poster frame, but only
@@ -532,16 +538,12 @@ face alone, which is the intended bias. Reproduce with
   but filing them is still to come.
 - The review page holds every face crop as an inlined data URI: ~800KB for 15 clusters.
   A library with hundreds of unnamed groups needs crops served on demand instead.
-- Model files are not committed (37MB). `openfoto models fetch` is not implemented yet;
-  place them in `models/` or set `OPENFOTO_MODELS`.
 - Detection uses the YuNet `2026may` export, not the `2023mar` one the thresholds were
   tuned against (ADR-0004). The 4% scenery ratio in particular is still unconfirmed
   against the new export.
 - Two `Sam -> Me` misassignments persist across seed counts. Not yet established
   whether these are matcher errors or mislabels in the fixture, which was itself
   produced by a semi-automatic process.
-- Model files are not committed (37MB). `openfoto models fetch` is not implemented yet;
-  for now place them in `models/` or set `OPENFOTO_MODELS`.
 - Candidate generation in `dedupe` is O(n^2) over dHash. Fine to ~10k photos; a
   100k-photo library needs a BK-tree or LSH bucket step.
 - No thumbnail cache yet; `.openfoto/thumbs/` is created but unused.
