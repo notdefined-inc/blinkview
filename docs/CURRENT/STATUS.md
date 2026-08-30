@@ -673,6 +673,21 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- **ARW and RAF show a thumbnail in the grid and a broken image in the lightbox.** Not a
+  RAW-reading fault: the preview extracts fine, and `sips` reads all six formats. The
+  lightbox asks for `?preview=<hash>`, which calls `thumbs::render_preview`, which takes
+  the shortcut at `thumbs.rs:134` — "the source is small enough to be its own preview" —
+  and the handler then serves the original bytes (`lib.rs:3146`). A webview cannot decode
+  a `.arw` or `.raf`, so it draws a question mark. It happens to exactly these two
+  because their embedded previews are 1616x1080 and 1920x1280, under the 2000 px
+  threshold, while CR2 (2496), NEF (4928), DNG (5760) and CR3 (6000) clear it and get a
+  derived JPEG. The same latent bug applies to a HEIC under 2000 px, despite ADR-0005
+  saying HEIC always converts. **Fix:** that shortcut must also require
+  `!imageio::needs_conversion(src)` — a source the webview cannot decode is never its own
+  preview. Worth pairing with it: on macOS `sips` renders ARW and RAF at full sensor
+  resolution (6000x4000 for both samples) against our 1616/1920 preview, so the lightbox
+  could prefer the embedded preview when it clears 2000 px and fall back to `sips` when
+  it does not.
 - Nothing tells a new user the models exist until they reach a feature that needs them.
   `models_fetch` is offered from the People pane (`app.js:1852`) and the scene-search
   empty state (`app.js:3221`), but there is no first-run notice and no settings entry to
