@@ -374,6 +374,19 @@ Naming an unrecognised face offers the people already known, one click each. Ret
 name risks a second spelling of someone who is already there, and merging is usually
 what was meant.
 
+When that happens anyway, **two named people can be merged**: references are
+concatenated (a set, never a centroid — ADR-0003) and exclusions unioned, so the
+correction makes recognition better. Forgetting one of them, the only option before,
+threw its reference faces away.
+
+**Not every face is someone to name.** A group can be set aside, which records the
+faces — `"<photo hash>:<face index>"` — in `openfoto-people.json` rather than the
+cluster, because a cluster's id is a position in a list recomputed on every pass. The
+photographs are untouched and the faces stay in the index; the sidebar says how many are
+set aside and brings them all back in one click. Dismissing deliberately learns nothing:
+treating dismissed faces as a hidden identity would need a threshold, and that
+threshold's failure mode is swallowing someone real.
+
 ### Where the time goes
 Measured on a 25GB phone backup with `examples/bench`, mean 7.8 MP:
 
@@ -632,6 +645,13 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 Face review can be corrected in both directions it was missing. A group of
+  faces can be set aside — on a 40-photograph sample, detection found 8 groups of which
+  4 were singletons, which is what the sidebar filling with strangers looks like — and
+  set-aside faces stay set aside across re-clustering, restart and a deleted cache.
+  Restoring re-creates exactly the groups that were there. Two people who are the same
+  person can be merged, keeping both sets of reference faces instead of throwing one
+  away. Spec: docs/SPECS/done/2026-08-30-dismiss-and-merge.md.
 - 2026-08-30 A pass over the things a photo manager is expected to have. ⌘F focuses the
   search field, and a chip says how many matches the current folder is hiding. Every
   folder remembers its sort, including a custom order dragged by hand, in its own

@@ -166,6 +166,9 @@ pub fn cluster_unassigned(
         .all_faces()?
         .into_iter()
         .filter(|f| f.embedding.is_some())
+        // A dismissed face is out of review but still in the index: nothing is
+        // deleted, and restoring is only putting the list back.
+        .filter(|f| !people.is_dismissed(&f.hash, f.idx))
         .filter(|f| {
             let e = f.embedding.as_ref().unwrap();
             assign::assign(e, people, opt).person().is_none()

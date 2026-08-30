@@ -41,6 +41,7 @@ const S = {
   cluster: null,           // an unnamed group being viewed
   clusterHashes: null,
   people: [],              // named + unnamed, from people_overview
+  dismissed: 0,            // faces set aside as not worth naming
   peopleCollapsed: true,
   albums: [],            // legacy, only for the migration prompt
   searches: [],
@@ -277,6 +278,12 @@ function renderSidebar() {
     el("button", { class: "grow prun", onclick: () => selectPerson(p.name) },
       face(p), el("span", { class: "grow" }, p.name)),
     el("span", { class: "n num" }, String(p.photos)),
+    // Only offered when there is somebody to merge into. A control that can only
+    // fail is worse than no control.
+    named.length > 1
+      ? el("button", { class: "mini pact", title: `${p.name} is the same person as\u2026`,
+          onclick: () => mergePersonPrompt(p.name) }, "\u21C4")
+      : null,
     el("button", { class: "mini pact", title: `Forget ${p.name}`,
       onclick: () => forgetPerson(p.name) }, "\u2715")));
 
@@ -289,16 +296,33 @@ function renderSidebar() {
       el("span", { class: "n num" }, "\u2715")));
   }
 
+  // Set-aside faces sit with the other summary row rather than at the bottom: a
+  // correction nobody can find again is not really a correction.
+  if (S.dismissed > 0) {
+    rows.push(el("button", { class: "row faint",
+      title: "Offer these faces for naming again",
+      onclick: restoreDismissed },
+      el("span", { class: "grow" },
+        `${S.dismissed} face${S.dismissed === 1 ? "" : "s"} set aside`),
+      el("span", { class: "n num" }, "\u21A9")));
+  }
+
   // Unnamed groups are shown too. Detection finding 243 faces and the sidebar still
   // reading "None named yet" is what made face detection look broken.
   for (const u of unnamed.slice(0, 12)) {
-    rows.push(el("button", {
-      class: "row unnamed", "aria-current": String(S.cluster === u.cluster),
-      title: u.suggestion ? `Looks like ${u.suggestion}` : "Unnamed person",
-      onclick: () => selectCluster(u.cluster)
-    }, face(u),
-      el("span", { class: "grow" }, u.suggestion ? `${u.suggestion}?` : "Who is this?"),
-      el("span", { class: "n num" }, String(u.photos))));
+    rows.push(el("div", {
+      class: "row prow unnamed", "aria-current": String(S.cluster === u.cluster),
+    },
+      el("button", { class: "grow prun",
+        title: u.suggestion ? `Looks like ${u.suggestion}` : "Unnamed person",
+        onclick: () => selectCluster(u.cluster) },
+        face(u),
+        el("span", { class: "grow" }, u.suggestion ? `${u.suggestion}?` : "Who is this?")),
+      el("span", { class: "n num" }, String(u.photos)),
+      // Not everyone in a photograph is someone to name. The ✕ means the same thing
+      // it does on a named row: take this out of the list.
+      el("button", { class: "mini pact", title: "Not someone to name \u2014 set these faces aside",
+        onclick: () => dismissCluster(u.cluster) }, "\u2715")));
   }
   if (!rows.length) {
     const unscanned = src.faces_analysed < src.photos;
@@ -1313,9 +1337,10 @@ async function refreshPeople() {
   let people;
   try {
     people = await invoke("people_overview", { path: t.source, distance: 0.55 });
-  } catch { people = []; }
+  } catch { people = { entries: [], dismissed: 0 }; }
   if (!stillCurrent(t)) return;
-  S.people = people;
+  S.people = people.entries || [];
+  S.dismissed = people.dismissed || 0;
   await refreshAlbums();
   await refreshSearches();
   await refreshSources();
@@ -1777,6 +1802,58 @@ async function selectFolder(f) {
   renderFilters();
   applyFilter();
 }
+/** Set a group of faces aside, so review stops offering strangers to name.
+    The photographs are untouched and the faces stay in the index — this only takes
+    them out of review, which is why bringing them back is one click. */
+async function dismissCluster(id) {
+  const msg = await busy("Setting aside\u2026",
+    () => invoke("dismiss_cluster", { path: S.source, distance: 0.55, cluster: id }));
+  toast(msg, "ok");
+  // Group ids are positions in a list that has just been recomputed, so whatever was
+  // selected no longer means what it meant.
+  S.cluster = null; S.clusterHashes = null;
+  await refreshPeople(); await loadPhotos();
+}
+
+async function restoreDismissed() {
+  const msg = await busy("Bringing them back\u2026",
+    () => invoke("restore_dismissed", { path: S.source }));
+  toast(msg, "ok");
+  S.cluster = null; S.clusterHashes = null;
+  await refreshPeople(); await loadPhotos();
+}
+
+/** The same person, named twice. Folds one into the other, keeping both sets of
+    reference faces — which is the difference from forgetting one of them. */
+async function mergePersonPrompt(name) {
+  const others = S.people.filter(p => p.name && p.name !== name);
+  if (!others.length) return;
+  const into = await new Promise(resolve => {
+    let d;
+    d = dialogFrame(`${name} is the same person as\u2026`, [
+      el("p", { class: "asktext" },
+        `${name}'s reference faces are added to whoever you pick, so recognition gets ` +
+        "better rather than worse. The photographs are untouched."),
+      el("div", { class: "movepicks" }, others.map(p =>
+        el("button", { class: "sugg-pill", onclick: () => d.done(p.name) },
+          p.cover ? el("img", { class: "fface", src: photoUrl(p.cover), alt: "" }) : null,
+          p.name))),
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel")),
+    ]);
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+  });
+  if (!into) return;
+  const msg = await busy(`Merging ${name} into ${into}\u2026`,
+    () => invoke("merge_people", { path: S.source, from: name, into }));
+  toast(msg, "ok");
+  // Looking at the person who just stopped existing would show an empty grid.
+  if (S.person === name) S.person = into;
+  await refreshPeople(); await loadPhotos();
+}
+
 /** Remove a person. The photographs stay; only the claim about who is in them goes. */
 async function forgetPerson(name) {
   const ok = await confirmDialog(`Forget ${name}?`,

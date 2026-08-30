@@ -1216,6 +1216,15 @@ async fn name_clusters(
 
 // ---------------------------------------------------------------- people overview
 
+/// Everyone the library knows about, and how many faces have been set aside.
+#[derive(Serialize)]
+pub struct PeopleView {
+    entries: Vec<PersonEntry>,
+    /// Faces dismissed as not worth naming. Shown so the sidebar can offer them back —
+    /// a correction nobody can find is not a correction.
+    dismissed: usize,
+}
+
 #[derive(Serialize)]
 pub struct PersonEntry {
     /// `None` for a group nobody has named yet.
@@ -1238,7 +1247,7 @@ async fn people_overview(
     state: tauri::State<'_, AppState>,
     path: String,
     distance: f32,
-) -> R<Vec<PersonEntry>> {
+) -> R<PeopleView> {
     with(&state, &path, |lib| {
         let people = People::load(lib.root())?;
         let opt = assign::Options::default();
@@ -1304,7 +1313,68 @@ async fn people_overview(
             .collect();
         unnamed.sort_by(|a, b| b.photos.cmp(&a.photos));
         out.extend(unnamed);
-        Ok(out)
+        Ok(PeopleView { entries: out, dismissed: people.dismissed_count() })
+    })
+}
+
+/// Set a group of faces aside as not worth naming.
+///
+/// Recorded against the faces rather than the group, because a group's id is a position
+/// in a list recomputed on every pass. The photographs are untouched and the faces stay
+/// in the index — this only takes them out of review.
+#[tauri::command]
+async fn dismiss_cluster(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    distance: f32,
+    cluster: usize,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        let mut people = People::load(lib.root())?;
+        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
+        let faces: Vec<(String, i64)> = g.iter().map(|f| (f.hash.clone(), f.idx)).collect();
+        let photos = g.iter().map(|f| &f.hash).collect::<BTreeSet<_>>().len();
+        let n = people.dismiss(&faces);
+        people.save(lib.root())?;
+        Ok(format!(
+            "Set aside {n} face{} from {photos} photograph{}",
+            if n == 1 { "" } else { "s" },
+            if photos == 1 { "" } else { "s" }
+        ))
+    })
+}
+
+/// Offer every dismissed face for naming again.
+#[tauri::command]
+async fn restore_dismissed(state: tauri::State<'_, AppState>, path: String) -> R<String> {
+    with(&state, &path, |lib| {
+        let mut people = People::load(lib.root())?;
+        let n = people.restore_dismissed();
+        people.save(lib.root())?;
+        Ok(match n {
+            0 => "Nothing was set aside".to_string(),
+            n => format!("{n} face{} back for naming", if n == 1 { "" } else { "s" }),
+        })
+    })
+}
+
+/// Fold one person into another: the same person, named twice.
+///
+/// Unlike forgetting one of them, this keeps both sets of reference faces, so the
+/// correction makes recognition better rather than worse.
+#[tauri::command]
+async fn merge_people(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    from: String,
+    into: String,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        let mut people = People::load(lib.root())?;
+        let moved = people.merge(&from, &into)?;
+        people.save(lib.root())?;
+        Ok(format!("{from} is now {into} · {moved} more reference faces for {into}"))
     })
 }
 
@@ -2709,6 +2779,7 @@ pub fn run() {
             delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
             models_status, models_fetch,
             people_overview, name_cluster, cluster_photos, autodetect_faces,
+            dismiss_cluster, restore_dismissed, merge_people,
             edit_photo, edit_photos, strip_metadata, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,

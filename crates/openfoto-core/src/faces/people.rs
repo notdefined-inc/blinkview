@@ -33,6 +33,24 @@ pub struct Person {
 pub struct People {
     #[serde(default)]
     pub people: Vec<Person>,
+    /// Faces the user has said are not worth naming — the waiter, the stranger in the
+    /// background, the half of a face at the edge of a group shot.
+    ///
+    /// Recorded as `"<photo hash>:<face index>"` rather than by cluster, because a
+    /// cluster has no durable identity: its id is a position in a list recomputed on
+    /// every pass. That pair survives rescans, renames and moves, which is what makes
+    /// a dismissal stick.
+    ///
+    /// Deliberately *not* an identity to match against. Treating dismissed faces as a
+    /// hidden person would need a threshold, and the failure mode of that threshold is
+    /// swallowing someone real — much worse than showing a stranger one more time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dismissed: Vec<String>,
+}
+
+/// How one face is addressed in [`People::dismissed`].
+fn face_key(hash: &str, idx: i64) -> String {
+    format!("{hash}:{idx}")
 }
 
 impl People {
@@ -114,6 +132,65 @@ impl People {
     pub fn is_empty(&self) -> bool {
         self.people.is_empty()
     }
+
+    /// Stop offering these faces for naming. The photographs are untouched.
+    pub fn dismiss(&mut self, faces: &[(String, i64)]) -> usize {
+        let before = self.dismissed.len();
+        for (hash, idx) in faces {
+            let key = face_key(hash, *idx);
+            if !self.dismissed.contains(&key) {
+                self.dismissed.push(key);
+            }
+        }
+        self.dismissed.len() - before
+    }
+
+    pub fn is_dismissed(&self, hash: &str, idx: i64) -> bool {
+        self.dismissed.contains(&face_key(hash, idx))
+    }
+
+    pub fn dismissed_count(&self) -> usize {
+        self.dismissed.len()
+    }
+
+    /// Offer every dismissed face for naming again, and say how many came back.
+    pub fn restore_dismissed(&mut self) -> usize {
+        std::mem::take(&mut self.dismissed).len()
+    }
+
+    /// Fold `from` into `into`: one person, holding everything both knew.
+    ///
+    /// The difference from forgetting one of them is the whole point. References are a
+    /// set rather than a centroid (ADR-0003), so concatenating them strictly improves
+    /// recognition — the same face front-on and in profile are both kept. Exclusions
+    /// are unioned, because each was a direct correction and a merge must not quietly
+    /// undo one.
+    pub fn merge(&mut self, from: &str, into: &str) -> Result<usize> {
+        let (from, into) = (from.trim(), into.trim());
+        if from.eq_ignore_ascii_case(into) {
+            anyhow::bail!("{from} is already {into}");
+        }
+        let Some(i) = self.people.iter().position(|p| p.name == from) else {
+            anyhow::bail!("{from} is not someone this library knows");
+        };
+        if !self.people.iter().any(|p| p.name == into) {
+            anyhow::bail!("{into} is not someone this library knows");
+        }
+        let gone = self.people.remove(i);
+        let moved = gone.references.len();
+        let target = self
+            .people
+            .iter_mut()
+            .find(|p| p.name == into)
+            .expect("checked above");
+        target.references.extend(gone.references);
+        for h in gone.excluded {
+            if !target.excluded.contains(&h) {
+                target.excluded.push(h);
+            }
+        }
+        Ok(moved)
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +236,79 @@ mod tests {
         let p: People = serde_json::from_str(json).expect("legacy people.json must parse");
         assert_eq!(p.people[0].name, "Sam");
         assert!(p.people[0].excluded.is_empty());
+    }
+
+    #[test]
+    fn a_dismissal_is_keyed_to_the_face_not_the_cluster() {
+        let mut p = people();
+        p.dismiss(&[("photo-a".into(), 0), ("photo-a".into(), 1)]);
+        assert!(p.is_dismissed("photo-a", 0));
+        assert!(p.is_dismissed("photo-a", 1));
+        // A different face in the same photograph is a different face.
+        assert!(!p.is_dismissed("photo-a", 2));
+        assert!(!p.is_dismissed("photo-b", 0));
+        // Dismissing twice does not double-count, so the sidebar cannot claim more
+        // dismissals than there are faces.
+        assert_eq!(p.dismiss(&[("photo-a".into(), 0)]), 0);
+        assert_eq!(p.dismissed_count(), 2);
+    }
+
+    #[test]
+    fn dismissals_come_back_together_and_leave_nothing_behind() {
+        let mut p = people();
+        p.dismiss(&[("a".into(), 0), ("b".into(), 0)]);
+        assert_eq!(p.restore_dismissed(), 2);
+        assert_eq!(p.dismissed_count(), 0);
+        assert!(!p.is_dismissed("a", 0));
+        // Named people are untouched by any of it.
+        assert_eq!(p.people.len(), 2);
+    }
+
+    #[test]
+    fn a_dismissal_survives_the_disk() {
+        let dir = std::env::temp_dir().join(format!("of-dismiss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = people();
+        p.dismiss(&[("photo-a".into(), 3)]);
+        p.save(&dir).unwrap();
+        // The file is the one at the library root, not in the disposable cache.
+        assert!(People::load(&dir).unwrap().is_dismissed("photo-a", 3));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn merging_keeps_everything_both_people_knew() {
+        let mut p = people();
+        p.add_references("Sam", vec![vec![0.9, 0.1]]);
+        p.exclude("Sam", &["not-sam".into()]);
+        p.exclude("Alex", &["not-alex".into()]);
+        let moved = p.merge("Alex", "Sam").unwrap();
+
+        assert_eq!(moved, 1, "Alex's one reference moved");
+        assert_eq!(p.people.len(), 1);
+        let sam = p.get("Sam").unwrap();
+        assert_eq!(sam.name, "Sam");
+        // References are concatenated, never averaged (ADR-0003): merging must make
+        // recognition better, which is the whole difference from forgetting.
+        assert_eq!(sam.references.len(), 3);
+        // Both corrections survive — a merge must not quietly undo one.
+        assert!(p.is_excluded("Sam", "not-sam"));
+        assert!(p.is_excluded("Sam", "not-alex"));
+        assert!(p.get("Alex").is_none());
+    }
+
+    #[test]
+    fn a_merge_that_would_lose_references_is_refused() {
+        let mut p = people();
+        // Into themselves: a no-op that would otherwise remove and re-add.
+        assert!(p.merge("Sam", "Sam").is_err());
+        assert!(p.merge("sam", "SAM").is_err());
+        // Into or from a stranger: refuse rather than drop the references on the floor.
+        assert!(p.merge("Sam", "Nobody").is_err());
+        assert!(p.merge("Nobody", "Sam").is_err());
+        assert_eq!(p.people.len(), 2, "a refused merge changes nothing");
+        assert_eq!(p.get("Sam").unwrap().references.len(), 1);
     }
 
     #[test]

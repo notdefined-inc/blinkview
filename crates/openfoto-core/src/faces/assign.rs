@@ -102,6 +102,7 @@ mod tests {
                 .iter()
                 .map(|(n, r)| Person { name: n.to_string(), references: r.clone(), excluded: Vec::new() })
                 .collect(),
+            ..Default::default()
         }
     }
 
