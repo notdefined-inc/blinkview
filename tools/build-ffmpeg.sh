@@ -116,6 +116,7 @@ cd ffmpeg-src
   --disable-network --disable-devices --disable-sdl2 --disable-debug --disable-autodetect \
   --disable-ffplay --enable-ffmpeg --enable-ffprobe \
   --enable-libx264 \
+  --enable-zlib \
   --enable-demuxer=mov,matroska,avi,mpegts,mpegps,flv,asf,ogg,image2,mjpeg,h264,hevc,wav,mp3,flac \
   --enable-muxer=mp4,mov,image2,mjpeg,webp \
   --enable-parser=h264,hevc,vp8,vp9,av1,mpeg4video,mpegvideo,mjpeg,aac,ac3,opus,vorbis,flac \

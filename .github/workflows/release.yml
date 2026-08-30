@@ -48,7 +48,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            patchelf libgtk-3-dev
+            patchelf libgtk-3-dev \
+            pkg-config nasm
+
+      # ffmpeg's configure finds libx264 only through pkg-config, and x264's x86
+      # assembly needs nasm. The runners have neither reliably.
+      - name: ffmpeg build dependencies (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        run: brew install pkg-config nasm
+
+      - name: ffmpeg build dependencies (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: choco install -y nasm pkgconfiglite
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -59,6 +70,48 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+
+      # The bundled ffmpeg (ADR-0014). Keyed on the lockfile, so it is compiled once
+      # per pinned version and restored on every release after that.
+      - name: Cache the bundled ffmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/src-tauri/binaries
+          key: ffmpeg-${{ matrix.target }}-${{ hashFiles('tools/ffmpeg.lock') }}
+
+      # Must precede `tauri build`: externalBin is required at build time, so the app
+      # does not compile without it.
+      - name: Build ffmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: ./tools/build-ffmpeg.sh
+
+      - name: Check the bundled ffmpeg
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=$(ls apps/desktop/src-tauri/binaries/ffmpeg-* | head -1)
+          ls -l "$BIN"
+          # Criterion 8: under 40 MB per platform.
+          SIZE=$(( $(wc -c < "$BIN") / 1048576 ))
+          echo "bundled ffmpeg: ${SIZE} MB"
+          [ "$SIZE" -lt 40 ] || { echo "over the 40 MB budget"; exit 1; }
+          # Criterion 7: the formats the spec names must actually be there.
+          for c in h264 hevc vp8 vp9 av1 mpeg2video mpeg4 mjpeg prores vc1 theora dvvideo wmv3 \
+                   aac mp3 opus vorbis flac ac3 eac3 wmav2 png; do
+            "$BIN" -hide_banner -decoders 2>/dev/null | grep -qE "^ *[A-Z.]+ +$c\b" \
+              || { echo "missing decoder: $c"; exit 1; }
+          done
+          for c in libx264 aac mjpeg png; do
+            "$BIN" -hide_banner -encoders 2>/dev/null | grep -qE "^ *[A-Z.]+ +$c\b" \
+              || { echo "missing encoder: $c"; exit 1; }
+          done
+          for d in mov matroska avi mpegts flv asf ogg; do
+            "$BIN" -hide_banner -demuxers 2>/dev/null | grep -qE "^ *[A-Z ]+ *$d\b" \
+              || { echo "missing demuxer: $d"; exit 1; }
+          done
+          echo "all required codecs and containers present"
 
       - uses: tauri-apps/tauri-action@v0
         env:

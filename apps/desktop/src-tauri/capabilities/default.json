@@ -9,6 +9,7 @@
     "core:default",
     "core:window:allow-start-dragging",
     "core:webview:allow-internal-toggle-devtools",
-    "dialog:default"
+    "dialog:default",
+    "core:window:allow-set-position"
   ]
 }

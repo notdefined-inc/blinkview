@@ -77,10 +77,11 @@ something reproducible from a pinned URL.
      `2026-08-30-video-previews.md`)
    Only libx264 is an external library; every decoder above is native to ffmpeg, so the
    build has exactly one dependency beyond ffmpeg itself.
-8. The bundled binary is under 40 MB per platform, and the macOS `.dmg` under 70 MB.
-   Broad format coverage and a small binary pull against each other; these numbers are
-   provisional and get re-set to the measured size plus headroom once task 1 has built
-   once. A build that misses them is reported, not quietly accepted.
+8. The bundled binary is under 40 MB per platform, and the macOS `.dmg` under 40 MB.
+   Measured on aarch64-apple-darwin: **9.6 MB**, against 49.7 MB for osxexperts' full
+   static build of the same version. Starting from `--disable-everything` and naming
+   what criterion 7 needs is what makes broad format support cheap — the cost is the
+   codecs you enable, not the number of formats they cover.
 9. `codesign --verify --deep --strict` passes on the bundled `.app` — a sidecar is a
    Mach-O inside the bundle and is signed with it (ADR-0014, and the v0.1.0 signing bug).
 
@@ -88,11 +89,16 @@ something reproducible from a pinned URL.
 
 - [x] 2. `ffmpeg_bin()` honours `OPENFOTO_FFMPEG` first; unit tests for criteria 2 and 3
       (touches: crates/openfoto-core/src/thumbs.rs) — done, three tests
-- [ ] 1. `tools/ffmpeg.lock` + `tools/build-ffmpeg.sh`: pinned sources, checksums, the
-      configure flags of criterion 7, CI cache keyed on the lock (touches: tools/)
-- [ ] 3. `externalBin` config; app exports `OPENFOTO_FFMPEG` at startup from the resolved
-      sidecar path (touches: apps/desktop/src-tauri/)
-- [ ] 4. Release workflow runs the fetch script before `tauri build`; verify criteria 6,
-      8 and 9 on the produced artefacts (touches: .github/workflows/release.yml)
+- [x] 1. `tools/ffmpeg.lock` + `tools/build-ffmpeg.sh`: pinned sources, checksums, the
+      configure flags of criterion 7, CI cache keyed on the lock (touches: tools/) —
+      done, builds 9.6 MB on arm64 macOS with every format in criterion 7 present
+- [x] 3. `externalBin` config; app exports `OPENFOTO_FFMPEG` at startup from the resolved
+      sidecar path (touches: apps/desktop/src-tauri/) — done
+- [x] 4. Release *and* CI run the build script first — `externalBin` is required by any
+      `cargo build` of the desktop crate, not only by `tauri build` — with the codec and
+      size checks of criteria 7 and 8 run against the produced binary (touches:
+      .github/workflows/)
+- [ ] 6. Verify criteria 6 and 9 on a real release artefact: one ffmpeg per installer,
+      and `codesign --verify` still passing with a Mach-O sidecar inside the bundle
 - [ ] 5. Doc sync: ADR-0014 to Accepted, STATUS.md drops the ffmpeg known issue, README
       stops telling users to install ffmpeg (touches: docs/, README.md)
