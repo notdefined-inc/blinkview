@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-08-30_
+_Last updated: 2026-08-30 · shipping version 0.1.1_
 
 ## Current work — desktop app
 
