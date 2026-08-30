@@ -16,8 +16,11 @@ WORK="${FFMPEG_BUILD_DIR:-$ROOT/target/ffmpeg-build}"
 # shellcheck disable=SC1090
 set -a; . "$LOCK"; set +a
 
-TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
-EXE=""; [[ "$TRIPLE" == *windows* ]] && EXE=".exe"
+# `TARGET_TRIPLE` because MSYS2 on the Windows runner starts with a minimal PATH and
+# cannot see rustc. Falling back to rustc keeps the script pleasant to run by hand.
+TRIPLE="${TARGET_TRIPLE:-$(rustc -vV | awk '/^host:/ {print $2}')}"
+EXE=""
+if [[ "$TRIPLE" == *windows* ]]; then EXE=".exe"; fi
 TARGET="$OUT_DIR/ffmpeg-$TRIPLE$EXE"
 
 if [[ -x "$TARGET" && "${FORCE:-0}" != "1" ]]; then

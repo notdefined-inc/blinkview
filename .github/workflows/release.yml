@@ -57,9 +57,25 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         run: brew install pkg-config nasm
 
-      - name: ffmpeg build dependencies (Windows)
+      # Windows needs a real toolchain, not Git Bash: ffmpeg's configure wants a POSIX
+      # shell *and* a C compiler, and the runner's bash has only the first. MSYS2 gives
+      # both, and the mingw64 binary it produces runs standalone with no MSYS2 on the
+      # user's machine.
+      - name: ffmpeg build toolchain (Windows)
         if: matrix.platform == 'windows-latest'
-        run: choco install -y nasm pkgconfiglite
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-pkgconf
+            make
+            diffutils
+            tar
+            xz
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -83,8 +99,17 @@ jobs:
       # Must precede `tauri build`: externalBin is required at build time, so the app
       # does not compile without it.
       - name: Build ffmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true' && matrix.platform != 'windows-latest'
         shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
+        run: ./tools/build-ffmpeg.sh
+
+      - name: Build ffmpeg (Windows)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true' && matrix.platform == 'windows-latest'
+        shell: msys2 {0}
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
         run: ./tools/build-ffmpeg.sh
 
       - name: Check the bundled ffmpeg
