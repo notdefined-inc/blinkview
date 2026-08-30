@@ -54,6 +54,14 @@ Work is parallelised across photographs at a modest width rather than one worker
 core. ONNX Runtime already threads a single inference, so the measured gain is about
 1.8x on eight cores, not 8x, and each worker holds its own models.
 
+Measured later on an eight-core machine with 8 GB, that 1.8x is not there at all. Across
+226 photographs peak RSS rose monotonically with workers — 1299, 1407, 1520, 1599 MB —
+while elapsed time was 55s, 50s, 63s, 95s. Two workers was the fastest setting and four
+was the slowest *and* the most expensive, because the machine was swapping. The width is
+therefore chosen from physical memory as well as cores: one worker per 4 GB, capped at
+four. The original figure presumably came from a machine that was not memory-bound; it
+should not be read as a property of the pass.
+
 ## Consequences
 
 Good: the three passes cost roughly one decode instead of three. Projected on the same

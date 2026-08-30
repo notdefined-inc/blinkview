@@ -89,22 +89,59 @@ struct Kit {
     vision: Option<semantic::ImageEncoder>,
 }
 
+/// Total physical memory in bytes, if the platform will say.
+///
+/// No dependency is added for this. macOS is asked through `sysctl`, which the project
+/// already shells out to for HEIC (ADR-0005); Linux is a file read. Windows has no
+/// equally cheap route, so it gets `None` and sizing falls back to cores alone.
+fn physical_memory() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+        return String::from_utf8(out.stdout).ok()?.trim().parse().ok();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let kb: u64 = meminfo
+            .lines()
+            .find_map(|l| l.strip_prefix("MemTotal:"))?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()?;
+        return Some(kb * 1024);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
 /// How many photographs are worked on at once.
 ///
-/// Not one per core: ONNX Runtime already threads a single inference, so the measured
-/// gain is about 1.8x on eight cores rather than 8x, while each worker holds its own
-/// models and a decoded frame of up to 36 MB.
+/// Not one per core: ONNX Runtime already threads a single inference, so a worker per
+/// core buys nothing, while each worker holds its own models and a decoded frame of up
+/// to 36 MB.
 ///
-/// `OPENFOTO_WORKERS` overrides it. Workers are the largest single lever on peak
-/// memory — one worker roughly halves it — so a machine that starts swapping during a
-/// pass has somewhere to go without waiting for a release.
+/// Memory is the binding constraint, not cores, and until this was measured the ceiling
+/// was chosen from core count alone — so an eight-core machine with 8 GB got four
+/// workers and swapped. On 226 photographs across 76 resolutions, peak RSS rose
+/// monotonically with workers (1299, 1407, 1520, 1599 MB) while throughput peaked at
+/// two and got *worse* at four (50s, then 95s). Four workers was the most expensive
+/// setting on both axes at once. One worker per 4 GB reproduces that: two on an 8 GB
+/// machine, four on 16 GB and above.
+///
+/// `OPENFOTO_WORKERS` overrides the result, for a machine that still wants less.
 fn workers() -> usize {
     if let Ok(n) = std::env::var("OPENFOTO_WORKERS").unwrap_or_default().parse::<usize>() {
         if n > 0 {
             return n;
         }
     }
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 4)
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let by_memory = physical_memory()
+        .map(|bytes| (bytes / (4 * 1024 * 1024 * 1024)) as usize)
+        .unwrap_or(usize::MAX);
+    cores.min(by_memory).clamp(1, 4)
 }
 
 pub fn run(lib: &mut Library, stages: Stages) -> Result<Stats> {
@@ -449,6 +486,23 @@ mod tests {
     /// disagree — 186 photographs out of 1926, nearly a tenth of the library. Detection
     /// runs on the resized pixels, so a single row of difference is enough to change how
     /// many faces come back.
+    /// The machine this runs on must not be handed more workers than it has memory for.
+    ///
+    /// The rule is one worker per 4 GB, capped at four and at the core count. The
+    /// regression this guards against is the original sizing, which read cores alone
+    /// and gave an 8 GB laptop four workers.
+    #[test]
+    fn workers_are_sized_by_memory_not_just_cores() {
+        let n = workers();
+        assert!((1..=4).contains(&n), "workers out of range: {n}");
+        if let Some(bytes) = physical_memory() {
+            let gb = bytes / (1024 * 1024 * 1024);
+            assert!(gb > 0, "physical memory reported as 0");
+            let cap = (gb / 4).max(1) as usize;
+            assert!(n <= cap.max(1), "{gb} GB machine was given {n} workers");
+        }
+    }
+
     #[test]
     fn the_resize_shortcut_lands_where_dynamic_image_would() {
         for (w, h) in [

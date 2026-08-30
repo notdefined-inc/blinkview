@@ -467,8 +467,26 @@ while a mixed library strands a region per size — during a pass `vmmap` showed
 live in `MALLOC_LARGE` against 348.0M dirty in 26 *empty* regions. `openfoto-demo` is
 uniformly 4000x1848, which is exactly why dev testing never saw this.
 
-`OPENFOTO_WORKERS=1` roughly halves peak and is the escape hatch until the allocator
-itself is addressed. Between 2 and 4 workers the lever is weak (1267 MB vs 1315 MB).
+Worker count is the lever, and it is now sized from physical memory rather than cores
+alone — one worker per 4 GB, capped at four. On 226 photographs across 76 resolutions:
+
+| Workers | Peak RSS | Elapsed |
+|---|---|---|
+| 1 | 1299 MB | 55s |
+| 2 | 1407 MB | **50s** |
+| 3 | 1520 MB | 63s |
+| 4 | 1599 MB | 95s |
+
+Four workers was the worst setting on both axes at once: most memory *and* slowest,
+because an 8 GB machine swaps. The old sizing read core count alone and so handed this
+machine four. With the memory-aware default it takes two and peaks at 1143 MB.
+`OPENFOTO_WORKERS` still overrides, for a machine that wants less again.
+
+**mimalloc was measured and rejected.** At one worker it is a clear win — six ABBA pairs,
+every one negative, mean -211 MB (-23.5%), and order-independent. At the default worker
+count it *loses*: four pairs, all positive, mean +122 MB. mimalloc gives each thread its
+own heap and segments, so it costs memory exactly where the footprint is already largest.
+A C dependency that makes the real workload 8% worse is not worth having.
 
 ## Face assignment accuracy (measured)
 120 real photos across three people, solo shots only as ground truth (a group photo
@@ -486,11 +504,15 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
-- A pass over a library with many distinct resolutions still peaks around 1.3 GB and
-  can push an 8 GB machine into swap, which shows up as sluggish scrolling while
-  analysis runs. The cause is allocator retention, not the algorithm (see Memory
-  above); `OPENFOTO_WORKERS=1` is the workaround. A non-system allocator (mimalloc or
-  jemalloc) is the likely real fix and has not been evaluated.
+- A pass over a library with many distinct resolutions still peaks around 1.1 GB on an
+  8 GB machine. Allocator retention across image sizes is the underlying cause (see
+  Memory above) and swapping the allocator does not fix it — mimalloc was measured and
+  is worse at the default worker count. `OPENFOTO_WORKERS` lowers it further.
+- The desktop app's `photo://` image pool is sized independently of the analysis
+  workers (`clamp(2, 6)` off core count, `apps/desktop/src-tauri/src/lib.rs`), and every
+  in-flight request holds a decoded full-size frame. During a pass the two pools
+  compete without either knowing about the other, which is the likeliest remaining
+  cause of sluggish scrolling while analysis runs. Not yet measured.
 - Lightbox zoom is transform-based, so at very high zoom the browser upscales the
   already-decoded bitmap rather than re-decoding at native resolution.
 - `scenery` is not implemented — spec task 11.
@@ -517,6 +539,9 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 Analysis workers are sized from physical memory (one per 4 GB, capped at
+  four) rather than core count alone. An 8 GB machine now takes two instead of four and
+  peaks at 1143 MB instead of ~1600 MB, and finishes faster doing it.
 - 2026-08-30 Cut peak RSS on a 953-photo pass from 1596 MB to 1315 MB with
   byte-identical output, by producing the upright image once instead of three times and
   resizing for detection straight from the borrow rather than through a `DynamicImage`
