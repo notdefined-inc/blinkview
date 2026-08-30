@@ -13,6 +13,7 @@ const { listen } = window.__TAURI__.event;
    a third of the payload — which at 200,000 photographs is the difference the bridge
    charges for. Doing it here is a string split per photograph; sending it was megabytes. */
 function hydrate(list) {
+  const pairs = new Map();
   for (const p of list) {
     const cut = p.path.lastIndexOf("/");
     p.name = cut < 0 ? p.path : p.path.slice(cut + 1);
@@ -23,6 +24,20 @@ function hydrate(list) {
     p.faces ||= 0;
     p.albums ||= [];
     p.people ||= [];
+    const stem = (dot < 0 ? p.name : p.name.slice(0, dot)).toLocaleLowerCase();
+    const key = `${p.folder.toLocaleLowerCase()}\u0000${stem}`;
+    if (!pairs.has(key)) pairs.set(key, { photos: [], videos: [] });
+    pairs.get(key)[p.kind === "video" ? "videos" : "photos"].push(p);
+  }
+  // Apple's on-disk Live Photo shape is a still and MOV beside each other with the
+  // same stem. Pairing is derived every load, so moving either file in Finder updates
+  // the presentation without leaving metadata behind.
+  for (const pair of pairs.values()) {
+    const still = pair.photos[0];
+    const motion = pair.videos.find(p => p.ext === "MOV");
+    if (!still || !motion) continue;
+    still.liveVideo = motion;
+    motion.liveStill = still;
   }
   return list;
 }
@@ -108,6 +123,29 @@ function toast(msg, kind = "info", sticky = false) {
 /* The current busy toast, so backend progress events can find it. Long work would
    otherwise be indistinguishable from a hang — the reason this exists at all. */
 let liveToast = null;
+let pendingUpdate = null;
+
+async function checkUpdates(manual = false) {
+  try {
+    const info = await invoke("check_for_updates");
+    if (!info.available) {
+      if (manual) toast(`OpenFoto ${info.current} is up to date`, "ok");
+      return;
+    }
+    pendingUpdate = info;
+    $("#update-title").textContent = `OpenFoto ${info.latest} is ready`;
+    $("#update-note").textContent = `You have ${info.current} · GitHub release`;
+    $("#update-banner").hidden = false;
+    document.body.classList.add("has-update");
+  } catch (e) {
+    if (manual) toast(`Could not check for updates — ${e}`, "error");
+  }
+}
+
+function dismissUpdate() {
+  $("#update-banner").hidden = true;
+  document.body.classList.remove("has-update");
+}
 
 /* `source` names the library this operation is about, so background work on another
    folder cannot repaint this banner. */
@@ -536,6 +574,7 @@ function computeLayout(width) {
     : groups.entries();
   for (const [day, items] of ordered) {
     blocks.push({ kind: "head", y, h: HEAD_H, day, n: items.length,
+                  month: items[0]?.taken_at ? monthKey(items[0].taken_at) : "",
                   hashes: items.map(p => p.hash) });
     y += HEAD_H;
     for (const r of justify(items, width, ROW_H, GAP)) {
@@ -545,6 +584,35 @@ function computeLayout(width) {
     y += 18; // breathing room between days
   }
   LAYOUT = { blocks, height: y, width };
+}
+
+function armLivePhoto(cell, p, event) {
+  if (!p.liveVideo || event.button > 0 || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  cell._liveHolding = true;
+  clearTimeout(cell._liveTimer);
+  cell._liveTimer = setTimeout(() => {
+    if (!cell._liveHolding) return;
+    cell._liveConsumed = true;
+    const video = el("video", {
+      class: "live-motion", src: photoUrl(p.liveVideo.path), muted: true,
+      loop: true, playsinline: true, preload: "auto", "aria-hidden": "true",
+    });
+    video.muted = true;
+    video.addEventListener("canplay", () => {
+      if (!cell._liveHolding || !video.isConnected) return;
+      cell.classList.add("live-playing");
+      video.play().catch(() => {});
+    }, { once: true });
+    cell.prepend(video);
+  }, 250);
+}
+
+function releaseLivePhoto(cell) {
+  cell._liveHolding = false;
+  clearTimeout(cell._liveTimer);
+  cell.classList.remove("live-playing");
+  const video = cell.querySelector(".live-motion");
+  if (video) { video.pause(); video.removeAttribute("src"); video.load(); video.remove(); }
 }
 
 function cellFor(p, w, h) {
@@ -564,19 +632,26 @@ function cellFor(p, w, h) {
   // person is a slice of several folders, and there is nowhere honest to record the
   // order of a slice (ADR-0009: a folder owns its photographs).
   const canArrange = canArrangeHere();
-  return el("div", {
+  const cell = el("div", {
     class: "cell" + (S.sel.has(p.hash) ? " sel" : ""),
     style: `width:${Math.max(40, w)}px;height:${h}px`,
     title: p.name,
     "data-hash": p.hash,
-    draggable: canArrange ? "true" : false,
-    ondragstart: canArrange ? (e => {
+    draggable: "true",
+    ondragstart: e => {
+      releaseLivePhoto(e.currentTarget);
+      if (!canArrange) {
+        e.dataTransfer.effectAllowed = "copy";
+        e.dataTransfer.setData("text/plain", p.name);
+        const hashes = S.sel.has(p.hash) ? [...S.sel] : [p.hash];
+        invoke("start_file_drag", { path: S.source, hashes }).catch(error => toast(String(error), "error"));
+        return;
+      }
       dragHash = p.hash;
       e.dataTransfer.effectAllowed = "move";
-      // Firefox refuses to start a drag without data on the transfer.
       e.dataTransfer.setData("text/plain", p.hash);
       e.currentTarget.classList.add("dragging");
-    }) : null,
+    },
     ondragend: canArrange ? (e => {
       dragHash = null;
       e.currentTarget.classList.remove("dragging");
@@ -600,6 +675,7 @@ function cellFor(p, w, h) {
       dragHash = null;
     }) : null,
     onclick: e => {
+      if (e.currentTarget._liveConsumed) { e.currentTarget._liveConsumed = false; return; }
       if (e.metaKey || e.ctrlKey) { toggleSel(p); return; }
       if (e.shiftKey) { rangeSel(p); return; }
       if (S.sel.size) { toggleSel(p); return; }
@@ -609,14 +685,20 @@ function cellFor(p, w, h) {
       e.preventDefault();
       if (!S.sel.has(p.hash)) { S.sel.clear(); toggleSel(p); }
       showCtx(e.clientX, e.clientY);
-    }
+    },
+    onpointerdown: p.liveVideo ? (e => armLivePhoto(e.currentTarget, p, e)) : null,
+    onpointerup: p.liveVideo ? (e => releaseLivePhoto(e.currentTarget)) : null,
+    onpointercancel: p.liveVideo ? (e => releaseLivePhoto(e.currentTarget)) : null,
+    onpointerleave: p.liveVideo ? (e => releaseLivePhoto(e.currentTarget)) : null,
   }, img,
     el("button", {
       class: "pick", "aria-label": `Select ${p.name}`, tabindex: "-1",
       onclick: e => { e.stopPropagation(); toggleSel(p); }
     }, "\u2713"),
     p.kind === "video" ? el("span", { class: "play" }, "\u25B6") : null,
+    p.liveVideo ? el("span", { class: "live-pill" }, "LIVE") : null,
     p.people.length ? el("span", { class: "badge" }, p.people.join(", ")) : null);
+  return cell;
 }
 
 function paintViewport() {
@@ -783,6 +865,51 @@ function paintSel() {
   $("#sel-delete").hidden = inTrash;
 }
 
+function dateInputValue(photo) {
+  if (!photo?.taken_at) return "";
+  return new Date(photo.taken_at * 1000).toISOString().slice(0, 16);
+}
+
+async function setDateTimePrompt(hashes = [...S.sel]) {
+  if (!hashes.length) return;
+  const first = S.photos.find(p => hashes.includes(p.hash));
+  const chosen = await new Promise(resolve => {
+    let d;
+    const input = el("input", {
+      class: "nameinput", type: "datetime-local", step: "1",
+      value: dateInputValue(first), "aria-label": "Correct capture date and time",
+      onkeydown: e => { e.stopPropagation(); if (e.key === "Enter" && e.currentTarget.value) d.done(e.currentTarget.value); },
+    });
+    d = dialogFrame("Set Date & Time", [
+      el("p", { class: "asktext" },
+        hashes.length === 1
+          ? "This writes the corrected capture time into the JPEG itself, so it survives a rescan."
+          : `The same date and time will be written into all ${hashes.length} selected files. Unsupported files stay untouched.`),
+      input,
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel"),
+        el("button", { class: "btn", onclick: () => d.done(input.value) }, "Write to file")),
+    ]);
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+    setTimeout(() => input.focus(), 40);
+  });
+  if (!chosen) return;
+  const msg = await busy(`Writing capture time into ${hashes.length}…`,
+    () => invoke("set_photo_datetime", { path: S.source, hashes, datetime: chosen }), S.source);
+  toast(msg, "ok");
+  clearSel();
+  await refreshSources();
+  await loadPhotos();
+}
+
+async function shareHashes(hashes) {
+  if (!hashes?.length) return;
+  try { await invoke("share_photos", { path: S.source, hashes }); }
+  catch (e) { toast(String(e), "error"); }
+}
+
 /* ---------------- context menu ---------------- */
 function showCtx(x, y) {
   const menu = $("#ctx");
@@ -799,7 +926,9 @@ function showCtx(x, y) {
   items.push(el("hr"));
   items.push(item(`Move ${n} to\u2026`, "", moveSelectedPrompt));
   items.push(item(`Colour ${n}\u2026`, "", colourSelectedPrompt));
+  items.push(item(`Set Date & Time for ${n}\u2026`, "", () => setDateTimePrompt([...S.sel])));
   items.push(item(`Where was this?\u2026`, "", placePrompt));
+  items.push(item(`Share ${n}\u2026`, "", () => shareHashes([...S.sel])));
   items.push(item(`Strip metadata from ${n}\u2026`, "", stripSelectedPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
@@ -1194,21 +1323,59 @@ function preloadAround(i) {
   }
 }
 
+function mediaClock(seconds) {
+  if (!Number.isFinite(seconds)) return "0:00";
+  const whole = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(whole / 60);
+  return `${mins}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+function mountVideoControls(video, stage) {
+  const play = el("button", { "aria-label": "Pause" }, "Ⅱ");
+  const seek = el("input", { class: "video-seek", type: "range", min: "0", max: "1000", value: "0", "aria-label": "Video position" });
+  const time = el("span", { class: "video-time num" }, "0:00 / 0:00");
+  const mute = el("button", { "aria-label": "Mute" }, "◖");
+  const volume = el("input", { type: "range", min: "0", max: "1", step: ".05", value: "1", "aria-label": "Volume", style: "width:70px" });
+  const full = el("button", { "aria-label": "Full screen" }, "⛶");
+  const controls = el("div", { class: "video-controls", role: "group", "aria-label": "Video playback" },
+    play, seek, time, mute, volume, full);
+  const sync = () => {
+    play.textContent = video.paused ? "▶" : "Ⅱ";
+    play.setAttribute("aria-label", video.paused ? "Play" : "Pause");
+    seek.value = video.duration ? String(Math.round(video.currentTime / video.duration * 1000)) : "0";
+    time.textContent = `${mediaClock(video.currentTime)} / ${mediaClock(video.duration)}`;
+    mute.textContent = video.muted || video.volume === 0 ? "×" : "◖";
+    mute.setAttribute("aria-label", video.muted ? "Unmute" : "Mute");
+  };
+  play.onclick = () => video.paused ? video.play().catch(() => {}) : video.pause();
+  video.onclick = play.onclick;
+  seek.oninput = () => { if (video.duration) video.currentTime = Number(seek.value) / 1000 * video.duration; };
+  mute.onclick = () => { video.muted = !video.muted; sync(); };
+  volume.oninput = () => { video.volume = Number(volume.value); video.muted = false; sync(); };
+  full.onclick = () => video.requestFullscreen?.();
+  for (const event of ["loadedmetadata", "timeupdate", "play", "pause", "volumechange", "ended"])
+    video.addEventListener(event, sync);
+  stage.append(controls);
+  sync();
+}
+
 function paintLightbox() {
   const p = S.lbList[S.lbIndex];
   if (!p) return;
   const stage = document.querySelector(".lb-stage");
   const isVideo = p.kind === "video";
   stage.querySelector("video")?.remove();
+  stage.querySelector(".video-controls")?.remove();
   const img = $("#lb-img");
   img.hidden = isVideo;
   if (isVideo) {
     lbLoadSeq++;                     // cancel any full-size load still in flight
     const v = el("video", {
-      id: "lb-video", src: photoUrl(p.path), controls: true, autoplay: true,
+      id: "lb-video", src: photoUrl(p.path), autoplay: true,
       preload: "auto", playsinline: true,
     });
     stage.append(v);
+    mountVideoControls(v, stage);
   } else {
     showFull(p);
   }
@@ -1256,6 +1423,7 @@ function closeLightbox() {
   $("#lightbox").hidden = true;
   $("#lb-img").src = "";
   document.querySelector(".lb-stage")?.querySelector("video")?.remove();
+  document.querySelector(".lb-stage")?.querySelector(".video-controls")?.remove();
   resetZoom();
   S.edit = null;
   if (S.cropping) endCrop(false);
@@ -1736,6 +1904,7 @@ function applyFilter() {
   S.view = S.photos.filter(p =>
     // Trash is a real folder, but it should not appear in the library view unless
     // the user deliberately opens it.
+    !p.liveStill &&
     (S.folder === TRASH || p.folder !== TRASH) &&
     (!S.folder || inFolder(p.folder, S.folder)) &&
     (!S.person || p.people.includes(S.person)) &&
@@ -1756,7 +1925,12 @@ function applyFilter() {
     src?.name, S.folder,
     S.person ? `\u{1F464} ${S.person}` : null,
     S.cluster !== null ? "\u{1F464} unnamed person" : null,
-  ].filter(Boolean).join("  \u203A  ") + `   \u00B7   ${S.view.length} photos`;
+  ].filter(Boolean).join("  \u203A  ") + `   \u00B7   ${S.view.length} items`;
+  // WebKit can leave a newly repopulated sticky element at zero width until it is
+  // inserted back into the flow. Re-anchoring it makes the header deterministic.
+  const head = document.querySelector(".libhead");
+  head.replaceWith(head);
+  renderTimelineTools();
   renderGrid();
   paintSel();
   renderFilters();
@@ -2082,10 +2256,183 @@ async function newFolderPrompt() {
 
 /* ---------------- organize sheet ---------------- */
 const OPS = [
-  { id: "dedupe",  title: "Find duplicates",  desc: "Group burst shots and set all but the sharpest aside." },
   { id: "scenery", title: "Split out scenery", desc: "Move photos with no close-up person into Scenery." },
   { id: "file",    title: "File by person",    desc: "Move each photo into a folder named for the person in it." },
 ];
+
+const DUP = {
+  data: null, batches: [], batch: 0, group: 0, focus: null,
+  keepers: new Map(), reviewed: new Set(),
+};
+
+function bytesLabel(bytes) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let n = Math.max(0, Number(bytes) || 0), i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n >= 10 || i === 0 ? n.toFixed(0) : n.toFixed(1)} ${units[i]}`;
+}
+
+function dupCurrentGroup() { return DUP.batches[DUP.batch]?.groups[DUP.group] || null; }
+function dupFocusedItem() {
+  const group = dupCurrentGroup();
+  return group?.items.find(item => item.path === DUP.focus) || group?.items[0] || null;
+}
+
+async function openDuplicateReview() {
+  if (!S.source) return;
+  $("#sheet").hidden = true;
+  const data = await busy("Comparing photographs on this Mac…",
+    () => invoke("duplicate_review", { path: S.source }), S.source).catch(() => null);
+  if (!data) return;
+  if (!data.groups.length) return toast("No confirmed near-duplicates found", "ok");
+  const byBatch = new Map();
+  for (const group of data.groups) {
+    if (!byBatch.has(group.batch_id)) byBatch.set(group.batch_id, {
+      id: group.batch_id, title: group.batch_title, detail: group.batch_detail, groups: [],
+    });
+    byBatch.get(group.batch_id).groups.push(group);
+  }
+  DUP.data = data;
+  DUP.batches = [...byBatch.values()].sort((a, b) => {
+    const newest = batch => Math.max(...batch.groups.flatMap(group => group.items.map(item => item.taken_at || 0)));
+    return newest(b) - newest(a);
+  });
+  DUP.batch = 0; DUP.group = 0; DUP.focus = null;
+  DUP.keepers = new Map(data.groups.map(group => [group.id, group.items.find(item => item.recommended)?.path || group.items[0].path]));
+  DUP.reviewed = new Set();
+  $("#dup-review").hidden = false;
+  renderDuplicateReview();
+}
+
+function closeDuplicateReview() {
+  $("#dup-review").hidden = true;
+  DUP.data = null; DUP.batches = []; DUP.focus = null;
+}
+
+function renderDuplicateReview() {
+  const group = dupCurrentGroup();
+  if (!group) return closeDuplicateReview();
+  const batch = DUP.batches[DUP.batch];
+  const keeper = DUP.keepers.get(group.id);
+  if (!DUP.focus || !group.items.some(item => item.path === DUP.focus)) {
+    DUP.focus = group.items.find(item => item.path !== keeper)?.path || keeper;
+  }
+  const focus = dupFocusedItem();
+  const keepItem = group.items.find(item => item.path === keeper) || group.items[0];
+  const compare = focus.path === keepItem.path
+    ? group.items.find(item => item.path !== keepItem.path) || keepItem
+    : focus;
+  const reviewedGroups = DUP.data.groups.filter(g => DUP.reviewed.has(g.id));
+  const rejected = reviewedGroups.flatMap(g => g.items.filter(item => item.path !== DUP.keepers.get(g.id)));
+  const reclaim = rejected.reduce((sum, item) => sum + item.bytes, 0);
+
+  $("#dup-summary").textContent = `${DUP.data.groups.length} bursts · ${bytesLabel(DUP.data.reclaimable)} possible`;
+  $("#dup-context-title").textContent = batch.title;
+  $("#dup-context-detail").textContent = `${batch.detail} · ${group.items.length} frames`;
+  $("#dup-progress").textContent = `Burst ${DUP.group + 1} of ${batch.groups.length}`;
+  $("#dup-quality-note").textContent = `Detail score is relative to this burst. ${keepItem.name || keepItem.path.split("/").pop()} is the current keeper.`;
+
+  $("#dup-batches").replaceChildren(...DUP.batches.map((entry, index) => {
+    const done = entry.groups.every(g => DUP.reviewed.has(g.id));
+    const bytes = entry.groups.reduce((sum, g) => sum + g.reclaimable, 0);
+    return el("button", {
+      class: `dup-batch${done ? " reviewed" : ""}`, "aria-current": String(index === DUP.batch),
+      onclick: () => { DUP.batch = index; DUP.group = 0; DUP.focus = null; renderDuplicateReview(); },
+    }, el("span", { class: "batch-state" }),
+      el("span", {}, el("b", {}, entry.title), el("small", {}, `${entry.groups.length} burst${entry.groups.length === 1 ? "" : "s"}`)),
+      el("span", { class: "batch-space num" }, bytesLabel(bytes)));
+  }));
+
+  const pane = item => el("figure", {
+    class: `dup-pane${item.path === keeper ? " keep" : ""}${item.path === DUP.focus ? " selected" : ""}`,
+    onclick: () => { DUP.focus = item.path; renderDuplicateReview(); },
+  },
+    el("img", { src: photoUrl(item.path) + "?preview=" + item.hash, alt: item.path.split("/").pop() }),
+    el("span", { class: "keep-mark" }, item.path === keeper ? "KEEP" : "COMPARE"),
+    el("figcaption", {}, el("b", {}, item.path.split("/").pop()),
+      el("span", {}, item.width && item.height ? `${item.width}×${item.height}` : ""),
+      el("span", { class: "pane-spacer" }),
+      el("span", { class: "quality-score num" }, `${item.quality}/100`)));
+  $("#dup-compare").replaceChildren(pane(keepItem), pane(compare));
+  $("#dup-film").replaceChildren(...group.items.map(item => el("button", {
+    class: `dup-thumb${item.path === keeper ? " keep" : ""}`,
+    "aria-current": String(item.path === DUP.focus), title: item.path,
+    onclick: () => { DUP.focus = item.path; renderDuplicateReview(); },
+  }, el("img", { src: photoUrl(item.path) + "?t=" + item.hash, alt: "" }),
+    el("span", { class: "num" }, item.quality))));
+
+  $("#dup-like").setAttribute("aria-pressed", String((focus.rating || 0) === 5));
+  $("#dup-like").textContent = (focus.rating || 0) === 5 ? "★ Liked" : "☆ Like";
+  $("#dup-reclaim").textContent = DUP.reviewed.size
+    ? `${rejected.length} ready for Trash · ${bytesLabel(reclaim)}`
+    : "Decisions stay staged until you apply";
+  $("#dup-apply").textContent = DUP.reviewed.size ? `Move reviewed to Trash · ${bytesLabel(reclaim)}` : "Move reviewed to Trash";
+  $("#dup-apply").disabled = DUP.reviewed.size === 0;
+  const atStart = DUP.batch === 0 && DUP.group === 0;
+  const atEnd = DUP.batch === DUP.batches.length - 1 && DUP.group === batch.groups.length - 1;
+  $("#dup-prev").disabled = atStart;
+  $("#dup-next").textContent = atEnd ? "Accept keeper" : "Next →";
+}
+
+function reviewDuplicateKeep() {
+  const group = dupCurrentGroup(), focus = dupFocusedItem();
+  if (!group || !focus) return;
+  DUP.keepers.set(group.id, focus.path);
+  DUP.reviewed.add(group.id);
+  renderDuplicateReview();
+}
+
+function stepDuplicate(direction) {
+  const batch = DUP.batches[DUP.batch];
+  if (!batch) return;
+  if (direction > 0) DUP.reviewed.add(dupCurrentGroup().id); // accepts the current suggestion
+  let group = DUP.group + direction, batchIndex = DUP.batch;
+  if (group >= batch.groups.length) { batchIndex = Math.min(DUP.batches.length - 1, batchIndex + 1); group = batchIndex === DUP.batch ? DUP.group : 0; }
+  if (group < 0) { batchIndex = Math.max(0, batchIndex - 1); group = batchIndex === DUP.batch ? 0 : DUP.batches[batchIndex].groups.length - 1; }
+  DUP.batch = batchIndex; DUP.group = group; DUP.focus = null;
+  renderDuplicateReview();
+}
+
+async function toggleDuplicateLike() {
+  const item = dupFocusedItem();
+  if (!item) return;
+  item.rating = item.rating === 5 ? 0 : 5;
+  await invoke("set_rating", { path: S.source, hashes: [item.hash], rating: item.rating });
+  renderDuplicateReview();
+}
+
+async function moveDuplicateCurrent() {
+  const item = dupFocusedItem();
+  if (!item) return;
+  const dest = await pickFolderPrompt("Move this photo to", "Keepers");
+  if (!dest) return;
+  const plan = await invoke("plan_move", { path: S.source, hashes: [item.hash], dest });
+  if (!plan.moves.length) return toast("Already there", "info");
+  const ok = await confirmDialog("Move this photo?", `It will move into “${dest}”.`, "Move");
+  if (!ok) return;
+  const msg = await invoke("apply_move", { path: S.source, hashes: [item.hash], dest });
+  toast(msg + " — ⌘Z to undo", "ok");
+  closeDuplicateReview();
+  await refreshSources(); await loadPhotos();
+}
+
+async function applyDuplicateReview() {
+  const groups = DUP.data.groups.filter(group => DUP.reviewed.has(group.id));
+  const rejected = groups.flatMap(group => group.items.filter(item => item.path !== DUP.keepers.get(group.id)));
+  if (!rejected.length) return;
+  const bytes = rejected.reduce((sum, item) => sum + item.bytes, 0);
+  const ok = await confirmDialog("Move reviewed files to Trash?",
+    `${rejected.length} file${rejected.length === 1 ? "" : "s"} (${bytesLabel(bytes)}) will move to OpenFoto Trash. Nothing is permanently erased, and ⌘Z restores the exact prior folders.`,
+    "Move to Trash", true);
+  if (!ok) return;
+  const msg = await busy("Applying duplicate decisions…",
+    () => invoke("apply_duplicate_review", {
+      path: S.source, rejections: rejected.map(item => ({ hash: item.hash, path: item.path })),
+    }), S.source);
+  toast(msg + " — empty OpenFoto Trash when you are ready to reclaim the space", "ok");
+  closeDuplicateReview();
+  await refreshSources(); await loadPhotos();
+}
 
 /* The shipped default. Hyphens rather than colons because the reference drive is
    exFAT, where `:` is reserved (fsops::RESERVED). */
@@ -2161,6 +2508,10 @@ function openSheet() {
   if (!S.source) return toast("Add a folder first");
   $("#sheet-title").textContent = "Organize";
   $("#sheet-body").replaceChildren(
+    el("div", { class: "op" },
+      el("div", { class: "txt" }, el("b", {}, "Review near-duplicates"),
+        el("span", {}, "Compare burst shots full-screen, choose each keeper, then safely reclaim space.")),
+      el("button", { class: "btn", onclick: openDuplicateReview }, "Review")),
     ...OPS.map(op => {
       const out = el("div", { class: "planout", hidden: true });
       const apply = el("button", { class: "btn", disabled: true, onclick: () => runApply(op, out, apply) }, "Apply");
@@ -2177,7 +2528,11 @@ function openSheet() {
       el("button", { class: "btn", onclick: openReview }, "Review people")),
     el("div", { class: "op" },
       el("div", { class: "txt" }, el("b", {}, "Undo"), el("span", {}, "Reverse the most recent change.")),
-      el("button", { class: "btn ghost", onclick: doUndo }, "Undo last")));
+      el("button", { class: "btn ghost", onclick: doUndo }, "Undo last")),
+    el("div", { class: "op" },
+      el("div", { class: "txt" }, el("b", {}, "Check for updates…"),
+        el("span", {}, "Contacts GitHub for release metadata only. No photo or library data leaves this Mac.")),
+      el("button", { class: "btn ghost", onclick: () => checkUpdates(true) }, "Check")));
   $("#sheet").hidden = false;
   checkModels();
 }
@@ -2722,6 +3077,45 @@ function labelColour(l) {
            blue: "#60a5fa", purple: "#c4b5fd", grey: "#9ca3af" }[l] || "#888";
 }
 
+function monthKey(ts) {
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function renderTimelineTools() {
+  const tools = $("#timeline-tools");
+  if (!tools) return;
+  tools.hidden = !S.source || !S.view.length;
+  $("#sort-newest").setAttribute("aria-pressed", String(S.sort === "newest"));
+  $("#sort-oldest").setAttribute("aria-pressed", String(S.sort === "oldest"));
+  const select = $("#month-jump");
+  const prior = select.value;
+  const keys = [...new Set(S.view.filter(p => p.taken_at).map(p => monthKey(p.taken_at)))];
+  select.replaceChildren(el("option", { value: "" }, "Jump to month…"), ...keys.map(key => {
+    const [year, month] = key.split("-").map(Number);
+    const label = new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    return el("option", { value: key }, label);
+  }));
+  if (keys.includes(prior)) select.value = prior;
+  select.disabled = !["newest", "oldest"].includes(S.sort);
+  select.title = select.disabled ? "Choose Newest or Oldest to jump through the timeline" : "";
+}
+
+function setTimelineSort(sort) {
+  S.sort = sort;
+  S.group = "date";
+  S.resetScroll = true;
+  applyFilter();
+  saveFolderView();
+}
+
+function jumpToMonth(key) {
+  if (!key) return;
+  const block = LAYOUT.blocks.find(b => b.kind === "head" && b.month === key);
+  if (!block) return toast("That month is not in this view");
+  $("#main").scrollTo({ top: Math.max(0, block.y - 6), behavior: "smooth" });
+}
+
 /* ---------------- arranging a folder ----------------
    The arrangement lives in that folder's own `openfoto.json` (ADR-0010), beside the
    ratings of the photographs it holds — a folder saying how it is ordered is the same
@@ -3260,6 +3654,11 @@ $("#map-in").onclick = () => { MAP.zoom = Math.min(14, MAP.zoom + 0.8); schedule
 $("#map-out").onclick = () => { MAP.zoom = Math.max(0.6, MAP.zoom - 0.8); scheduleMap(); };
 $("#map-fit").onclick = () => { fitMap(); scheduleMap(); };
 $("#btn-tools").onclick = openSheet;
+$("#sort-newest").onclick = () => setTimelineSort("newest");
+$("#sort-oldest").onclick = () => setTimelineSort("oldest");
+$("#month-jump").onchange = e => jumpToMonth(e.target.value);
+$("#update-close").onclick = dismissUpdate;
+$("#update-download").onclick = () => pendingUpdate && invoke("open_update", { url: pendingUpdate.url }).catch(e => toast(String(e), "error"));
 /* The initial theme is applied by an inline script in index.html (pre-paint);
    this only flips it and remembers the choice. */
 $("#btn-theme").onclick = () => {
@@ -3271,6 +3670,10 @@ $("#btn-review").onclick = openReview;
 $("#sheet-close").onclick = () => ($("#sheet").hidden = true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") $("#sheet").hidden = true; };
 $("#lb-close").onclick = closeLightbox;
+$("#lb-share").onclick = () => {
+  const p = S.lbList[S.lbIndex];
+  if (p) shareHashes([p.hash]);
+};
 $("#lb-info").onclick = toggleInfo;
 $("#btn-filter").onclick = () => {
   const f = $("#filters");
@@ -3420,9 +3823,19 @@ $("#lb-delete").onclick = async () => {
 };
 $("#sel-all").onclick = () => { S.view.forEach(p => S.sel.add(p.hash)); paintSel(); };
 $("#sel-none").onclick = clearSel;
+$("#sel-date").onclick = () => setDateTimePrompt([...S.sel]);
+$("#sel-share").onclick = () => shareHashes([...S.sel]);
 $("#sel-delete").onclick = deleteSelected;
 $("#sel-restore").onclick = restoreSelected;
 $("#sel-untag").onclick = untagSelected;
+$("#dup-close").onclick = closeDuplicateReview;
+$("#dup-keep").onclick = reviewDuplicateKeep;
+$("#dup-prev").onclick = () => stepDuplicate(-1);
+$("#dup-next").onclick = () => stepDuplicate(1);
+$("#dup-like").onclick = toggleDuplicateLike;
+$("#dup-share").onclick = () => { const item = dupFocusedItem(); if (item) shareHashes([item.hash]); };
+$("#dup-move").onclick = moveDuplicateCurrent;
+$("#dup-apply").onclick = applyDuplicateReview;
 addEventListener("click", e => { if (!e.target.closest("#ctx")) hideCtx(); });
 $("#lb-prev").onclick = () => step(-1);
 $("#lb-next").onclick = () => step(1);
@@ -3449,6 +3862,13 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !$("#suggest").hidden) { $("#suggest").hidden = true; }
 }, true);
 addEventListener("keydown", e => {
+  if (!$("#dup-review").hidden) {
+    if (e.key === "Escape") closeDuplicateReview();
+    if (e.key === "ArrowRight") stepDuplicate(1);
+    if (e.key === "ArrowLeft") stepDuplicate(-1);
+    if (e.key.toLowerCase() === "k") reviewDuplicateKeep();
+    return;
+  }
   if (!$("#lightbox").hidden) {
     if (S.cropping) {
       if (e.key === "Escape") { endCrop(false); return; }
@@ -3517,6 +3937,7 @@ listen("library-changed", async ({ payload }) => {
 (async function init() {
   renderWelcome();
   loadFolderState();
+  checkUpdates(false); // deliberately not awaited: a network check never delays the library
   await refreshSources();
   if (S.sources.length) {
     const first = S.sources.find(s => !s.missing);

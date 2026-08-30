@@ -12,6 +12,7 @@
 //! Place data: GeoNames cities1000, CC BY 4.0, packed by `tools/build-geodata.sh`.
 
 use anyhow::{bail, Context, Result};
+use chrono::NaiveDateTime;
 use serde::Serialize;
 use std::path::Path;
 
@@ -309,8 +310,7 @@ struct Tiff {
     big_endian: bool,
     ifd0: Vec<Entry>,
     exif: Vec<Entry>,
-    // The old GPS directory is deliberately not kept: `rebuild_tiff` writes a fresh
-    // one, so reading the previous coordinates would only be to throw them away.
+    gps: Vec<Entry>,
     interop: Vec<Entry>,
     ifd1: Vec<Entry>,
     thumbnail: Vec<u8>,
@@ -384,6 +384,7 @@ fn parse_tiff(b: &[u8]) -> Result<Tiff> {
     let ifd0_at = rd32(b, 4, be)? as usize;
     let ifd0 = read_ifd(b, ifd0_at, be)?;
     let exif = sub_ifd(b, &ifd0, T_EXIF_IFD, be);
+    let gps = sub_ifd(b, &ifd0, T_GPS_IFD, be);
     let interop = sub_ifd(b, &exif, T_INTEROP, be);
 
     // IFD1 holds the camera's embedded thumbnail, which the thumbnailer uses as a fast
@@ -410,7 +411,7 @@ fn parse_tiff(b: &[u8]) -> Result<Tiff> {
             ifd1 = entries;
         }
     }
-    Ok(Tiff { big_endian: be, ifd0, exif, interop, ifd1, thumbnail })
+    Ok(Tiff { big_endian: be, ifd0, exif, gps, interop, ifd1, thumbnail })
 }
 
 fn u16b(v: u16, be: bool) -> [u8; 2] {
@@ -480,8 +481,20 @@ fn gps_entries(lat: f64, lon: f64, be: bool) -> Vec<Entry> {
     ]
 }
 
-/// Rebuild a TIFF block carrying `lat`/`lon`, keeping everything else it held.
-fn rebuild_tiff(t: &Tiff, lat: f64, lon: f64) -> Vec<u8> {
+fn set_ascii(entries: &mut Vec<Entry>, tag: u16, value: &str) {
+    let mut data = value.as_bytes().to_vec();
+    data.push(0);
+    let entry = Entry { tag, typ: 2, count: data.len() as u32, data };
+    if let Some(old) = entries.iter_mut().find(|e| e.tag == tag) {
+        *old = entry;
+    } else {
+        entries.push(entry);
+    }
+}
+
+/// Rebuild a TIFF block, optionally replacing its GPS directory and capture time.
+/// Supplying neither preserves the parsed values byte-for-byte.
+fn rebuild_tiff(t: &Tiff, replacement_gps: Option<Vec<Entry>>, datetime: Option<&str>) -> Vec<u8> {
     let be = t.big_endian;
     let mut ifd0: Vec<Entry> = t
         .ifd0
@@ -490,7 +503,14 @@ fn rebuild_tiff(t: &Tiff, lat: f64, lon: f64) -> Vec<u8> {
         .cloned()
         .collect();
     let mut exif: Vec<Entry> = t.exif.iter().filter(|e| e.tag != T_INTEROP).cloned().collect();
-    let gps = gps_entries(lat, lon, be);
+    let gps = replacement_gps.unwrap_or_else(|| t.gps.clone());
+    if let Some(value) = datetime {
+        // IFD0 DateTime, EXIF DateTimeOriginal and DateTimeDigitized. Writing all
+        // three makes the correction agree in old cataloguers as well as cameras.
+        set_ascii(&mut ifd0, 0x0132, value);
+        set_ascii(&mut exif, 0x9003, value);
+        set_ascii(&mut exif, 0x9004, value);
+    }
     // TIFF requires ascending tags within a directory, and some readers rely on it.
     ifd0.sort_by_key(|e| e.tag);
     exif.sort_by_key(|e| e.tag);
@@ -578,16 +598,17 @@ fn rebuild_tiff(t: &Tiff, lat: f64, lon: f64) -> Vec<u8> {
 }
 
 /// A fresh EXIF block for a photograph that carried none.
-fn fresh_tiff(lat: f64, lon: f64) -> Vec<u8> {
+fn fresh_tiff(gps: Option<Vec<Entry>>, datetime: Option<&str>) -> Vec<u8> {
     let t = Tiff {
         big_endian: false,
         ifd0: Vec::new(),
         exif: Vec::new(),
+        gps: Vec::new(),
         interop: Vec::new(),
         ifd1: Vec::new(),
         thumbnail: Vec::new(),
     };
-    rebuild_tiff(&t, lat, lon)
+    rebuild_tiff(&t, gps, datetime)
 }
 
 /// Put coordinates into a JPEG, keeping everything else its EXIF held.
@@ -620,8 +641,12 @@ pub fn write_gps(path: &Path, lat: f64, lon: f64) -> Result<()> {
     }
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let tiff = match find_app1(&bytes) {
-        Some((_, _, payload)) => rebuild_tiff(&parse_tiff(payload)?, lat, lon),
-        None => fresh_tiff(lat, lon),
+        Some((_, _, payload)) => {
+            let parsed = parse_tiff(payload)?;
+            let gps = gps_entries(lat, lon, parsed.big_endian);
+            rebuild_tiff(&parsed, Some(gps), None)
+        }
+        None => fresh_tiff(Some(gps_entries(lat, lon, false)), None),
     };
     let mut app1 = Vec::with_capacity(tiff.len() + 10);
     app1.extend_from_slice(&[0xFF, 0xE1]);
@@ -647,6 +672,59 @@ pub fn write_gps(path: &Path, lat: f64, lon: f64) -> Result<()> {
             let _ = std::fs::remove_file(&tmp);
             bail!("the rewritten file did not read back as {lat}, {lon} (got {other:?}) — {} was left alone",
                   path.display())
+        }
+    }
+}
+
+/// Put a corrected capture date into a JPEG, preserving all other EXIF fields.
+///
+/// As with [`write_gps`], the rewrite is parsed from a temporary file before it may
+/// replace the original. The caller supplies a timezone-free camera wall clock because
+/// the EXIF 2.x date fields themselves do not carry a timezone.
+pub fn write_datetime(path: &Path, datetime: NaiveDateTime) -> Result<()> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(ext.as_str(), "jpg" | "jpeg") {
+        bail!(
+            "openfoto can only write a capture time into JPEG files, not {}",
+            if ext.is_empty() { "this".into() } else { ext.to_uppercase() }
+        );
+    }
+
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let value = datetime.format("%Y:%m:%d %H:%M:%S").to_string();
+    let tiff = match find_app1(&bytes) {
+        Some((_, _, payload)) => rebuild_tiff(&parse_tiff(payload)?, None, Some(&value)),
+        None => fresh_tiff(None, Some(&value)),
+    };
+    let mut app1 = Vec::with_capacity(tiff.len() + 10);
+    app1.extend_from_slice(&[0xFF, 0xE1]);
+    let len = tiff.len() + 6 + 2;
+    if len > u16::MAX as usize {
+        bail!("this photograph's metadata is too large to rewrite");
+    }
+    app1.extend_from_slice(&(len as u16).to_be_bytes());
+    app1.extend_from_slice(b"Exif\0\0");
+    app1.extend_from_slice(&tiff);
+    let out = splice_app1(&bytes, &app1)?;
+
+    let tmp = path.with_extension("openfoto-time-tmp");
+    std::fs::write(&tmp, &out)?;
+    match crate::timesource::from_exif(&tmp) {
+        Some(got) if got == datetime => {
+            std::fs::rename(&tmp, path).context("replacing the photograph")?;
+            Ok(())
+        }
+        other => {
+            let _ = std::fs::remove_file(&tmp);
+            bail!(
+                "the rewritten file did not read back as {} (got {other:?}) — {} was left alone",
+                datetime.format("%Y-%m-%d %H:%M:%S"),
+                path.display()
+            )
         }
     }
 }
@@ -772,6 +850,35 @@ mod tests {
         // And it still decodes as an image afterwards.
         let img = image::open(&p).unwrap();
         assert_eq!((img.width(), img.height()), (48, 32));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_photograph_with_no_exif_can_be_given_a_capture_time() {
+        let d = tmp("fresh-time");
+        let p = jpeg(&d, "a.jpg");
+        let wanted = NaiveDateTime::parse_from_str("2026-08-19 14:03:27", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        write_datetime(&p, wanted).unwrap();
+
+        assert_eq!(crate::timesource::from_exif(&p), Some(wanted));
+        let img = image::open(&p).unwrap();
+        assert_eq!((img.width(), img.height()), (48, 32));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn changing_capture_time_preserves_the_location() {
+        let d = tmp("time-keeps-gps");
+        let p = jpeg(&d, "a.jpg");
+        write_gps(&p, 36.3932, 25.4615).unwrap();
+        let wanted = NaiveDateTime::parse_from_str("2026-08-20 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        write_datetime(&p, wanted).unwrap();
+
+        assert_eq!(crate::timesource::from_exif(&p), Some(wanted));
+        let (lat, lon) = read_gps(&p).expect("location survives the date rewrite");
+        assert!((lat - 36.3932).abs() < 0.001 && (lon - 25.4615).abs() < 0.001);
         let _ = std::fs::remove_dir_all(&d);
     }
 

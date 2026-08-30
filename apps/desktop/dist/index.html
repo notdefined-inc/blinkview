@@ -73,6 +73,13 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
   </div>
 </header>
 
+<div class="update-banner" id="update-banner" hidden role="status">
+  <span class="update-spark" aria-hidden="true">↑</span>
+  <span><b id="update-title">A new OpenFoto is ready</b><small id="update-note"></small></span>
+  <button class="btn sm" id="update-download">Download</button>
+  <button class="icon-btn" id="update-close" aria-label="Dismiss update notice">✕</button>
+</div>
+
 <div class="shell">
   <aside class="sidebar" id="sidebar">
     <section class="nav-block">
@@ -103,7 +110,20 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
   </aside>
 
   <main id="main">
-    <div class="libhead"><span id="crumb"></span></div>
+    <div class="libhead">
+      <span id="crumb"></span>
+      <span aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none">&#8203;</span>
+      <div class="timeline-tools" id="timeline-tools" hidden>
+        <div class="seg" role="group" aria-label="Timeline order">
+          <button id="sort-newest" aria-pressed="true">Newest</button>
+          <button id="sort-oldest" aria-pressed="false">Oldest</button>
+        </div>
+        <label class="month-jump">
+          <span class="sr-only">Jump to month</span>
+          <select id="month-jump" aria-label="Jump to month"><option value="">Jump to month…</option></select>
+        </label>
+      </div>
+    </div>
     <div class="qchips" id="qchips" hidden></div>
     <div class="filters" id="filters" hidden>
       <div class="frow"><span class="flab">People</span><span class="fopts" id="f-people"></span></div>
@@ -172,6 +192,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
       <button class="btn ghost sm" id="lb-revert" hidden>Discard</button>
       <span class="stars" id="lb-stars" role="group" aria-label="Rating"></span>
       <span class="labels" id="lb-labels" role="group" aria-label="Colour label"></span>
+      <button class="icon-btn" id="lb-share" title="Share" aria-label="Share this file">↗</button>
       <button class="icon-btn" id="lb-info" title="Info" aria-label="Info">ⓘ</button>
       <button class="icon-btn" id="lb-rename" title="Rename" aria-label="Rename">✎</button>
       <button class="icon-btn danger" id="lb-delete" title="Move to Trash" aria-label="Move to Trash">🗑</button>
@@ -228,6 +249,35 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
   <div class="lb-strip" id="lb-strip"></div>
 </div>
 
+<section class="dup-review" id="dup-review" hidden aria-label="Duplicate review">
+  <header class="dup-head">
+    <button class="icon-btn" id="dup-close" aria-label="Close duplicate review">✕</button>
+    <span class="dup-title"><b>Near-duplicates</b><small id="dup-summary">On-device comparison</small></span>
+    <span class="dup-head-spacer"></span>
+    <button class="btn ghost sm" id="dup-share">Share</button>
+    <button class="btn ghost sm" id="dup-move">Move to Folder</button>
+    <button class="btn sm" id="dup-apply">Review complete</button>
+  </header>
+  <div class="dup-body">
+    <aside class="dup-batches" id="dup-batches" aria-label="Days and trips"></aside>
+    <main class="dup-work">
+      <div class="dup-context"><span><b id="dup-context-title"></b><small id="dup-context-detail"></small></span><span class="dup-progress num" id="dup-progress"></span></div>
+      <div class="dup-compare" id="dup-compare"></div>
+      <div class="dup-quality"><span class="quality-dot"></span><span id="dup-quality-note">Quality scores compare visible detail within this burst.</span></div>
+      <div class="dup-film" id="dup-film"></div>
+      <footer class="dup-foot">
+        <button class="btn ghost sm" id="dup-prev">← Previous</button>
+        <div class="dup-decision">
+          <button class="btn ghost sm" id="dup-like" aria-pressed="false">☆ Like</button>
+          <button class="btn ghost sm" id="dup-keep">Keep selected</button>
+          <span id="dup-reclaim" class="num"></span>
+        </div>
+        <button class="btn sm" id="dup-next">Next →</button>
+      </footer>
+    </main>
+  </div>
+</section>
+
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <div class="sheet-head"><h2 id="sheet-title">Organize</h2><button class="icon-btn" id="sheet-close" aria-label="Close">✕</button></div>
@@ -241,6 +291,8 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
   <button class="btn ghost sm" id="sel-none">Clear</button>
   <span class="selspacer"></span>
   <button class="btn ghost sm" id="sel-untag" hidden>Not this person</button>
+  <button class="btn ghost sm" id="sel-date">Set Date &amp; Time…</button>
+  <button class="btn ghost sm" id="sel-share">Share</button>
   <button class="btn ghost sm" id="sel-restore" hidden>Restore</button>
   <button class="btn ghost sm danger" id="sel-delete">Move to Trash</button>
 </div>

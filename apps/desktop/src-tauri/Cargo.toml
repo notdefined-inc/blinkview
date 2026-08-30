@@ -20,9 +20,20 @@ tauri-plugin-dialog = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
 http = "1"
 notify = { workspace = true }
 rayon = { workspace = true }
+semver = "1"
+ureq = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Narrow native adapters: AppKit supplies the system share picker and `drag` supplies
+# real outbound file drags. Both receive only paths resolved from content hashes here.
+drag = "2.1.1"
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSResponder", "NSSharingService", "NSView", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSString", "NSURL"] }
 
 # UI-verification bridge. cargo cannot select dependencies on cfg(debug_assertions),
 # so this is a real feature, on by default for development and dropped from a release

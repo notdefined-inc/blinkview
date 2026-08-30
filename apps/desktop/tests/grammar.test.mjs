@@ -37,7 +37,7 @@ const sandbox = {
 };
 
 const exported = ["parseClause", "splitClauses", "verbOf", "nearestVerb", "isCommand",
-                  "parseQuery", "inFolder", "sectionFor", "stripFiller"];
+                  "parseQuery", "inFolder", "sectionFor", "stripFiller", "hydrate", "bytesLabel"];
 const fn = new Function(
   ...Object.keys(sandbox),
   `${src}\n;return { ${exported.join(", ")} };`
@@ -175,5 +175,17 @@ assert.equal(G.inFolder("WhatsApp Video/Private", "WhatsApp Video"), true);
 assert.equal(G.inFolder("WhatsApp Images", "WhatsApp Video"), false);
 // And still not a name-prefixed sibling.
 assert.equal(G.inFolder("WhatsApp Video2/x", "WhatsApp Video"), false);
+
+// --- derived media presentation -------------------------------------------
+
+const media = G.hydrate([
+  { path: "Trip/IMG_0042.HEIC", kind: "photo", hash: "still" },
+  { path: "Trip/IMG_0042.MOV", kind: "video", hash: "motion" },
+  { path: "Trip/clip.mp4", kind: "video", hash: "clip" },
+]);
+assert.equal(media[0].liveVideo.hash, "motion", "a same-stem MOV pairs with its still");
+assert.equal(media[1].liveStill.hash, "still", "the motion half is hidden behind the still");
+assert.equal(media[2].liveStill, undefined, "ordinary video stays an ordinary video");
+assert.equal(G.bytesLabel(1536), "1.5 KB");
 
 console.log("grammar: all assertions passed");

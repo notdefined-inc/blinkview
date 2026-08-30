@@ -14,7 +14,7 @@ Nothing in flight. All three planned phases have shipped; the v1 spec is in
   matcher error or a mislabel in a fixture that a semi-automatic process produced.
 
 ## Later
-RAW, cross-source search, albums, sharing, a real preferences surface.
+RAW, cross-source search, albums, a real preferences surface, video hover previews.
 
 ## Done
 Phase 1 — `scan`, `dedupe`, `rename`, `undo`, journal/undo core, exFAT handling.
@@ -26,6 +26,11 @@ actions, trash with restore, per-photo rename, per-person untagging, progress
 reporting, model fetching, HEIC, video, drag-and-drop folders.
 
 Beyond v1: RAW/HEIC, geotagging, tag hierarchies, plugins.
+
+Phase 4 — native media and cleanup workflows: duplicate review with quality compare
+and Reclaim Space, EXIF date/time correction, Live Photos, floating video controls,
+timeline sort/month jump, native share and Finder drag-out, and a manual GitHub release
+check.
 
 ## Platforms
 

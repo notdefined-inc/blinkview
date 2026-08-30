@@ -8,6 +8,14 @@ _Last updated: 2026-08-30_
 justified grid, lightbox with folder/person context, in-app people review with live
 re-suggestion, selection with context menu, delete to a recoverable `Trash/`, per-photo
 rename, per-person untagging, and the organize sheet (preview then apply).
+Near-duplicate bursts and re-takes are reviewed one day (or GPS-labelled trip week) at
+a time, with sharpness scores, side-by-side compare, Like, and journalled bulk
+Keep/Trash via Reclaim Space. `Set Date & Time` writes a corrected capture time into
+the file's EXIF, the way Set Location writes GPS. MOV, MP4 and M4V play under a floating
+transport pill; stem-matched still/MOV pairs behave as Live Photos; the timeline has
+newest/oldest and month jump; selections share through the macOS picker, drag into
+Finder as real files, and the app checks GitHub releases for a banner with an explicit
+Download action.
 
 The visual layer is **Aurora Glass** (docs/CURRENT/DESIGN.md, spec
 docs/SPECS/done/2026-08-28-aurora-glass-ui.md): an ambient cyan/violet/amber gradient
@@ -678,6 +686,21 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 The everyday cleanup and native-media workflows. **Review** groups
+  verified perceptual near-duplicates into day/trip batches, scores sharpness,
+  suggests a keeper without applying it, and moves only rejected files to journalled
+  Trash; Reclaim Space applies the same staged plan across batches. **Set Date & Time**
+  rewrites all three EXIF datetime fields, verifies the rewritten JPEG before keeping
+  it, carries hash-keyed ratings/labels/albums across, and multi-select stamps one
+  instant. Live Photo pairs use press-and-hold over an immediately painted still;
+  video gets a floating control pill with no hover veil; the timeline gains direction
+  and month jump. Share resolves selection hashes to real files and hands them to
+  `NSSharingServicePicker`; Finder drag-out is likewise resolved in Rust. Release checks
+  send only a versioned user-agent request to GitHub and stop at a Download link — no
+  auto-update. Also fixed: the sticky library header collapsed to zero width in
+  WKWebView after hydration. Specs:
+  docs/SPECS/done/2026-08-30-{duplicate-review,date-time-correction,native-media-workflows}.md;
+  native boundary in ADR-0016.
 - 2026-08-30 A map, and places. Photographs with EXIF GPS resolve to "City, Region,
   Country" from a bundled 4.35 MB table of 170,860 places, and are drawn as clusters on
   a canvas map built from bundled vector outlines — no tile is ever fetched, because a

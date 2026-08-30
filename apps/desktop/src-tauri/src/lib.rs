@@ -20,6 +20,7 @@ mod watch;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
+use chrono::{Datelike, NaiveDateTime, Utc};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
@@ -1181,6 +1182,72 @@ async fn set_photo_location(
     })
 }
 
+fn parse_capture_datetime(value: &str) -> anyhow::Result<NaiveDateTime> {
+    let value = value.trim();
+    let parsed = [
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S",
+    ]
+    .into_iter()
+    .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
+    .ok_or_else(|| anyhow::anyhow!("choose a complete date and time"))?;
+    if !(1900..=9999).contains(&parsed.year()) {
+        anyhow::bail!("EXIF dates must be between 1900 and 9999");
+    }
+    Ok(parsed)
+}
+
+/// Correct the camera wall-clock value in the photographs themselves.
+///
+/// One value is deliberately shared by the whole selection: this is the predictable
+/// multi-select operation for a scanner batch or a camera whose clock was unset.
+#[tauri::command]
+async fn set_photo_datetime(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    datetime: String,
+) -> R<String> {
+    let wanted = parse_capture_datetime(&datetime).map_err(err)?;
+    let sink = emitter(&app, "date", &path);
+    with(&state, &path, |lib| {
+        let by_hash: BTreeMap<String, String> = lib
+            .index
+            .all()?
+            .into_iter()
+            .map(|r| (r.hash, r.path))
+            .collect();
+        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
+        for hash in &hashes {
+            counter.tick();
+            let Some(rel) = by_hash.get(hash) else { continue };
+            let cached_gps = lib.index.get_gps(hash)?;
+            match openfoto_core::geo::write_datetime(&lib.abs(rel), wanted) {
+                Ok(()) => {
+                    let new = scan::hash_file(&lib.abs(rel))?;
+                    if let Some(gps) = cached_gps {
+                        lib.index.set_gps(&new, gps)?;
+                    }
+                    let _ = std::fs::remove_file(thumbs::thumb_path(lib, hash));
+                    carried.push((folder_of(rel).to_string(), hash.clone(), new));
+                    done += 1;
+                }
+                Err(e) => refused.push(e.to_string()),
+            }
+        }
+        carry_metadata(lib, &carried)?;
+        scan::scan(lib, false)?;
+        let stamped = wanted.format("%-d %b %Y at %H:%M");
+        Ok(match refused.first() {
+            None => format!("{done} set to {stamped}"),
+            Some(why) => format!("{done} set to {stamped} · {} left alone — {why}", refused.len()),
+        })
+    })
+}
+
 // ---------------------------------------------------------------- semantic
 
 #[derive(Serialize)]
@@ -2286,11 +2353,388 @@ async fn empty_trash(state: tauri::State<'_, AppState>, path: String) -> R<Strin
 
 // ---------------------------------------------------------------- operations
 
+fn selected_files(lib: &Library, hashes: &[String]) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let wanted: BTreeSet<&str> = hashes.iter().map(String::as_str).collect();
+    if wanted.is_empty() {
+        anyhow::bail!("select at least one photo or video");
+    }
+    let root = std::fs::canonicalize(lib.root())?;
+    let mut files = Vec::new();
+    for row in lib.index.all()? {
+        if !wanted.contains(row.hash.as_str()) {
+            continue;
+        }
+        let file = std::fs::canonicalize(lib.abs(&row.path))?;
+        if !file.starts_with(&root) || !file.is_file() {
+            anyhow::bail!("{} is no longer a file in this library", row.path);
+        }
+        files.push(file);
+    }
+    files.sort();
+    files.dedup();
+    if files.is_empty() {
+        anyhow::bail!("the selection is no longer in this library");
+    }
+    Ok(files)
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_share(window: &tauri::WebviewWindow, files: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    use objc2::AnyThread;
+    use objc2_app_kit::{NSSharingServicePicker, NSView};
+    use objc2_foundation::{NSArray, NSRectEdge, NSString, NSURL};
+
+    let view = window.ns_view()? as usize;
+    window.run_on_main_thread(move || unsafe {
+        let view = &*(view as *mut NSView);
+        let urls: Vec<objc2::rc::Retained<objc2::runtime::AnyObject>> = files
+            .iter()
+            .map(|path| NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy())))
+            .map(Into::into)
+            .collect::<Vec<_>>();
+        let items = NSArray::from_retained_slice(&urls);
+        // SAFETY: every item is an NSURL, which implements NSPasteboardWriting and is
+        // explicitly accepted by NSSharingServicePicker.
+        let picker = NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items);
+        picker.showRelativeToRect_ofView_preferredEdge(view.bounds(), view, NSRectEdge::MinY);
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn share_photos(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+) -> R<()> {
+    let files = with_readable(&state, &path, |lib| selected_files(lib, &hashes))?;
+    #[cfg(target_os = "macos")]
+    {
+        show_native_share(&window, files).map_err(err)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, files);
+        Err("native sharing is currently available on macOS".into())
+    }
+}
+
+#[tauri::command]
+async fn start_file_drag(
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+) -> R<()> {
+    let files = with_readable(&state, &path, |lib| selected_files(lib, &hashes))?;
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let app = window.app_handle().clone();
+        app
+            .run_on_main_thread(move || {
+                let result = drag::start_drag(
+                    &window,
+                    drag::DragItem::Files(files),
+                    drag::Image::Raw(include_bytes!("../icons/128x128.png").to_vec()),
+                    |_result, _position| {},
+                    drag::Options::default(),
+                )
+                .map_err(|e| e.to_string());
+                let _ = tx.send(result);
+            })
+            .map_err(err)?;
+        rx.recv().map_err(err)?.map_err(err)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, files);
+        Err("outbound file drag is currently available on macOS".into())
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub struct UpdateInfo {
+    current: String,
+    latest: String,
+    available: bool,
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    html_url: String,
+    draft: bool,
+    prerelease: bool,
+}
+
+fn release_url_is_safe(url: &str) -> bool {
+    url.strip_prefix("https://github.com/notdefined-inc/openfoto/releases/")
+        .and_then(|tail| tail.strip_prefix("tag/"))
+        .is_some_and(|tag| {
+            !tag.is_empty()
+                && tag.len() <= 80
+                && tag.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_'))
+        })
+}
+
+#[tauri::command]
+async fn check_for_updates() -> R<UpdateInfo> {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(5)))
+        .build()
+        .new_agent();
+    let mut response = agent
+        .get("https://api.github.com/repos/notdefined-inc/openfoto/releases/latest")
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", concat!("OpenFoto/", env!("CARGO_PKG_VERSION")))
+        .call()
+        .map_err(err)?;
+    let release: GithubRelease = serde_json::from_reader(response.body_mut().as_reader()).map_err(err)?;
+    if release.draft || release.prerelease || !release_url_is_safe(&release.html_url) {
+        return Err("GitHub returned a release OpenFoto will not offer".into());
+    }
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(err)?;
+    let latest_text = release.tag_name.trim().trim_start_matches('v');
+    let latest = semver::Version::parse(latest_text)
+        .map_err(|_| "GitHub returned an invalid release version".to_string())?;
+    Ok(UpdateInfo {
+        current: current.to_string(),
+        latest: latest.to_string(),
+        available: latest > current,
+        url: release.html_url,
+    })
+}
+
+#[tauri::command]
+async fn open_update(url: String) -> R<()> {
+    if !release_url_is_safe(&url) {
+        return Err("refusing to open a non-OpenFoto release URL".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/open")
+            .arg(&url)
+            .spawn()
+            .map_err(err)?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err("opening the release page is currently available on macOS".into())
+    }
+}
+
 #[derive(Serialize)]
 pub struct PlanView {
     label: String,
     moves: Vec<(String, String)>,
     skipped: Vec<(String, String)>,
+}
+
+#[derive(Serialize)]
+pub struct DuplicateReviewItem {
+    hash: String,
+    path: String,
+    bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    taken_at: Option<i64>,
+    width: u32,
+    height: u32,
+    /// Relative within this burst. It deliberately describes visible detail, not taste.
+    quality: u8,
+    sharpness: f64,
+    recommended: bool,
+    #[serde(skip_serializing_if = "is_zero_u8")]
+    rating: u8,
+}
+
+#[derive(Serialize)]
+pub struct DuplicateReviewGroup {
+    id: String,
+    batch_id: String,
+    batch_title: String,
+    batch_detail: String,
+    reclaimable: u64,
+    items: Vec<DuplicateReviewItem>,
+}
+
+#[derive(Serialize)]
+pub struct DuplicateReview {
+    groups: Vec<DuplicateReviewGroup>,
+    reclaimable: u64,
+}
+
+fn duplicate_batch(
+    taken_at: Option<i64>,
+    place: Option<String>,
+) -> (String, String, String) {
+    let Some(at) = taken_at.and_then(|v| chrono::DateTime::<Utc>::from_timestamp(v, 0)) else {
+        return ("undated".into(), "Undated".into(), "Capture time missing".into());
+    };
+    let detail = at.format("%A, %-d %B %Y").to_string();
+    match place {
+        Some(place) => {
+            // A place and ISO week is a conservative local trip boundary: it avoids
+            // merging every photograph ever taken at home while keeping a multi-day
+            // visit together.
+            let week = at.iso_week();
+            (
+                format!("trip:{}-{:02}:{place}", week.year(), week.week()),
+                format!("Trip · {place}"),
+                detail,
+            )
+        }
+        None => (
+            format!("day:{}", at.format("%Y-%m-%d")),
+            at.format("%-d %B").to_string(),
+            detail,
+        ),
+    }
+}
+
+/// The evidence behind duplicate detection, shaped for a human decision rather than
+/// flattened into a move plan. No operation here mutates a photograph.
+#[tauri::command]
+async fn duplicate_review(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<DuplicateReview> {
+    let sink = emitter(&app, "duplicates", &path);
+    with(&state, &path, |lib| {
+        // Both passes are incremental. GPS is a cheap header read and lets the review
+        // offer trip-sized batches; signatures remain the on-device Vision evidence.
+        openfoto_core::geo::locate(lib, &sink)?;
+        dedupe::ensure_signatures_with_progress(lib, &sink)?;
+        let user = lib.user_data()?.clone();
+        let groups = dedupe::find_groups(lib, &dedupe::Options::default())?;
+        let mut out = Vec::with_capacity(groups.len());
+
+        for group in groups {
+            let keep_hash = group.keep.hash.clone();
+            let keep_path = group.keep.path.clone();
+            let place = lib
+                .index
+                .get_gps(&keep_hash)?
+                .flatten()
+                .and_then(|(lat, lon)| openfoto_core::geo::nearest(lat, lon))
+                .map(|p| p.label());
+            let (batch_id, batch_title, batch_detail) = duplicate_batch(group.keep.taken_at, place);
+            let reclaimable = group.duplicates.iter().map(|r| r.size.max(0) as u64).sum();
+            let mut rows = Vec::with_capacity(group.duplicates.len() + 1);
+            rows.push(group.keep);
+            rows.extend(group.duplicates);
+
+            let signatures: Vec<_> = rows
+                .iter()
+                .map(|r| lib.index.get_signature(&r.hash))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let max_sharpness = signatures
+                .iter()
+                .flatten()
+                .map(|s| s.sharpness)
+                .fold(0.0_f64, f64::max);
+            let items = rows
+                .into_iter()
+                .zip(signatures)
+                .map(|(row, sig)| {
+                    let sharpness = sig.as_ref().map(|s| s.sharpness).unwrap_or(0.0);
+                    let quality = if max_sharpness <= f64::EPSILON {
+                        100
+                    } else {
+                        ((sharpness / max_sharpness).sqrt() * 100.0).round().clamp(0.0, 100.0) as u8
+                    };
+                    let meta = user.get(&row.hash, folder_of(&row.path));
+                    DuplicateReviewItem {
+                        // Exact byte-for-byte duplicates intentionally share a hash;
+                        // the path distinguishes the physical copy being kept within
+                        // this one reviewed plan, while the hash still verifies it.
+                        recommended: row.hash == keep_hash && row.path == keep_path,
+                        width: sig.as_ref().map(|s| s.width).unwrap_or(0),
+                        height: sig.as_ref().map(|s| s.height).unwrap_or(0),
+                        sharpness,
+                        quality,
+                        rating: meta.rating,
+                        bytes: row.size.max(0) as u64,
+                        taken_at: row.taken_at,
+                        hash: row.hash,
+                        path: row.path,
+                    }
+                })
+                .collect();
+            out.push(DuplicateReviewGroup {
+                id: format!("{keep_hash}|{keep_path}"),
+                batch_id,
+                batch_title,
+                batch_detail,
+                reclaimable,
+                items,
+            });
+        }
+        let reclaimable = out.iter().map(|g| g.reclaimable).sum();
+        Ok(DuplicateReview { groups: out, reclaimable })
+    })
+}
+
+#[derive(Deserialize)]
+struct DuplicateRejection {
+    hash: String,
+    path: String,
+}
+
+/// Apply the exact physical copies a duplicate review rejected.
+///
+/// A hash alone cannot express this decision because exact duplicates share one by
+/// definition. The relative path is accepted only when the index still maps it to the
+/// reviewed hash; a Finder move between review and apply makes the plan stale and is
+/// refused rather than guessed.
+#[tauri::command]
+async fn apply_duplicate_review(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    rejections: Vec<DuplicateRejection>,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        if rejections.is_empty() {
+            return Ok("Nothing to move".into());
+        }
+        let rows: BTreeMap<String, openfoto_core::index::FileRow> = lib
+            .index
+            .all()?
+            .into_iter()
+            .map(|row| (row.path.clone(), row))
+            .collect();
+        let mut plan = openfoto_core::Plan::new("duplicate review");
+        for rejected in rejections {
+            let row = rows
+                .get(&rejected.path)
+                .ok_or_else(|| anyhow::anyhow!("{} moved since it was reviewed; run the review again", rejected.path))?;
+            if row.hash != rejected.hash {
+                anyhow::bail!("{} changed since it was reviewed; run the review again", rejected.path);
+            }
+            if in_folder(&row.path, TRASH) {
+                continue;
+            }
+            let name = row.path.rsplit('/').next().unwrap_or(&row.path);
+            plan.ops.push(openfoto_core::Op::Move {
+                hash: row.hash.clone(),
+                from: row.path.clone(),
+                to: format!("{TRASH}/{name}"),
+            });
+        }
+        if plan.is_empty() {
+            return Ok("Nothing to move".into());
+        }
+        std::fs::create_dir_all(lib.abs(TRASH))?;
+        let count = plan.len();
+        let journal = plan.apply(lib)?;
+        Ok(format!("Moved {count} to Trash · undo id {}", journal.id))
+    })
 }
 
 fn build_plan(
@@ -2895,10 +3339,12 @@ pub fn run() {
             dismiss_cluster, restore_dismissed, merge_people,
             edit_photo, edit_photos, strip_metadata, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
-            locate_photos, photo_places, place_search, set_photo_location,
+            locate_photos, photo_places, place_search, set_photo_location, set_photo_datetime,
             plan_album_migration, apply_album_migration, list_searches, save_search,
             folder_view, set_folder_view,
-            plan_move, apply_move, forget_person, analyze_all, source_data, pending_work, analyze_resume
+            plan_move, apply_move, duplicate_review, apply_duplicate_review,
+            share_photos, start_file_drag, check_for_updates, open_update,
+            forget_person, analyze_all, source_data, pending_work, analyze_resume
         ])
         .run(tauri::generate_context!())
         .expect("error while running openfoto");
@@ -3137,5 +3583,42 @@ mod tests {
         assert!(!video_thumb_miss(&still, Some("abc"), &sources));
         assert!(!video_thumb_miss(&clip, None, &sources));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn capture_time_input_is_strict_but_accepts_picker_precision() {
+        let with_seconds = parse_capture_datetime("2026-08-19T14:03:27").unwrap();
+        assert_eq!(with_seconds.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-08-19 14:03:27");
+        let minute = parse_capture_datetime("2026-08-19T14:03").unwrap();
+        assert_eq!(minute.format("%S").to_string(), "00");
+        assert!(parse_capture_datetime("next Tuesday").is_err());
+        assert!(parse_capture_datetime("1899-12-31T23:59").is_err());
+    }
+
+    #[test]
+    fn duplicate_batches_are_days_or_conservative_trip_weeks() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-08-19T14:03:27Z").unwrap().timestamp();
+        let (id, title, detail) = duplicate_batch(Some(at), None);
+        assert_eq!(id, "day:2026-08-19");
+        assert_eq!(title, "19 August");
+        assert!(detail.contains("2026"));
+
+        let (id, title, _) = duplicate_batch(Some(at), Some("Kyoto, Japan".into()));
+        assert!(id.starts_with("trip:2026-34:"), "{id}");
+        assert_eq!(title, "Trip · Kyoto, Japan");
+    }
+
+    #[test]
+    fn only_this_repositories_release_tags_can_be_opened() {
+        assert!(release_url_is_safe(
+            "https://github.com/notdefined-inc/openfoto/releases/tag/v0.1.0"
+        ));
+        assert!(!release_url_is_safe("https://example.com/releases/tag/v0.1.0"));
+        assert!(!release_url_is_safe(
+            "https://github.com/notdefined-inc/openfoto/releases/../../other"
+        ));
+        assert!(!release_url_is_safe(
+            "https://github.com/notdefined-inc/openfoto/releases/tag/v0.1.0?download=1"
+        ));
     }
 }
