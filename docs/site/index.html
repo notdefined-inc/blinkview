@@ -8,91 +8,219 @@
 <meta property="og:title" content="OpenFoto">
 <meta property="og:description" content="Your photos are already organised. They're in folders. Why does no app believe you?">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://notdefined-inc.github.io/openfoto/shots/og.webp">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://notdefined-inc.github.io/openfoto/shots/og.webp">
 <link rel="icon" href="logo.png">
 <style>
   :root{
-    --ink:#12121a; --dim:#57576a; --faint:#8b8b9c;
-    --bg:#fbfbfd; --panel:#fff; --line:#e6e6ee;
-    --accent:#2563eb; --warm:#f97316;
+    --bg:#07070b; --ink:#f4f4f7; --ink-dim:#a8a8b6; --ink-faint:#71717f;
+    --ink-meta:#8f8f9e; /* small metadata: --ink-faint is under 4.5:1 on --bg */
+    --glass-1:rgba(255,255,255,.045); --glass-2:rgba(16,16,24,.55); --glass-3:rgba(20,20,28,.78);
+    --stroke:rgba(255,255,255,.09); --stroke-hi:rgba(255,255,255,.16);
+    --brand-cyan:#38bdf8; --brand-violet:#a78bfa; --brand-amber:#fbbf24;
+    --accent:#6ea8fe; --accent-ink:#0b0b10;
+    --ok:#4ade80; --warn:#fbbf24; --danger:#f87171;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+    --sans:ui-sans-serif,-apple-system,"SF Pro Text","Segoe UI",Roboto,sans-serif;
   }
-  @media (prefers-color-scheme:dark){
-    :root{ --ink:#ececf4; --dim:#a6a6b8; --faint:#75758a;
-           --bg:#0b0b0f; --panel:#131319; --line:#23232e; --accent:#7dd3fc; }
+  @media (prefers-color-scheme:light){
+    :root{
+      --bg:#eef0f7; --ink:#17171f; --ink-dim:#4c4c5a; --ink-faint:#7d7d8c; --ink-meta:#63636f;
+      --glass-1:rgba(255,255,255,.5); --glass-2:rgba(255,255,255,.62); --glass-3:rgba(255,255,255,.9);
+      --stroke:rgba(23,23,45,.11); --stroke-hi:rgba(23,23,45,.22);
+      --accent:#3b82f6; --accent-ink:#fff;
+      --ok:#16a34a; --warn:#b45309; --danger:#dc2626;
+    }
   }
   *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
   body{
     margin:0; background:var(--bg); color:var(--ink);
-    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    font:16px/1.5 var(--sans);
     -webkit-font-smoothing:antialiased;
   }
-  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
-  a{color:var(--accent)}
+  /* the aurora: cyan lower-left, violet lower-right, amber upper-right */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:
+      radial-gradient(52rem 36rem at -8% 108%, color-mix(in srgb, var(--brand-cyan) 15%, transparent), transparent 70%),
+      radial-gradient(52rem 38rem at 108% 112%, color-mix(in srgb, var(--brand-violet) 14%, transparent), transparent 70%),
+      radial-gradient(40rem 30rem at 96% -10%, color-mix(in srgb, var(--brand-amber) 9%, transparent), transparent 70%);
+  }
+  @media (prefers-color-scheme:light){
+    body::before{
+      background:
+        radial-gradient(52rem 36rem at -8% 108%, color-mix(in srgb, var(--brand-cyan) 16%, transparent), transparent 70%),
+        radial-gradient(52rem 38rem at 108% 112%, color-mix(in srgb, var(--brand-violet) 15%, transparent), transparent 70%),
+        radial-gradient(40rem 30rem at 96% -10%, color-mix(in srgb, var(--brand-amber) 12%, transparent), transparent 70%);
+    }
+  }
 
-  header{padding:88px 0 56px;text-align:center}
-  header img{width:96px;height:96px;filter:drop-shadow(0 6px 24px rgba(0,0,0,.18))}
-  h1{font-size:clamp(40px,7vw,60px);line-height:1.05;letter-spacing:-.035em;margin:22px 0 0}
-  .tag{font-size:clamp(19px,2.6vw,23px);line-height:1.4;color:var(--dim);margin:18px auto 0;max-width:30ch}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  .wide{max-width:1320px}
+  .prose{max-width:68ch}
+  a{color:var(--accent)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+  /* ---------- header / hero ---------- */
+  header{padding:96px 0 40px;text-align:center}
+  .mark{width:88px;height:88px;filter:drop-shadow(0 8px 28px rgba(56,189,248,.25))}
+  h1{font-size:clamp(40px,7vw,64px);line-height:1.2;letter-spacing:-.035em;margin:24px 0 0}
+  .tag{font-size:clamp(19px,2.6vw,24px);line-height:1.4;color:var(--ink-dim);margin:20px auto 0;max-width:32ch}
   .tag b{color:var(--ink);font-weight:650}
 
-  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:36px 0 10px}
-  .btn{
-    display:inline-block;padding:13px 26px;border-radius:999px;text-decoration:none;
-    font-weight:640;font-size:15px;background:var(--ink);color:var(--bg);
-    border:1px solid var(--ink);
+  .hero{margin:56px auto 0;position:relative}
+  .hero::before{ /* brand glow the frame melts into */
+    content:""; position:absolute; inset:6% -4% -6%; z-index:-1;
+    background:radial-gradient(60% 60% at 30% 80%, color-mix(in srgb, var(--brand-cyan) 12%, transparent), transparent 70%),
+               radial-gradient(60% 60% at 75% 85%, color-mix(in srgb, var(--brand-violet) 11%, transparent), transparent 70%);
+    filter:blur(24px);
   }
-  .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
-  .plat{color:var(--faint);font-size:13.5px;margin-top:6px}
+  .shot{
+    display:block; width:100%; height:auto;
+    border:1px solid var(--stroke); border-radius:16px;
+    box-shadow:0 24px 64px rgba(0,0,0,.45);
+    background:var(--glass-1);
+  }
+  @media (prefers-color-scheme:light){
+    .shot{box-shadow:0 24px 64px rgba(23,23,45,.18)}
+  }
 
-  section{padding:52px 0;border-top:1px solid var(--line)}
-  h2{font-size:29px;letter-spacing:-.022em;margin:0 0 20px}
-  h3{font-size:17px;margin:30px 0 6px;letter-spacing:-.01em}
-  p{margin:0 0 17px;color:var(--dim)}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:44px 0 12px}
+  .btn{
+    display:inline-block;padding:13px 28px;border-radius:999px;text-decoration:none;
+    font-weight:640;font-size:15px;background:var(--accent);color:var(--accent-ink);
+    border:1px solid transparent;
+  }
+  .btn.ghost{
+    background:var(--glass-1);color:var(--ink);border-color:var(--stroke);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  }
+  .btn.ghost:hover{border-color:var(--stroke-hi)}
+  .plat{color:var(--ink-meta);font-size:13.5px;margin-top:8px;text-align:center}
+
+  /* ---------- sections ---------- */
+  section{padding:72px 0}
+  h2{font-size:28px;letter-spacing:-.022em;line-height:1.2;margin:0 0 20px}
+  h3{font-size:20px;margin:0 0 8px;letter-spacing:-.01em;line-height:1.2}
+  p{margin:0 0 16px;color:var(--ink-dim)}
   p strong,li strong{color:var(--ink);font-weight:640}
-  .lede{font-size:18.5px;color:var(--ink)}
+  .lede{font-size:20px;color:var(--ink);line-height:1.45}
+  .kicker{
+    font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-meta);
+    margin:0 0 12px;font-weight:640;
+  }
 
-  .split{display:grid;gap:18px;grid-template-columns:1fr 1fr}
-  @media(max-width:640px){.split{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px}
-  .card h4{margin:0 0 7px;font-size:15.5px}
+  /* the betrayal */
+  .split{display:grid;gap:16px;grid-template-columns:repeat(3,1fr);margin:28px 0}
+  @media(max-width:900px){.split{grid-template-columns:1fr}}
+  .card{
+    background:var(--glass-1);border:1px solid var(--stroke);border-radius:16px;
+    padding:20px 22px;
+  }
+  .card h4{margin:0 0 8px;font-size:16px}
   .card p{margin:0;font-size:14.5px;line-height:1.6}
+  .pivot{font-size:20px;color:var(--ink);line-height:1.45;margin-top:28px}
+  .diagram{margin:32px auto;max-width:720px;display:block}
 
-  .feat{margin:0;padding:0;list-style:none}
-  .feat li{padding:17px 0;border-bottom:1px solid var(--line)}
-  .feat li:last-child{border-bottom:0}
-  .feat b{display:block;margin-bottom:3px;font-size:16.5px;color:var(--ink)}
-  .feat span{color:var(--dim);font-size:15px}
-
+  /* the turn */
+  .turn{display:grid;grid-template-columns:1.2fr .8fr;gap:48px;align-items:center}
+  @media(max-width:900px){.turn{grid-template-columns:1fr}}
+  .sidebar-shot{
+    width:100%;height:auto;border:1px solid var(--stroke);border-radius:16px;
+    box-shadow:0 16px 48px rgba(0,0,0,.4);
+  }
   code,kbd{font-family:var(--mono);font-size:.9em}
   pre{
-    background:var(--panel);border:1px solid var(--line);border-radius:12px;
-    padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13.5px;
-    line-height:1.7;color:var(--ink)
+    background:var(--glass-1);border:1px solid var(--stroke);border-radius:16px;
+    padding:16px 20px;overflow-x:auto;font-family:var(--mono);font-size:13.5px;
+    line-height:1.7;color:var(--ink);
   }
-  pre .c{color:var(--faint)}
-  .no{color:var(--ink);font-weight:640}
-  footer{padding:44px 0 72px;color:var(--faint);font-size:14px;text-align:center;border-top:1px solid var(--line)}
+  pre .c{color:var(--ink-meta)}
+
+  /* feature theatre */
+  .scene{
+    display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;
+    padding:56px 0;
+  }
+  .scene + .scene{border-top:1px solid var(--stroke)}
+  /* The figure is first in the DOM at the default order:0, so order:2 left the text
+     exactly where it already was. -1 is what actually pulls it ahead of the image. */
+  .scene.flip .scene-text{order:-1}
+  @media(max-width:900px){
+    .scene{grid-template-columns:1fr;gap:24px;padding:40px 0}
+    .scene.flip .scene-text{order:0}
+  }
+  .scene-text p{margin-bottom:12px}
+  .claim{font-size:20px;color:var(--ink);line-height:1.45;margin-bottom:12px}
+  .limit{font-size:14px;color:var(--ink-meta);border-left:2px solid var(--warn);padding-left:12px;margin-top:16px}
+
+  /* speed, set as type */
+  .speed{display:flex;gap:48px;flex-wrap:wrap;justify-content:center;text-align:center;padding:24px 0}
+  .speed .num{
+    font-size:clamp(40px,6vw,64px);font-weight:680;letter-spacing:-.03em;line-height:1.1;
+    font-variant-numeric:tabular-nums;
+    background:linear-gradient(100deg,var(--brand-cyan),var(--brand-violet));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .speed .what{color:var(--ink-dim);font-size:15px;max-width:22ch;margin:8px auto 0;line-height:1.5}
+
+  /* the refusal */
+  .refusal p{
+    font-size:clamp(19px,2.4vw,23px);line-height:1.5;color:var(--ink-dim);
+    margin:0 0 32px;max-width:34ch;
+  }
+  .refusal p strong{color:var(--ink);font-weight:640}
+  .refusal p:last-child{margin-bottom:0}
+
+  footer{padding:48px 0 80px;color:var(--ink-meta);font-size:14px;text-align:center;border-top:1px solid var(--stroke)}
+
+  /* scroll reveal — only with JS and no reduced-motion preference */
+  @media (prefers-reduced-motion:no-preference){
+    .js .reveal{opacity:0;transform:translateY(12px);transition:opacity .25s ease-out,transform .25s ease-out}
+    .js .reveal.in{opacity:1;transform:none}
+  }
+
+  @media(max-width:480px){
+    header{padding:64px 0 32px}
+    section{padding:48px 0}
+    .wrap{padding:0 16px}
+    .scene{gap:20px}
+  }
 </style>
 </head>
 <body>
 
 <header class="wrap">
-  <img src="logo.png" alt="">
+  <img class="mark" src="logo.png" alt="" width="88" height="88">
   <h1>OpenFoto</h1>
   <p class="tag">Your photos are already organised. They're in folders.<br><b>Why does no app believe you?</b></p>
+</header>
+
+<main>
+<div class="wrap wide">
+  <figure class="hero reveal" style="margin:0">
+    <img class="shot" src="shots/hero-library.webp" width="2400" height="1334" fetchpriority="high"
+      alt="The OpenFoto window: a sidebar listing two sources, unnamed people, and the folders Duplicates, Trip and Videos, beside a date-grouped grid of 980 travel photographs under the heading Saturday, August 22, 2026.">
+  </figure>
   <div class="cta">
     <a class="btn" href="https://github.com/notdefined-inc/openfoto/releases/latest">Download</a>
     <a class="btn ghost" href="https://github.com/notdefined-inc/openfoto">Source on GitHub</a>
   </div>
   <p class="plat">macOS · Windows · Linux — free, and free of charge, permanently</p>
-</header>
+</div>
 
-<section class="wrap">
-  <h2>The problem nobody will fix</h2>
-  <p class="lede">You have a hard drive. On it, a folder called <code>Trip</code>, and inside it <code>Greece Day 1</code>, <code>Greece Day 2</code>, <code>Swiss Day 1</code>. You made those folders. You know exactly what's in them.</p>
-  <p>Now try to look at them.</p>
-  <p><strong>Apple</strong> — a company worth more than most countries' economies — ships an operating system whose photo app cannot do this. Photos wants to <em>import</em> your pictures into a library it controls, in a location it chooses, under a structure it invents. Your folders are not welcome. You can point Finder at the folder and press space, which is a file previewer wearing a photo app's coat: no faces, no search, no dates, no grid worth the name.</p>
-  <p>So you look elsewhere, and the market splits neatly in two.</p>
+<section class="wrap" aria-labelledby="betrayal">
+  <div class="prose">
+    <h2 id="betrayal">The problem nobody will fix</h2>
+    <p class="lede">You have a hard drive. On it, a folder called <code>Trip</code>, and inside it <code>Greece Day 1</code>, <code>Greece Day 2</code>, <code>Swiss Day 1</code>. You made those folders. You know exactly what's in them.</p>
+    <p>Now try to look at them.</p>
+    <p><strong>Apple</strong> — a company worth more than most countries' economies — ships an operating system whose photo app cannot do this. Photos wants to <em>import</em> your pictures into a library it controls, in a location it chooses, under a structure it invents. Your folders are not welcome. You can point Finder at the folder and press space, which is a file previewer wearing a photo app's coat: no faces, no search, no dates, no grid worth the name.</p>
+    <p>So you look elsewhere, and the market splits neatly in three.</p>
+  </div>
 
   <div class="split">
     <div class="card">
@@ -103,44 +231,214 @@
       <h4>The genuinely free ones that look it</h4>
       <p>Some are magnificent — decades of engineering, given away by people who owed you nothing. And they were designed when Windows XP was current. Nested toolbars. Nine-step import wizards. A simple thing made to feel like filing a tax return.</p>
     </div>
+    <div class="card">
+      <h4>The self-hosted ones</h4>
+      <p>Genuinely good — and they want a Docker daemon, a Postgres container, a reverse proxy, and a mental model where photos live inside a server. Wonderful, if you wanted to run a server. You wanted to look at your holiday.</p>
+    </div>
   </div>
 
-  <p style="margin-top:20px">Then the self-hosted generation arrived — and they're <em>good</em>. But they want a Docker daemon, a Postgres container, a reverse proxy, and a mental model where photos live inside a server. Wonderful, if you wanted to run a server. You wanted to look at your holiday.</p>
-  <p>Every one of them, free or paid, old or new, makes the same move: <strong>it takes your photos and puts them somewhere it owns.</strong></p>
+  <svg class="diagram" viewBox="0 0 720 180" role="img" aria-label="Two diagrams: photos flowing out of a folder into an opaque box labelled their library, versus photos staying in the folder.">
+    <g fill="none" stroke="currentColor" stroke-width="1.5" style="color:var(--ink-meta)">
+      <!-- their way -->
+      <path d="M40 60 h28 l8 10 h52 v48 H40 Z" />
+      <circle cx="64" cy="86" r="4" fill="currentColor"/>
+      <circle cx="84" cy="86" r="4" fill="currentColor"/>
+      <circle cx="104" cy="86" r="4" fill="currentColor"/>
+      <path d="M150 84 h66" stroke-dasharray="2 6"/>
+      <path d="M210 78 l12 6 -12 6" />
+      <rect x="240" y="56" width="120" height="56" rx="10" style="fill:var(--glass-3);stroke:var(--stroke-hi)"/>
+      <!-- our way -->
+      <path d="M470 60 h28 l8 10 h52 v48 h-88 Z" />
+      <circle cx="494" cy="86" r="4" fill="currentColor"/>
+      <circle cx="514" cy="86" r="4" fill="currentColor"/>
+      <circle cx="534" cy="86" r="4" fill="currentColor"/>
+      <path d="M610 84 a26 26 0 1 1 -8 18" stroke-dasharray="2 6" style="stroke:var(--ok)"/>
+      <path d="M596 96 l6 8 8 -4" style="stroke:var(--ok)"/>
+    </g>
+    <text x="285" y="92" text-anchor="middle" font-size="13" style="fill:var(--ink-dim);font-family:var(--sans)">their library</text>
+    <text x="84" y="146" text-anchor="middle" font-size="12" style="fill:var(--ink-faint);font-family:var(--sans)">your folders</text>
+    <text x="514" y="146" text-anchor="middle" font-size="12" style="fill:var(--ink-faint);font-family:var(--sans)">still your folders</text>
+  </svg>
+
+  <div class="prose">
+    <p class="pivot">Every one of them, free or paid, old or new, makes the same move: <strong>it takes your photos and puts them somewhere it owns.</strong></p>
+  </div>
 </section>
 
-<section class="wrap">
-  <h2>The idea</h2>
-  <p class="lede">What Obsidian is to Markdown, OpenFoto is to your photo library.</p>
-  <p><strong>The folders are the database.</strong> Not a metaphor. There is no library file, no import step, no proprietary container. Point OpenFoto at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.</p>
-  <p>Delete OpenFoto tomorrow and you lose <em>nothing</em>. Your folders sit exactly where they were, named exactly what you named them — plus a small readable <code>openfoto.json</code> beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.</p>
-  <p>Everything else — thumbnails, the index, face embeddings — lives in a <code>.openfoto/</code> folder that is <strong>safe to delete</strong>. Delete it and it rebuilds. That isn't a caveat; it's the promise the whole design is built to keep.</p>
+<section class="wrap" aria-labelledby="turn">
+  <div class="prose">
+    <h2 id="turn">The folders are the database</h2>
+    <p class="lede">What Obsidian is to Markdown, OpenFoto is to your photo library.</p>
+  </div>
+  <div class="turn reveal" style="margin-top:32px">
+    <div>
+      <p>Not a metaphor. There is no library file, no import step, no proprietary container. Point OpenFoto at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.</p>
+      <p>Delete OpenFoto tomorrow and you lose <em>nothing</em>. Your folders sit exactly where they were, named exactly what you named them — plus a small readable <code>openfoto.json</code> beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.</p>
+      <p>Everything else — thumbnails, the index, face embeddings — lives in a <code>.openfoto/</code> folder that is <strong>safe to delete</strong>. Delete it and it rebuilds. That isn't a caveat; it's the promise the whole design is built to keep.</p>
+    </div>
+    <img class="sidebar-shot" src="shots/folders-sidebar.webp" width="512" height="1412" loading="lazy"
+      alt="The OpenFoto sidebar with the folder tree expanded: Trip contains Greece Day 1, Greece Day 2 and Swiss Day 1, each with its own photo count — the user's own folder names, read rather than imported.">
+  </div>
+  <div class="prose" style="margin-top:32px">
+    <p>The file is human-readable, so here it is — this is the whole database schema:</p>
+<pre>{
+  "photos": {
+    "01-15-03_pm_18_aug_2026.jpg": { "rating": 5, "label": "red" }
+  },
+  "searches": [
+    { "name": "August favourites", "query": "5stars august" }
+  ]
+}</pre>
+  </div>
 </section>
 
-<section class="wrap">
-  <h2>What it actually does</h2>
-  <ul class="feat">
-    <li><b>Finds faces, offline</b><span>Detection and recognition run on your machine. Nothing is uploaded. Name someone once and OpenFoto files the rest — and when it isn't sure, it says so and leaves the photo alone, because a confidently wrong answer is worse than an honest shrug.</span></li>
-    <li><b>Searches by what's in the picture</b><span>Type <code>a church</code> and get the church. <code>snowy mountains</code> and get the mountains. No tagging, no training. Ask for <code>the sea</code> in a library with no sea and it returns nothing, on purpose.</span></li>
-    <li><b>Understands sentences</b><span><code>a church sam 18 august 2026</code> is a scene, a person and a date, and gives you two photographs. Not a language model — a grammar, which is faster, works offline, and never invents a folder that doesn't exist.</span></li>
-    <li><b>Does what you tell it</b><span><code>move all my august photos to Trip/Greece Day3</code> shows exactly what will happen, then waits. Every change is journalled, and ⌘Z undoes the file move <em>and</em> the ratings that travelled with it.</span></li>
-    <li><b>Finds the duplicates you actually have</b><span>Burst shots, three seconds apart. Perceptual hashing to find candidates, real pixel comparison to confirm, and clustering that never mistakes a chain of vaguely-similar photos for a pile of duplicates.</span></li>
-    <li><b>Edits without destroying</b><span>Crop, straighten, rotate, exposure. The original moves to a visible <code>Originals/</code> folder, because "non-destructive" should mean you can see the thing that wasn't destroyed.</span></li>
-    <li><b>Stays quick when it gets big</b><span>200,000 photos render with about 55 cells alive. The camera's own embedded preview is used when it's there — reading 37 KB instead of decoding twelve megapixels — and analysis decodes each photo once for the thumbnail, the faces and the search index together.</span></li>
-  </ul>
+<section class="wrap wide" aria-labelledby="proof">
+  <div class="wrap" style="padding:0">
+    <div class="prose">
+      <h2 id="proof">What it actually does</h2>
+      <p class="lede">Every claim below is a screenshot of the software doing it, with the limitation stated as plainly as the feature.</p>
+    </div>
+  </div>
+
+  <div class="scene reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/search-scene.webp" width="2400" height="1334" loading="lazy"
+        alt="The search field containing a church, with the intent chip a church · 31 and a grid of thirty-one photographs of churches — nothing was tagged by hand.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">Scene search</p>
+      <p class="claim">It reads the pixels, not the filenames.</p>
+      <p>Type <code>a church</code> and get the church. <code>snowy mountains</code> and get the mountains. A vision model reads the photograph; no tagging, no training, nothing uploaded.</p>
+      <p class="limit">Ask for <code>the sea</code> in a library with no sea and it returns nothing, on purpose. Below the confidence threshold it would rather say nothing than guess.</p>
+    </div>
+  </div>
+
+  <div class="scene flip reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/search-sentence.webp" width="2400" height="1334" loading="lazy"
+        alt="The search field containing a church sam 18 august 2026, parsed into three intent chips — a date, a person, a scene — with exactly two photographs as the answer.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">Sentences</p>
+      <p class="claim">One sentence is three filters.</p>
+      <p><code>a church sam 18 august 2026</code> is a scene, a person and a date, and gives you two photographs. Chips under the field show how the query was read, so a search that matches nothing is never a black box.</p>
+      <p class="limit">Not a language model — a grammar. It is faster, works offline, and never invents a folder that doesn't exist; the honest limit is phrasing coverage, and an unknown wording fails rather than being guessed at.</p>
+    </div>
+  </div>
+
+  <div class="scene reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/ask-panel.webp" width="2400" height="1334" loading="lazy"
+        alt="The Ask panel mid-thread: a question about sunsets is answered with an honest nothing matches that, and a church, sam, 18 august is answered with intent chips, a face button for Sam, two thumbnails and one-tap actions.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">The Ask panel</p>
+      <p class="claim">Ask, and tell.</p>
+      <p>✨ or ⌘K opens a thread over the same command grammar: questions get intent chips, faces, thumbnails and one-tap actions; instructions get a preview and wait. When nothing matches, it says so in words.</p>
+      <p class="limit">The thread is per-session and nothing is persisted. It composes only the commands you could have typed yourself — there is no model in the loop to confabulate with.</p>
+    </div>
+  </div>
+
+  <div class="scene flip reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/people-review.webp" width="2400" height="1334" loading="lazy"
+        alt="The face review sheet titled Who is this?: groups of detected faces, each with a suggested name offered as a placeholder and a one-click chip, and nothing assigned until Save names is pressed.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">People</p>
+      <p class="claim">It admits when it doesn't know.</p>
+      <p>Detection and recognition run on your machine; nothing is uploaded. Name someone once and OpenFoto files the rest — and when it isn't sure, it says so and leaves the photo alone.</p>
+      <p class="limit">A confidently wrong answer is worse than an honest shrug. Review teaches identities; filing photos into per-person folders is still to come.</p>
+    </div>
+  </div>
+
+  <div class="scene reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/organize-preview.webp" width="2400" height="1334" loading="lazy"
+        alt="Told to move all my august photos to Trip/Greece Day3, the Ask panel shows the full preview — 970 photos will move into Trip/Greece Day3, with thumbnails — and waits for the Move button to be pressed.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">Organize</p>
+      <p class="claim">It asks first.</p>
+      <p><code>move all my august photos to Trip/Greece Day3</code> shows exactly what will happen, then waits. Every change is journalled, and ⌘Z undoes the file move <em>and</em> the ratings that travelled with it.</p>
+      <p class="limit">An empty selector is refused — <code>move to Trip</code> does not quietly inherit whatever was last on screen. Nothing acts without a preview, including delete.</p>
+    </div>
+  </div>
+
+  <div class="scene flip reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/duplicates.webp" width="2400" height="1334" loading="lazy"
+        alt="The Organize sheet after Find duplicates has run its preview: fourteen planned moves, each setting a burst duplicate aside into a Duplicates folder, with the Apply button waiting.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">Duplicates</p>
+      <p class="claim">The duplicates you actually have.</p>
+      <p>Burst shots, three seconds apart. Perceptual hashing finds the candidates, real pixel comparison confirms them, and all but the sharpest are set aside — previewed first, like everything else.</p>
+      <p class="limit">A hash match is a candidate, never a conclusion, and clustering is complete-linkage: a chain of vaguely-similar photos is not a pile of duplicates. The candidate scan is O(n²) — fine past ten thousand photos; a hundred thousand will want a smarter index.</p>
+    </div>
+  </div>
+
+  <div class="scene reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/lightbox-edit.webp" width="2400" height="1334" loading="lazy"
+        alt="The lightbox on a photograph of a Greek church, with the adjust bar open — brightness, contrast and saturation sliders — and the filmstrip of the search results along the bottom.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">Editing</p>
+      <p class="claim">Non-destructive you can see.</p>
+      <p>Crop, straighten, rotate, exposure. Nothing is written until Save, and the original moves to a visible <code>Originals/</code> folder — because "non-destructive" should mean you can see the thing that wasn't destroyed.</p>
+      <p class="limit">That is the whole toolkit. No curves, no healing brush, no AI erase — the editor is honest about being small.</p>
+    </div>
+  </div>
+
+  <div class="scene flip reveal">
+    <figure style="margin:0">
+      <img class="shot" src="shots/trash-restore.webp" width="2400" height="1334" loading="lazy"
+        alt="The Trash view of a library: the sidebar lists Trash with one photo and a separate Empty… beneath it, the single photograph is selected, and the action bar along the bottom offers Select all, Clear and Restore.">
+    </figure>
+    <div class="scene-text">
+      <p class="kicker">Deleting</p>
+      <p class="claim">Even delete is just a move.</p>
+      <p>Deleted photos go to a <code>Trash/</code> folder <em>inside</em> the library, not the system bin — so it is journalled and undoable like every other operation. The sidebar keeps the count, and Restore puts them back where they were.</p>
+      <p class="limit">Emptying it hands the files to the system Trash, and that is the one step OpenFoto cannot undo — which is exactly why it is a separate button that asks first.</p>
+    </div>
+  </div>
+
+  <div class="scene reveal" style="display:block;text-align:center">
+    <p class="kicker" style="text-align:center">Speed</p>
+    <div class="speed">
+      <div><div class="num">200,000</div><p class="what">photos laid out, with about 55 cells alive in the DOM</p></div>
+      <div><div class="num">37 KB</div><p class="what">camera-embedded preview read, instead of a twelve-megapixel decode</p></div>
+      <div><div class="num">1 pass</div><p class="what">decode per photo for the thumbnail, the faces and the search index together</p></div>
+    </div>
+  </div>
 </section>
 
-<section class="wrap">
-  <h2>What it deliberately doesn't do</h2>
-  <p><span class="no">No cloud, no account, no sync.</span> There is nowhere to sign in.<br>
-     <span class="no">No telemetry.</span> Nothing is measured, collected or sent. There is no analytics code to audit because there is none to write.<br>
-     <span class="no">No paid tier.</span> There is no feature behind a wall, because there is no wall.<br>
-     <span class="no">No library format.</span> If OpenFoto vanished tomorrow, your folders wouldn't notice.</p>
+<section class="wrap" aria-labelledby="receipt">
+  <div class="prose">
+    <h2 id="receipt">What you keep</h2>
+    <p class="lede">Your library is a folder. Your metadata is a file you can read.</p>
+    <p>Ratings, labels and saved searches live in <code>openfoto.json</code>; names live in <code>openfoto-people.json</code>. They sit at the library root — or in any folder, where the nearest one wins, so copying a folder in Finder carries its ratings with it. Delete the <code>.openfoto/</code> cache and nothing you authored is lost; there is a test that writes a name and a rating, deletes the cache outright, and asserts both survive.</p>
+    <p>Even deleting is reversible: photos go to a <code>Trash/</code> folder inside the library, journalled and undoable like every other operation.</p>
+  </div>
 </section>
 
-<section class="wrap">
-  <h2>Or start from the command line</h2>
-  <p>Everything the app does, the CLI does — the honest way to try this on a library you care about.</p>
+<section class="wrap refusal" aria-labelledby="refusal">
+  <h2 id="refusal">What it deliberately doesn't do</h2>
+  <p><strong>No cloud, no account, no sync.</strong><br>There is nowhere to sign in.</p>
+  <p><strong>No telemetry.</strong><br>Nothing is measured, collected or sent. There is no analytics code to audit because there is none to write.</p>
+  <p><strong>No paid tier.</strong><br>There is no feature behind a wall, because there is no wall.</p>
+  <p><strong>No library format.</strong><br>If OpenFoto vanished tomorrow, your folders wouldn't notice.</p>
+</section>
+
+<section class="wrap" aria-labelledby="take">
+  <div class="prose">
+    <h2 id="take">Take it</h2>
+    <p>Grab the installer for your platform from <a href="https://github.com/notdefined-inc/openfoto/releases/latest">Releases</a> — macOS (<code>.dmg</code>, Apple Silicon), Windows (<code>.msi</code>), Linux (<code>.AppImage</code> and <code>.deb</code>, glibc 2.38+).</p>
+    <p>The app is signed, but not notarized, so the first launch needs a nudge: on macOS, right-click → Open; on Windows, <em>More info</em> → <em>Run anyway</em>. An Apple Developer ID costs money that a project with no revenue doesn't have.</p>
+    <p class="limit">No Intel Mac build: ONNX Runtime stopped publishing a macOS x64 binary, so an Intel machine would need it compiled from source.</p>
+    <p>Face recognition and scene search are optional. They need about 200 MB of models, downloaded on first use, each checked against a pinned SHA-256 before it's installed. Skip it and everything else still works.</p>
+    <p>Or start from the command line — everything the app does, the CLI does, and it's the honest way to try this on a library you care about:</p>
 <pre><span class="c"># index a folder; never modifies a photograph</span>
 openfoto scan    -C ~/Photos
 
@@ -155,12 +453,26 @@ openfoto dedupe  -C ~/Photos
 
 <span class="c"># reverse any of it</span>
 openfoto undo    -C ~/Photos</pre>
+  </div>
 </section>
+</main>
 
 <footer class="wrap">
-  <p>Free software under <a href="https://github.com/notdefined-inc/openfoto/blob/main/LICENSE">GPL-3.0-or-later</a>.<br>
-  Built in Rust with <a href="https://tauri.app">Tauri</a>. No trackers, no accounts, no subscription — permanently.</p>
+  <p>Free software under <a href="https://github.com/notdefined-inc/openfoto/blob/main/LICENSE">GPL-3.0-or-later</a>.
+  Built in Rust with <a href="https://tauri.app">Tauri</a>.<br>
+  No trackers, no accounts, no subscription — and nowhere to sign in, permanently.</p>
 </footer>
+
+<script>
+// Scroll reveal for the feature scenes; inert without JS or under reduced motion.
+if (matchMedia("(prefers-reduced-motion: no-preference)").matches && "IntersectionObserver" in window) {
+  document.documentElement.classList.add("js");
+  const io = new IntersectionObserver(es => {
+    for (const e of es) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }, { rootMargin: "0px 0px -8%" });
+  document.querySelectorAll(".reveal").forEach(el => io.observe(el));
+}
+</script>
 
 </body>
 </html>
