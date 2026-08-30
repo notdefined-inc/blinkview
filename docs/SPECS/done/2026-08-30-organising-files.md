@@ -1,5 +1,5 @@
 # Organising files
-Status: Agreed   Owner: notdefined   Date: 2026-08-30
+Status: Done (shipped 2026-08-30)   Owner: notdefined   Date: 2026-08-30
 
 ## Problem
 Folders are the only grouping openfoto has (ADR-0009), but a folder can only be brought
@@ -56,11 +56,35 @@ which is the one thing chrono has no notion of.
 8. Renaming with no selection and a folder selected touches only that folder and below.
 9. The previewed names equal the applied names for the same input.
 10. `%%n` numbers within the plan from 1, zero-padded to the width of the largest index.
-11. A pattern producing a name that collides is skipped and reported, never overwritten.
+11. A pattern producing a name another file already has gets a `_N` suffix, never an
+    overwrite — uniqueness is checked library-wide, not within the scope. A pattern
+    producing an *invalid* name (a reserved character) is skipped and reported.
 
 ## Tasks
-- [ ] 1. `create_folder` command + sidebar ＋ and dialog (touches: lib.rs, app.js, app.css)
-- [ ] 2. Disk-listed empty folders in `describe()` (touches: lib.rs)
-- [ ] 3. `delete_photos` dest + "Delete to…" (touches: lib.rs, app.js)
-- [ ] 4. `rename::plan_scoped` + `%%n` counter + tests (touches: crates/openfoto-core/src/rename.rs)
-- [ ] 5. Rename sheet: pattern field, live preview, scope line (touches: lib.rs, app.js)
+- [x] 1. `create_folder` command + sidebar ＋ and dialog (touches: lib.rs, app.js, app.css)
+- [x] 2. Disk-listed empty folders in `describe()` (touches: lib.rs)
+- [x] 3. `delete_photos` dest + "Delete to…" (touches: lib.rs, app.js)
+- [x] 4. `rename::plan_scoped` + `%%n` counter + tests (touches: crates/openfoto-core/src/rename.rs)
+- [x] 5. Rename sheet: pattern field, live preview, scope line (touches: lib.rs, app.js)
+
+## Verification notes
+Driven in the running app against a five-photograph fixture (root + `Day1`):
+
+- `create_folder` made `Keepers` at the root and `Day1/Best` nested. `bad/name` was
+  refused — *filename "bad/name" contains reserved character '/'* — and a second
+  `Keepers` was refused as *Keepers already exists here*. Both empty folders then
+  appeared in `list_sources` as `Keepers=0` and `Day1/Best=0`, which is the point of
+  listing folders from disk as well as from the index.
+- Deleting one photograph to `Keepers` reported *Moved 1 to Keepers · undo id …* and
+  put it at `Keepers/20260820_120101.jpg`; ⌘Z restored it to the root.
+- Renaming with `Day1`'s two hashes as the scope touched only those two; the three
+  root files kept their names exactly.
+- The previewed names and the applied names were identical
+  (`Day1/2026-08-21_1.jpg`, `Day1/2026-08-21_2.jpg`), which is structural: preview and
+  apply call the same `plan_scoped`.
+- `shot_%%n` over the whole library numbered in capture order across folders —
+  `shot_1..shot_3` at the root, `shot_4`, `shot_5` in `Day1`, whose photographs were
+  taken a day later. A twelve-file unit test covers the zero-padding (`shot_01`…
+  `shot_12`), since a bare counter sorts 10 before 2 in every file browser.
+- `%Q` was refused as *"%Q" is not a pattern I can read* rather than panicking inside
+  chrono, which is what an unvalidated user-typed pattern does.

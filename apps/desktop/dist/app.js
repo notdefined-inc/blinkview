@@ -776,7 +776,12 @@ function showCtx(x, y) {
   items.push(item(`Move ${n} to\u2026`, "", moveSelectedPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
-  else items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
+  else {
+    items.push(item(`Move ${n} to Trash`, "⌫", deleteSelected, "danger"));
+    // The keystroke stays Trash — a key should not ask a question — so choosing
+    // somewhere else is its own item.
+    items.push(item(`Delete ${n} to\u2026`, "", () => deleteSelectedTo(), "danger"));
+  }
   menu.replaceChildren(...items);
 
   menu.hidden = false;
@@ -787,6 +792,19 @@ function showCtx(x, y) {
 function hideCtx() { $("#ctx").hidden = true; }
 
 /* ---------------- editing ---------------- */
+/** Delete somewhere other than Trash. Still a journalled move inside the library, so
+    ⌘Z reverses it exactly as the Trash route does. */
+async function deleteSelectedTo() {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  const dest = await pickFolderPrompt(`Delete ${hashes.length} to`, "Deleted-2026");
+  if (!dest) return;
+  const msg = await busy(`Moving ${hashes.length} to ${dest}…`,
+    () => invoke("delete_photos", { path: S.source, hashes, dest }));
+  toast(msg + " — press ⌘Z to undo", "ok");
+  clearSel(); await refreshSources(); await reload();
+}
+
 async function deleteSelected() {
   const hashes = [...S.sel];
   if (!hashes.length) return;
@@ -1908,13 +1926,102 @@ async function removeSource(path) {
   await refreshSources();
 }
 
+/** Make a folder where the sidebar says you are.
+    Folders are the only grouping there is (ADR-0009), so making an empty one is how
+    you say where things are going to go, before there is anything to put in it. */
+async function newFolderPrompt() {
+  if (!S.source) return toast("Add a folder first");
+  const parent = S.folder && S.folder !== TRASH ? S.folder : "";
+  const name = await promptDialog(
+    parent ? `New folder inside ${parent.split("/").pop()}` : "New folder", "");
+  if (!name || !name.trim()) return;
+  try {
+    const rel = await invoke("create_folder", { path: S.source, parent, name: name.trim() });
+    await refreshSources();
+    toast(`${rel} created`, "ok");
+    await selectFolder(rel);
+  } catch (e) {
+    toast(String(e), "error");
+  }
+}
+
 /* ---------------- organize sheet ---------------- */
 const OPS = [
   { id: "dedupe",  title: "Find duplicates",  desc: "Group burst shots and set all but the sharpest aside." },
   { id: "scenery", title: "Split out scenery", desc: "Move photos with no close-up person into Scenery." },
   { id: "file",    title: "File by person",    desc: "Move each photo into a folder named for the person in it." },
-  { id: "rename",  title: "Rename by date",    desc: "Give every file a date-and-time filename." },
 ];
+
+/* The shipped default. Hyphens rather than colons because the reference drive is
+   exFAT, where `:` is reserved (fsops::RESERVED). */
+const DEFAULT_RENAME = "%I-%M-%S_%p_%d_%b_%Y";
+
+/** What a rename would touch: the selection if there is one, else where you stand. */
+function renameScope() {
+  const sel = [...S.sel];
+  if (sel.length) {
+    return { hashes: sel, what: `the ${sel.length} you selected` };
+  }
+  if (S.folder) {
+    const hs = S.photos.filter(p => inFolder(p.folder, S.folder)).map(p => p.hash);
+    return { hashes: hs, what: `everything in ${S.folder} (${hs.length})` };
+  }
+  return { hashes: null, what: `the whole library (${S.photos.length})` };
+}
+
+function renameBlock() {
+  const scope = renameScope();
+  const out = el("div", { class: "planout", hidden: true });
+  const pat = el("input", {
+    class: "nameinput", type: "text", value: S.renameFormat || DEFAULT_RENAME,
+    "aria-label": "Filename pattern", style: "width:100%;margin-top:var(--s2)",
+    onkeydown: e => { e.stopPropagation(); if (e.key === "Enter") preview.click(); },
+    // A pattern that has changed has not been previewed, and nothing is applied
+    // without a preview.
+    oninput: e => { S.renameFormat = e.target.value; apply.disabled = true; },
+  });
+  const apply = el("button", { class: "btn", disabled: true,
+    onclick: () => runRenameApply(scope, pat.value, out, apply) }, "Apply");
+  const preview = el("button", { class: "btn ghost",
+    onclick: () => runRenamePreview(scope, pat.value, out, apply) }, "Preview");
+  return el("div", { class: "op" },
+    el("div", { class: "txt" },
+      el("b", {}, "Rename files"),
+      el("span", {}, `Renames ${scope.what}. %Y year · %m month · %d day · %H hour · ` +
+        `%M minute · %S second · %b month name · %%n a counter`),
+      pat, out),
+    preview, apply);
+}
+
+async function runRenamePreview(scope, format, out, applyBtn) {
+  out.hidden = false;
+  try {
+    const plan = await busy("Working out the names…",
+      () => invoke("plan_rename", { path: S.source, format, hashes: scope.hashes }));
+    const lines = plan.moves.slice(0, 5)
+      .map(([f, t]) => `${f.split("/").pop()}  \u2192  ${t.split("/").pop()}`);
+    const more = plan.moves.length > 5 ? `\n\u2026and ${plan.moves.length - 5} more` : "";
+    const skipped = plan.skipped.length
+      ? `\n${plan.skipped.length} left alone \u2014 ${plan.skipped[0][1]}` : "";
+    out.textContent = plan.moves.length
+      ? `${plan.moves.length} to rename:\n` + lines.join("\n") + more + skipped
+      : "Nothing to rename." + skipped;
+    applyBtn.disabled = plan.moves.length === 0;
+  } catch (e) {
+    // A pattern chrono cannot read is an answer, not a crash.
+    out.textContent = String(e);
+    applyBtn.disabled = true;
+  }
+}
+
+async function runRenameApply(scope, format, out, applyBtn) {
+  const msg = await busy("Renaming\u2026",
+    () => invoke("apply_rename", { path: S.source, format, hashes: scope.hashes }));
+  toast(msg + " \u2014 \u2318Z to undo", "ok");
+  applyBtn.disabled = true; out.hidden = true;
+  await invoke("rescan", { path: S.source });
+  await refreshSources(); await loadPhotos();
+}
 function openSheet() {
   if (!S.source) return toast("Add a folder first");
   $("#sheet-title").textContent = "Organize";
@@ -1927,6 +2034,7 @@ function openSheet() {
         el("button", { class: "btn ghost", onclick: () => runPreview(op, out, apply) }, "Preview"),
         apply);
     }),
+    renameBlock(),
     el("div", { class: "op", id: "op-faces" },
       el("div", { class: "txt" }, el("b", {}, "Find people"),
         el("span", { id: "faces-note" }, "Detect faces, then name the groups openfoto finds.")),
@@ -2629,6 +2737,7 @@ async function toggleInfo() {
 
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
+$("#btn-newfolder").onclick = newFolderPrompt;
 $("#btn-tools").onclick = openSheet;
 /* The initial theme is applied by an inline script in index.html (pre-paint);
    this only flips it and remembers the choice. */
@@ -2913,6 +3022,41 @@ function confirmDialog(title, text, okLabel, danger = false) {
     document.addEventListener("keydown", d.onKey, true);
     document.body.append(d.box);
   }).then(v => v === null ? false : v);   // Esc/backdrop (null) also means "not confirmed"
+}
+
+/** Ask for a folder: the ones that exist, one click each, or a name of your own.
+    Offering the existing folders first is what stops a second spelling of a folder
+    that is already there. */
+function pickFolderPrompt(title, placeholder) {
+  return new Promise(resolve => {
+    let d;
+    const folders = (S.sources.find(x => x.path === S.source)?.folders || [])
+      .filter(f => f.path && f.path !== TRASH && !f.path.startsWith(TRASH + "/"))
+      .slice(0, 10);
+    const input = el("input", {
+      class: "nameinput", type: "text", value: "", placeholder: placeholder || "",
+      "aria-label": title, style: "width:100%",
+      onkeydown: e => {
+        e.stopPropagation();
+        if (e.key === "Escape") d.done(null);
+        if (e.key === "Enter") d.done(input.value.trim() || null);
+      }
+    });
+    d = dialogFrame(title, [
+      folders.length
+        ? el("div", { class: "movepicks" }, folders.map(f =>
+            el("button", { class: "sugg-pill", title: f.path, onclick: () => d.done(f.path) }, f.name)))
+        : null,
+      input,
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel"),
+        el("button", { class: "btn", onclick: () => d.done(input.value.trim() || null) }, "Move")),
+    ].filter(Boolean));
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+    setTimeout(() => input.focus(), 40);
+  });
 }
 
 function promptDialog(title, value) {

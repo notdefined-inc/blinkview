@@ -421,6 +421,19 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
             has_children.insert(a, true);
         }
     }
+    // A folder with nothing in it yet is invisible to a tree derived from the index —
+    // and a folder you just made but cannot see is indistinguishable from one that
+    // failed to be made. Directory entries are cheap next to the row work below.
+    let empties: BTreeSet<String> = walk_dirs(lib.root())
+        .into_iter()
+        .filter(|d| !total.contains_key(d))
+        .collect();
+    for d in &empties {
+        total.insert(d.clone(), 0);
+        for a in ancestors(d) {
+            has_children.insert(a, true);
+        }
+    }
     let folders = total;
     // Progress is about photographs still in the library. Counting analysed trashed
     // ones against a total that excludes them would offer "Look for people" a
@@ -475,7 +488,7 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         videos,
         folders: folders
             .into_iter()
-            .filter(|(_, n)| *n > 0)
+            .filter(|(path, n)| *n > 0 || empties.contains(path))
             .map(|(path, count)| FolderInfo {
                 depth: if path.is_empty() { 0 } else { path.matches('/').count() + 1 },
                 name: if path.is_empty() {
@@ -716,6 +729,27 @@ async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<Sourc
     Ok(d)
 }
 
+/// Every folder at or below `root`, relative to it, skipping the cache and hidden
+/// folders. `.openfoto` is excluded by the leading dot, like every other hidden name.
+fn walk_dirs(root: &std::path::Path) -> Vec<String> {
+    fn rec(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if !p.is_dir() || e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if let Ok(rel) = p.strip_prefix(root) {
+                out.push(rel.to_string_lossy().to_string());
+            }
+            rec(root, &p, out);
+        }
+    }
+    let mut out = Vec::new();
+    rec(root, root, &mut out);
+    out
+}
+
 /// Every `openfoto.json` at or below `root`, skipping the cache and hidden folders.
 fn walk_metadata(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
@@ -773,6 +807,38 @@ fn remove_source(
         removed += 1;
     }
     Ok(format!("Removed, and deleted {removed} openfoto file(s). Your photographs are untouched."))
+}
+
+/// Make a folder inside the library.
+///
+/// Folders are the only grouping openfoto has (ADR-0009), so making one before there
+/// is anything to put in it is not a convenience — it is how you say where things are
+/// going to go. Validated through `fsops`, because the reference drive is exFAT and
+/// macOS will happily create a name that volume cannot carry.
+#[tauri::command]
+async fn create_folder(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    parent: String,
+    name: String,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        let name = name.trim();
+        openfoto_core::fsops::validate_filename(name)?;
+        let parent = parent.trim().trim_matches('/');
+        if !lib.abs(parent).is_dir() {
+            anyhow::bail!("{} is not a folder in this library", if parent.is_empty() { "the library root" } else { parent });
+        }
+        let rel = if parent.is_empty() { name.to_string() } else { format!("{parent}/{name}") };
+        let dir = lib.abs(&rel);
+        // Adopting an existing folder silently would make "new folder" a lie, and the
+        // one it adopted might be full.
+        if dir.exists() {
+            anyhow::bail!("{name} already exists here");
+        }
+        std::fs::create_dir(&dir)?;
+        Ok(rel)
+    })
 }
 
 #[tauri::command]
@@ -1677,20 +1743,32 @@ pub const TRASH: &str = "Trash";
 /// user cannot undo by hand, so it goes through the same journalled Move as everything
 /// else and stays recoverable — both from `Trash/` in Finder and via undo.
 #[tauri::command]
-async fn delete_photos(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>) -> R<String> {
+async fn delete_photos(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    dest: Option<String>,
+) -> R<String> {
+    // Somewhere else of your choosing, or the library Trash. Either way it is the same
+    // journalled Move, so ⌘Z reverses it identically — and either way it stays inside
+    // the library, because leaving it is the separate, explicit "Empty…" step.
+    let dest = dest
+        .map(|d| d.trim().trim_matches('/').to_string())
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| TRASH.to_string());
     with(&state, &path, |lib| {
-        std::fs::create_dir_all(lib.abs(TRASH))?;
+        std::fs::create_dir_all(lib.abs(&dest))?;
         let want: BTreeSet<String> = hashes.into_iter().collect();
         let mut plan = openfoto_core::Plan::new("delete");
         for r in lib.index.all()? {
-            if !want.contains(&r.hash) || r.path.starts_with(&format!("{TRASH}/")) {
+            if !want.contains(&r.hash) || in_folder(&r.path, &dest) {
                 continue;
             }
             let name = r.path.rsplit('/').next().unwrap_or(&r.path);
             plan.ops.push(openfoto_core::Op::Move {
                 hash: r.hash.clone(),
                 from: r.path.clone(),
-                to: format!("{TRASH}/{name}"),
+                to: format!("{dest}/{name}"),
             });
         }
         if plan.is_empty() {
@@ -1698,7 +1776,8 @@ async fn delete_photos(state: tauri::State<'_, AppState>, path: String, hashes: 
         }
         let n = plan.len();
         let j = plan.apply(lib)?;
-        Ok(format!("Moved {n} to Trash · undo id {}", j.id))
+        let where_to = if dest == TRASH { "Trash".to_string() } else { dest };
+        Ok(format!("Moved {n} to {where_to} · undo id {}", j.id))
     })
 }
 
@@ -1974,6 +2053,51 @@ async fn apply_op(
         let n = p.len();
         let j = p.apply(lib)?;
         Ok(format!("{n} changes applied · undo id {}", j.id))
+    })
+}
+
+/// Preview a rename, over a pattern and a scope.
+///
+/// Both halves matter. The pattern is the user's, so it is validated before it is
+/// rendered — an unknown specifier otherwise panics inside chrono. The scope is a list
+/// of hashes, or everything when absent; uniqueness is still checked library-wide, so
+/// renaming twelve selected files can never collide with a name another folder holds.
+#[tauri::command]
+async fn plan_rename(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    format: String,
+    hashes: Option<Vec<String>>,
+) -> R<PlanView> {
+    with(&state, &path, |lib| {
+        let p = rename::plan_scoped(lib, &format, hashes.as_deref())?;
+        Ok(PlanView {
+            label: "rename".into(),
+            moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
+            skipped: p.skipped.clone(),
+        })
+    })
+}
+
+#[tauri::command]
+async fn apply_rename(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    format: String,
+    hashes: Option<Vec<String>>,
+) -> R<String> {
+    with(&state, &path, |lib| {
+        let p = rename::plan_scoped(lib, &format, hashes.as_deref())?;
+        if p.is_empty() {
+            return Ok("Nothing to rename.".into());
+        }
+        let n = p.len();
+        let skipped = p.skipped.len();
+        let j = p.apply(lib)?;
+        Ok(match skipped {
+            0 => format!("{n} renamed · undo id {}", j.id),
+            k => format!("{n} renamed · {k} left alone · undo id {}", j.id),
+        })
     })
 }
 
@@ -2450,10 +2574,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(debug_assertions)]
             bench_payload,
-            list_sources, add_source, remove_source, rescan,
+            list_sources, add_source, remove_source, rescan, create_folder,
             photos, build_thumbs, analyze_faces,
             clusters, name_clusters,
-            plan_op, apply_op, history, undo,
+            plan_op, apply_op, plan_rename, apply_rename, history, undo,
             delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
             models_status, models_fetch,
             people_overview, name_cluster, cluster_photos, autodetect_faces,
