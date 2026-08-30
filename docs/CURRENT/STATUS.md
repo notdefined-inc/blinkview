@@ -56,6 +56,10 @@ The update banner compares against the version in `tauri.conf.json`, not the wor
 `Cargo.toml`. The workspace carries an internal `0.0.1`, so every published release
 looked newer than the installed app and the banner never went away.
 
+Removing a source matches on the resolved path. The list holds the folder as it was
+added, while the sidebar shows it resolved, so a folder added through a symlink came
+back under a name that did not match its own entry and Remove removed nothing.
+
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 

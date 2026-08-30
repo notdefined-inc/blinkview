@@ -801,6 +801,20 @@ fn walk_metadata(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     out
 }
 
+/// Whether two paths name the same folder.
+///
+/// The list is stored as it was added, but the app shows the resolved path, so a
+/// folder added through a symlink — `/tmp`, or a volume alias — came back under a name
+/// that no longer matched its own entry, and Remove quietly removed nothing.
+fn same_source(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let resolve =
+        |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| std::path::PathBuf::from(p));
+    resolve(a) == resolve(b)
+}
+
 /// Remove a folder from blinkview. The photographs are never touched.
 ///
 /// `purge` additionally deletes what blinkview wrote into the folder. That is offered
@@ -813,7 +827,7 @@ fn remove_source(
     path: String,
     purge: Option<bool>,
 ) -> R<String> {
-    let list: Vec<String> = load_sources(&app).into_iter().filter(|p| p != &path).collect();
+    let list: Vec<String> = load_sources(&app).into_iter().filter(|p| !same_source(p, &path)).collect();
     save_sources(&app, &list);
     state.libs.lock().map_err(err)?.remove(&path);
     // Stop watching, or a removed source keeps rescanning a library nothing displays.
@@ -3657,6 +3671,20 @@ mod tests {
         assert!(!release_url_is_safe(
             "https://github.com/notdefined-inc/blinkview/releases/tag/v0.1.0?download=1"
         ));
+    }
+
+    /// A folder added through a symlink is shown resolved, so removing it by the name
+    /// the UI knows has to still find the entry the list holds.
+    #[test]
+    fn a_source_is_removed_under_either_name() {
+        let dir = std::env::temp_dir().join(format!("blinkview-rm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stored = dir.to_string_lossy().to_string();
+        let shown = dir.canonicalize().unwrap().to_string_lossy().to_string();
+        assert!(same_source(&stored, &shown));
+        assert!(same_source(&stored, &stored));
+        assert!(!same_source(&stored, "/nowhere/else"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Switching library must reload an open map, not only blank it. The first attempt
