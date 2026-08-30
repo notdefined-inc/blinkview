@@ -611,8 +611,11 @@ async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<Sourc
         ..Default::default()
     };
     // The metadata is read through the library so the cascade is counted the same way
-    // it is everywhere else.
-    let _ = with(&state, &path, |lib| {
+    // it is everywhere else — but readably. This runs before the "Remove?" dialog is
+    // shown, and on the blocking helper it queued behind a running analysis: the button
+    // did nothing for the length of the pass and then the dialog appeared all at once,
+    // long after it had been clicked.
+    let _ = with_readable(&state, &path, |lib| {
         let set = lib.user_data()?;
         d.saved_searches = set.searches().len();
         Ok(())

@@ -547,6 +547,9 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 The remove-source button works during an analysis pass. `source_data` runs
+  before the confirmation dialog and took the blocking library lock, so the click did
+  nothing for the length of the pass and the dialog then appeared all at once.
 - 2026-08-30 Analysis workers are sized from physical memory (one per 4 GB, capped at
   four) rather than core count alone. An 8 GB machine now takes two instead of four and
   peaks at 1143 MB instead of ~1600 MB, and finishes faster doing it.
