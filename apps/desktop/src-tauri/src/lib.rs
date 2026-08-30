@@ -64,6 +64,21 @@ static IMAGE_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock:
         .expect("image pool")
 });
 
+/// Threads that render video poster frames on demand.
+///
+/// Two, deliberately: an ffmpeg extracting one frame holds up to ~140 MB of demux and
+/// decode buffers for a 1080p stream (measured on the shipped binary), and a fast
+/// scroll over a fresh import used to fire dozens of these at once. Separate from
+/// [`IMAGE_POOL`] so a burst of poster renders can never occupy — and starve — the
+/// threads that decode photographs.
+static VIDEO_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .thread_name(|i| format!("openfoto-video-{i}"))
+        .build()
+        .expect("video pool")
+});
+
 #[derive(Default)]
 pub struct AppState {
     /// One lock *per library*, not one lock over all of them.
@@ -1897,6 +1912,122 @@ fn export_bundled_ffmpeg(app: &tauri::App) {
     unsafe { std::env::set_var(openfoto_core::thumbs::FFMPEG_ENV, &candidate) };
 }
 
+/// Bytes budget for the thumbnail cache.
+///
+/// ~2,000 thumbnails at the measured ~33 KB average, so an afternoon of browsing
+/// fits; a photograph-sized entry (~400 KB previews at worst) still leaves hundreds
+/// of slots. On top of a webview that was measured holding gigabytes, 64 MB is noise.
+const THUMB_CACHE_BUDGET: usize = 64 * 1024 * 1024;
+
+/// A byte-budgeted LRU over small derived files — thumbnails, previews.
+///
+/// WKWebView cannot be relied on to cache custom-scheme responses, and grid cells are
+/// destroyed offscreen and rebuilt on re-entry, so every scroll-back re-requested each
+/// thumbnail and paid the full handler round trip: the flicker, and the slow scroll.
+/// Thumbnails are content-addressed and never change, so there is nothing to
+/// invalidate; an entry leaves only when the budget needs the room.
+struct ThumbCache {
+    map: std::collections::HashMap<std::path::PathBuf, (Vec<u8>, u64)>,
+    bytes: usize,
+    clock: u64,
+    budget: usize,
+}
+
+impl ThumbCache {
+    fn new(budget: usize) -> Self {
+        Self { map: std::collections::HashMap::new(), bytes: 0, clock: 0, budget }
+    }
+
+    /// The bytes for `path`, if cached. Reading counts as a use: the entry stays.
+    fn get(&mut self, path: &std::path::Path) -> Option<&[u8]> {
+        self.map.get_mut(path).map(|(bytes, stamp)| {
+            self.clock += 1;
+            *stamp = self.clock;
+            bytes.as_slice()
+        })
+    }
+
+    /// Cache `bytes`, evicting the least recently used entries to stay in budget.
+    /// An entry larger than the whole budget is refused: it would evict everything
+    /// and still not fit.
+    fn put(&mut self, path: &std::path::Path, bytes: Vec<u8>) {
+        let len = bytes.len();
+        if len > self.budget {
+            return;
+        }
+        self.clock += 1;
+        if let Some((old, _)) = self.map.insert(path.to_path_buf(), (bytes, self.clock)) {
+            self.bytes -= old.len();
+        }
+        self.bytes += len;
+        while self.bytes > self.budget {
+            // O(n) over a few hundred entries, a handful of times per minute of
+            // browsing — cheaper than a dependency for a true O(1) list.
+            let victim = self
+                .map
+                .iter()
+                .min_by_key(|(_, (_, stamp))| *stamp)
+                .map(|(path, _)| path.clone());
+            let Some(victim) = victim else { break };
+            if let Some((old, _)) = self.map.remove(&victim) {
+                self.bytes -= old.len();
+            }
+        }
+    }
+}
+
+static THUMB_CACHE: std::sync::LazyLock<std::sync::Mutex<ThumbCache>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(ThumbCache::new(THUMB_CACHE_BUDGET)));
+
+/// Serve a small derived file through [`THUMB_CACHE`].
+///
+/// A cache hit never touches the filesystem; a miss reads once and remembers. The
+/// eviction victim has the oldest use, so what a viewer keeps scrolling back to is
+/// exactly what stays fast.
+fn serve_cached(path: &std::path::Path) -> Option<http::Response<Vec<u8>>> {
+    let mut cache = THUMB_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(bytes) = cache.get(path) {
+        return Some(ok_response(bytes.to_vec(), path));
+    }
+    let bytes = std::fs::read(path).ok()?;
+    cache.put(path, bytes.clone());
+    Some(ok_response(bytes, path))
+}
+
+/// The value of one `?key=` parameter of a request URI, percent-decoding left to the
+/// path handling (hashes are hex, so they never arrive encoded).
+fn query_param(query: Option<&str>, key: &str) -> Option<String> {
+    query.and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix(key).map(str::to_string)))
+}
+
+/// Whether answering this request means spawning ffmpeg — a video's poster that does
+/// not exist yet.
+///
+/// Routing happens before any pool is chosen so the slow case never occupies a
+/// photograph-decode thread. Hashes are content-addressed, so "no source has this
+/// poster" is a genuine miss; the render itself still happens inside `serve_photo`,
+/// which re-checks existence and would simply serve the file if we guessed wrong.
+fn needs_video_render(app: &tauri::AppHandle, request: &http::Request<Vec<u8>>) -> bool {
+    let Ok(decoded) = percent_decode(request.uri().path()) else { return false };
+    let path = std::path::Path::new(&decoded);
+    let hash = query_param(request.uri().query(), "t=");
+    video_thumb_miss(path, hash.as_deref(), &load_sources(app))
+}
+
+fn video_thumb_miss(path: &std::path::Path, hash: Option<&str>, sources: &[String]) -> bool {
+    let is_video = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "m4v"));
+    if !is_video {
+        return false;
+    }
+    let Some(hash) = hash else { return false };
+    sources
+        .iter()
+        .all(|s| !openfoto_core::thumbs::thumb_path_at(std::path::Path::new(s), hash).exists())
+}
+
 fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
     let deny = |code: u16| {
         http::Response::builder()
@@ -1915,16 +2046,14 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     // immediately on a large library: the virtualised viewport only ever requests the
     // few dozen images actually on screen, so thumbnails are produced in view order
     // instead of by a pre-pass that has to finish before anything is visible.
-    let param = |k: &str| {
-        request.uri().query().and_then(|q| {
-            q.split('&').find_map(|kv| kv.strip_prefix(k).map(|v| v.to_string()))
-        })
-    };
+    let param = |k: &str| query_param(request.uri().query(), k);
     let thumb_hash = param("t=");
     // `?full=<hash>` asks for the full-size image. HEIC is the reason this exists:
     // WKWebView cannot decode it (verified), so it is transcoded once and cached
     // rather than converted on every view.
     let full_hash = param("full=");
+    // `?preview=<hash>` asks for the lightbox preview — a derived 2000 px JPEG.
+    let preview_hash = param("preview=");
 
     // Boundary: the file must live inside a source the user added.
     let sources = load_sources(app);
@@ -1944,6 +2073,30 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
             .map(std::path::PathBuf::from)
             .find(|r| r.canonicalize().map(|c| canon.starts_with(c)).unwrap_or(false))
     };
+
+    // The lightbox preview: a derived 2000 px JPEG, rendered on first request. This is
+    // what makes the stepper quick — a step used to decode the full original every
+    // time, and a 12–48 MP decode per keypress is a wait, not a step.
+    if let (Some(hash), Some(root)) = (preview_hash.as_deref(), source_root(&canon)) {
+        let p = openfoto_core::thumbs::preview_path_at(&root, hash);
+        if !p.exists() {
+            match openfoto_core::thumbs::render_preview(&canon, &p) {
+                Ok(true) => {}
+                // The source is small enough to be its own preview.
+                Ok(false) => {
+                    return match std::fs::read(&canon) {
+                        Ok(b) => ok_response(b, &canon),
+                        Err(_) => deny(404),
+                    };
+                }
+                Err(_) => return deny(500),
+            }
+        }
+        return match serve_cached(&p) {
+            Some(res) => res,
+            None => deny(404),
+        };
+    }
 
     // Full-size request for a format the webview cannot decode: serve a cached JPEG.
     if thumb_hash.is_none() && openfoto_core::imageio::needs_conversion(&canon) {
@@ -2002,6 +2155,15 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
             }
         }
     };
+
+    // A thumbnail comes from an <img>, which streams nothing: there is no Range
+    // header to honour, and the bytes are worth keeping in RAM (see ThumbCache).
+    if thumb_hash.is_some() {
+        return match serve_cached(&serve) {
+            Some(res) => res,
+            None => deny(404),
+        };
+    }
 
     // Videos are streamed, not swallowed. A range request reads only the slice asked
     // for; without this a 500MB clip had to be read into memory and handed over whole
@@ -2136,7 +2298,14 @@ pub fn run() {
         })
         .register_asynchronous_uri_scheme_protocol("photo", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
-            IMAGE_POOL.spawn(move || responder.respond(serve_photo(&app, request)));
+            // A video poster that does not exist yet means an ffmpeg spawn — measured
+            // at up to ~140 MB and a third of a second apiece. Those go to their own
+            // two threads so a burst of them can never occupy the photograph decoders.
+            if needs_video_render(&app, &request) {
+                VIDEO_POOL.spawn(move || responder.respond(serve_photo(&app, request)));
+            } else {
+                IMAGE_POOL.spawn(move || responder.respond(serve_photo(&app, request)));
+            }
         });
 
     // UI verification bridge. Behind the `ui-bridge` feature and additionally gated on
@@ -2219,5 +2388,83 @@ mod tests {
         // The root has no ancestors, and must not report itself as one or counts
         // would be doubled at the top of the tree.
         assert!(ancestors("").is_empty());
+    }
+
+    fn cache(budget: usize) -> ThumbCache {
+        ThumbCache::new(budget)
+    }
+
+    #[test]
+    fn a_cached_entry_serves_without_the_filesystem() {
+        let mut c = cache(1000);
+        c.put(std::path::Path::new("/t/a.jpg"), vec![1, 2, 3]);
+        assert_eq!(c.get(std::path::Path::new("/t/a.jpg")), Some(&[1, 2, 3][..]));
+        assert_eq!(c.bytes, 3);
+    }
+
+    #[test]
+    fn the_least_recently_used_entry_is_evicted_first() {
+        let mut c = cache(10);
+        let p = |n: &str| std::path::Path::new(n).to_path_buf();
+        c.put(&p("/a"), vec![0; 4]);
+        c.put(&p("/b"), vec![0; 4]);
+        c.put(&p("/c"), vec![0; 4]); // 12 bytes > 10: one must go
+        // The oldest stamp is /a, which was never re-read.
+        assert!(c.get(&p("/a")).is_none(), "/a should have been evicted");
+        assert!(c.get(&p("/b")).is_some());
+        assert!(c.get(&p("/c")).is_some());
+        assert!(c.bytes <= 10, "{} bytes in a 10-byte cache", c.bytes);
+    }
+
+    #[test]
+    fn a_read_refreshes_recency_so_scrolled_back_rows_stay() {
+        let mut c = cache(10);
+        let p = |n: &str| std::path::Path::new(n).to_path_buf();
+        c.put(&p("/a"), vec![0; 4]);
+        c.put(&p("/b"), vec![0; 4]);
+        // The user scrolls back to /a: it is the newest use now.
+        assert!(c.get(&p("/a")).is_some());
+        c.put(&p("/c"), vec![0; 4]); // 12 > 10: evict, but not /a
+        assert!(c.get(&p("/a")).is_some(), "just-read /a must survive");
+        assert!(c.get(&p("/b")).is_none());
+    }
+
+    #[test]
+    fn an_entry_bigger_than_the_budget_is_refused() {
+        let mut c = cache(10);
+        c.put(std::path::Path::new("/big"), vec![0; 100]);
+        assert!(c.get(std::path::Path::new("/big")).is_none());
+        assert_eq!(c.bytes, 0);
+    }
+
+    #[test]
+    fn reinserting_replaces_without_leaking_budget() {
+        let mut c = cache(100);
+        let p = std::path::Path::new("/a");
+        c.put(p, vec![0; 60]);
+        c.put(p, vec![0; 60]); // replace, not accumulate
+        assert_eq!(c.bytes, 60, "the old bytes must be released");
+    }
+
+    #[test]
+    fn only_a_video_owed_a_poster_is_routed_to_ffmpeg() {
+        let dir = std::env::temp_dir().join(format!("openfoto-route-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sources = vec![dir.display().to_string()];
+        let clip = dir.join("clip.mp4");
+        let still = dir.join("shot.jpg");
+
+        // A video with no poster anywhere is the slow case.
+        assert!(video_thumb_miss(&clip, Some("abc"), &sources));
+        // Write its poster under the source: no longer a miss.
+        let t = openfoto_core::thumbs::thumb_path_at(&dir, "abc");
+        std::fs::create_dir_all(t.parent().unwrap()).unwrap();
+        std::fs::write(&t, b"poster").unwrap();
+        assert!(!video_thumb_miss(&clip, Some("abc"), &sources));
+        // Stills never route to ffmpeg; neither does a video without a thumb request.
+        assert!(!video_thumb_miss(&still, Some("abc"), &sources));
+        assert!(!video_thumb_miss(&clip, None, &sources));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

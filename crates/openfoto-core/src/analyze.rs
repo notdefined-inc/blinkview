@@ -174,6 +174,13 @@ pub fn run_cancellable(
     let root = lib.root().to_path_buf();
     let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
 
+    // Videos cannot join the one-decode pass — their pixels belong to ffmpeg, not
+    // imageio — but leaving every poster to the lazy per-cell path made a fresh
+    // import pay one ffmpeg spawn mid-scroll, on the same threads that decode
+    // photographs. They are built here instead, by a small sub-pass after the photos.
+    let ffmpeg = if stages.thumbs { thumbs::resolve() } else { None };
+    let video_todo = video_thumb_todo(lib, ffmpeg.as_deref())?;
+
     let mut todo = Vec::new();
     let mut skipped = 0usize;
     for r in &rows {
@@ -202,11 +209,11 @@ pub fn run_cancellable(
     }
 
     let mut st = Stats { considered: rows.len(), skipped, ..Default::default() };
-    if todo.is_empty() {
+    if todo.is_empty() && video_todo.is_empty() {
         return Ok(st);
     }
 
-    let counter = crate::progress::Counter::new(todo.len(), progress);
+    let counter = crate::progress::Counter::new(todo.len() + video_todo.len(), progress);
     let pool = rayon::ThreadPoolBuilder::new().num_threads(workers()).build()?;
     let (tx, rx) = std::sync::mpsc::channel::<Outcome>();
 
@@ -251,8 +258,88 @@ pub fn run_cancellable(
         Ok(())
     })?;
 
+    if !video_todo.is_empty() {
+        let (made, first_error) =
+            build_video_thumbs(&root, &video_todo, ffmpeg.as_deref().expect("checked above"), &counter, stop);
+        st.thumbs += made;
+        if let Some((rel, e)) = first_error {
+            st.errors.push(format!("{rel}: thumbnail: {e}"));
+        }
+    }
+
     counter.finish();
     Ok(st)
+}
+
+/// How many video posters are extracted at once.
+///
+/// Not [`workers`]: an ffmpeg pulling one frame holds demux and decode buffers of up
+/// to ~140 MB for a 1080p stream (measured on the shipped binary), so photograph-pass
+/// sizing would run four of those at once on the 8 GB machine this was measured on.
+fn video_workers() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 2)
+}
+
+/// The videos still owed a poster, given the ffmpeg a pass will use.
+///
+/// `None` ffmpeg means no video work: without it a poster cannot be made, and
+/// pretending otherwise would fail every clip on every pass.
+fn video_thumb_todo(
+    lib: &Library,
+    ffmpeg: Option<&std::ffi::OsStr>,
+) -> Result<Vec<(String, std::path::PathBuf)>> {
+    let Some(_) = ffmpeg else { return Ok(Vec::new()) };
+    Ok(lib
+        .index
+        .all()?
+        .into_iter()
+        .filter(|r| r.kind == "video")
+        .map(|r| (r.hash, lib.abs(&r.path)))
+        .filter(|(hash, _)| !thumbs::thumb_path_at(lib.root(), hash).exists())
+        .collect())
+}
+
+/// Extract the missing video posters with ffmpeg, from a resolved binary.
+///
+/// Returns how many posters were written and the first failure, with the video's path
+/// relative to the library root — the same shape the photograph pass reports errors in.
+fn build_video_thumbs(
+    root: &std::path::Path,
+    todo: &[(String, std::path::PathBuf)],
+    bin: &std::ffi::OsStr,
+    counter: &crate::progress::Counter,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> (usize, Option<(String, anyhow::Error)>) {
+    let made = std::sync::atomic::AtomicUsize::new(0);
+    let first_error: std::sync::Mutex<Option<(String, anyhow::Error)>> = std::sync::Mutex::new(None);
+    let pool = match rayon::ThreadPoolBuilder::new().num_threads(video_workers()).build() {
+        Ok(p) => p,
+        Err(e) => return (0, Some((String::new(), anyhow::Error::new(e)))),
+    };
+    pool.install(|| {
+        todo.par_iter().for_each(|(hash, src)| {
+            if stop() {
+                return;
+            }
+            let dst = thumbs::thumb_path_at(root, hash);
+            match thumbs::render_video_with(bin, src, &dst) {
+                Ok(()) => {
+                    made.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(e) => {
+                    let mut guard = first_error.lock().unwrap_or_else(|p| p.into_inner());
+                    if guard.is_none() {
+                        // The relative path is what the photograph pass reports; a
+                        // video's relative path is its path under the root.
+                        let rel = src.strip_prefix(root).unwrap_or(src).display().to_string();
+                        *guard = Some((rel, e));
+                    }
+                }
+            }
+            counter.tick();
+        });
+    });
+    (made.into_inner(), first_error.into_inner().unwrap_or_else(|p| p.into_inner()))
 }
 
 fn merge(into: &mut Stats, from: Stats) {
@@ -529,5 +616,88 @@ mod tests {
                 "{w}x{h}"
             );
         }
+    }
+
+    /// A script that answers like ffmpeg and writes a (non-image) file to its final
+    /// argument, which is where `render_video_with` puts the output path.
+    fn fake_ffmpeg(dir: &std::path::Path) -> std::path::PathBuf {
+        let p = dir.join("fake-ffmpeg.sh");
+        std::fs::write(&p, "#!/bin/sh\nfor last; do :; done\nprintf x > \"$last\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("openfoto-video-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The sub-pass writes a poster for every clip it is given, using the binary it
+    /// was resolved once — not one ffmpeg spawn per clip to rediscover it.
+    #[test]
+    fn the_video_pass_writes_posters_with_a_resolved_binary() {
+        let dir = scratch("write");
+        let ff = fake_ffmpeg(&dir);
+        let todo: Vec<(String, std::path::PathBuf)> =
+            [("v1", "a.mp4"), ("v2", "b.mp4")]
+                .into_iter()
+                .map(|(hash, name)| {
+                    std::fs::write(dir.join(name), b"not really a video").unwrap();
+                    (hash.to_string(), dir.join(name))
+                })
+                .collect();
+        let sink = crate::progress::silent;
+        let counter = crate::progress::Counter::new(todo.len(), &sink);
+        let (made, err) = build_video_thumbs(&dir, &todo, ff.as_os_str(), &counter, &|| false);
+        assert_eq!(made, 2, "both posters written");
+        assert!(err.is_none(), "unexpected failure: {err:?}");
+        for (hash, _) in &todo {
+            assert!(thumbs::thumb_path_at(&dir, hash).exists(), "{hash} has no poster");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only videos still owed a poster are collected; photographs never are, and an
+    /// absent ffmpeg collects nothing rather than failing every clip.
+    #[test]
+    fn video_todo_is_videos_owed_a_poster() {
+        let dir = scratch("todo");
+        let lib = Library::open(&dir).unwrap();
+        for (hash, name, kind) in [
+            ("aaaa", "done.mp4", "video"),
+            ("bbbb", "owed.mp4", "video"),
+            ("cccc", "shot.jpg", "photo"),
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+            lib.index
+                .upsert(&crate::index::FileRow {
+                    hash: hash.into(),
+                    path: name.into(),
+                    size: 1,
+                    mtime: 0,
+                    kind: kind.into(),
+                    taken_at: None,
+                    taken_src: None,
+                })
+                .unwrap();
+        }
+        // The poster `aaaa` already has.
+        let done = thumbs::thumb_path_at(&dir, "aaaa");
+        std::fs::create_dir_all(done.parent().unwrap()).unwrap();
+        std::fs::write(&done, b"poster").unwrap();
+
+        let with_ffmpeg =
+            video_thumb_todo(&lib, Some(std::ffi::OsStr::new("ffmpeg"))).unwrap();
+        assert_eq!(with_ffmpeg.len(), 1, "only the video without a poster: {with_ffmpeg:?}");
+        assert_eq!(with_ffmpeg[0].0, "bbbb");
+
+        assert!(video_thumb_todo(&lib, None).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

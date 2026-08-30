@@ -46,6 +46,7 @@ without qualification. See ADR-0007.
       .openfoto/            entirely derived — safe to delete, rebuilt by `scan`
         index.sqlite        hash -> path, EXIF, phash, face embeddings
         thumbs/             content-addressed thumbnail cache
+        derived/            lightbox previews and HEIC transcodes, by hash
         journal/            one entry per applied operation; the undo history
         people.json         identity names + reference embeddings
 
@@ -67,6 +68,16 @@ protocol, so the security boundary is explicit: a file is served only if it reso
 inside a folder the user added. The same handler produces thumbnails and HEIC
 transcodes on demand, which is what lets a large library paint immediately — the
 virtualised grid only ever requests the few dozen images actually on screen.
+
+Because WKWebView cannot be relied on to cache custom-scheme responses, and grid cells
+are destroyed offscreen and rebuilt on re-entry, the handler keeps its own 64 MiB
+byte-budgeted LRU over the small derived files (thumbnails, previews): a cache hit never
+touches the filesystem. Cells ask for their `src` only as they approach the viewport
+(IntersectionObserver), so a fast flick no longer queues rows the user never sees.
+Videos render their poster frames on a dedicated two-thread pool, dispatched at scheme
+dispatch time, so an ffmpeg spawn can never occupy a photograph-decode thread. The
+lightbox steps through `.openfoto/derived/p-<hash>.jpg` — a 2000 px JPEG derived on
+first view — instead of decoding the 12–48 MP original per keypress.
 
 ## Why Rust
 The end goal is a shippable desktop app; bundling a Python runtime into one is the usual

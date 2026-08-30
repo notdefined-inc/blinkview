@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-08-28_
+_Last updated: 2026-08-30_
 
 ## Current work — desktop app
 
@@ -66,6 +66,23 @@ The grid is virtualised: layout is computed for every photo but DOM exists only 
 rows near the viewport — 20,000 photos render with ~55 cells mounted. Thumbnails are
 produced on demand by the `photo://` handler as cells scroll into view, so nothing
 blocks first paint; a background pass backfills.
+
+### Scrolling fast
+
+WKWebView does not reliably cache custom-scheme responses, and cells are rebuilt on
+re-entry, so until late August 2026 every scroll-back re-fetched each thumbnail it
+could already see — the flicker, and the wait. The handler now keeps a 64 MiB
+byte-budgeted LRU over thumbnails and previews, so a scroll-back serves from RAM
+without touching the filesystem. Cells also ask for their image only as they approach
+the viewport: the lazy-load IntersectionObserver existed but `io.observe` was never
+called, so a fast flick fired requests for 1,800 px of rows nobody would see, all
+queuing on the image pool. Video posters are built by the analysis pass (it used to
+filter to `kind == "photo"` for every stage, leaving 173 of 507 posters missing on a
+real backup, each paid mid-scroll), and the rare on-demand render routes to its own
+two-thread pool so it can never occupy a photo-decode thread. The lightbox steps
+through a derived 2000 px JPEG instead of decoding a 12–48 MP original per keypress.
+Cells show a shimmer while loading and all new animation is transform/opacity only.
+Spec: docs/SPECS/done/2026-08-30-thumbnail-performance.md.
 
 The dedupe speedup was **not** the O(n^2) pair scan, which is what it looked like.
 `rmse` normalised both thumbnails and allocated two 1024-element vectors on every
@@ -510,10 +527,6 @@ face alone, which is the intended bias. Reproduce with
   download them later or see what is installed. Everything else works without them:
   verified on 25 photographs with the CLIP models absent — 25 thumbnails built, 0 clip
   rows, no error.
-- The analysis pass filters to `kind == "photo"` (`analyze.rs`), so **no pass ever gives
-  a video a thumbnail**. `thumbs::build` handles videos and is now called only from an
-  example — the one-pass rewrite orphaned it. Videos still get a poster frame, but only
-  lazily, one cell at a time, when the grid asks for it.
 - ffmpeg is found by searching known install prefixes as well as `PATH`, because a
   Finder-launched .app inherits launchd's `/usr/bin:/bin:/usr/sbin:/sbin` and not a
   shell's. That covers Homebrew and MacPorts; an ffmpeg installed anywhere else is
@@ -530,7 +543,9 @@ face alone, which is the intended bias. Reproduce with
   workers (`clamp(2, 6)` off core count, `apps/desktop/src-tauri/src/lib.rs`), and every
   in-flight request holds a decoded full-size frame. During a pass the two pools
   compete without either knowing about the other, which is the likeliest remaining
-  cause of sluggish scrolling while analysis runs. Not yet measured.
+  cause of sluggish scrolling while analysis runs. Video poster renders were moved to
+  their own two-thread pool (2026-08-30) and no longer add to the competition; analysis
+  workers vs image decodes does. Not yet measured.
 - Lightbox zoom is transform-based, so at very high zoom the browser upscales the
   already-decoded bitmap rather than re-decoding at native resolution.
 - `scenery` is not implemented — spec task 11.
@@ -546,13 +561,24 @@ face alone, which is the intended bias. Reproduce with
   produced by a semi-automatic process.
 - Candidate generation in `dedupe` is O(n^2) over dHash. Fine to ~10k photos; a
   100k-photo library needs a BK-tree or LSH bucket step.
-- No thumbnail cache yet; `.openfoto/thumbs/` is created but unused.
 - `rename` rewrites the whole library in one plan; no per-folder scoping yet.
 - Rollback on a partly-applied plan is best-effort: if the reverse move also fails
   (disk full, volume unmounted), the library is left mid-plan. The journal records
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 Scrolling got its cache back. WKWebView does not reliably cache `photo://`
+  responses and grid cells are rebuilt on re-entry, so every scroll-back re-fetched each
+  thumbnail — the flicker, and the wait. The scheme handler now holds a 64 MiB
+  byte-budgeted LRU over thumbnails and previews; cells load lazily through the
+  IntersectionObserver, which existed but was never wired (`io.observe` was dead code);
+  the analysis pass builds video posters (it filtered to `kind == "photo"`, so 173 of
+  507 posters were missing after analysis, each paid mid-scroll); on-demand poster
+  renders route to a dedicated two-thread pool; and the lightbox steps through a derived
+  2000 px JPEG (`?preview=`) instead of a 12–48 MP decode per keypress. Loading cells
+  shimmer, and every new animation is compositor-only transform/opacity under the
+  existing `prefers-reduced-motion` kill. Spec:
+  docs/SPECS/done/2026-08-30-thumbnail-performance.md.
 - 2026-08-30 The desktop app bundles its own ffmpeg (ADR-0014), so video support no
   longer depends on what the host has installed or on a GUI app inheriting a shell's
   PATH. Built from pinned, checksummed sources by `tools/build-ffmpeg.sh`: 9.6 MB on

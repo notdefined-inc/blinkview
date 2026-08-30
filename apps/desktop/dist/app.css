@@ -401,6 +401,24 @@ main{overflow:auto;position:relative}
 .cell img{width:100%;height:100%;object-fit:cover;display:block;
   opacity:0;transition:opacity .3s var(--ease)}
 .cell img.on{opacity:1}
+/* Sheen over the waiting cell: a photograph is coming, not missing. Swept by
+   transform so it stays on the compositor, and gone — with its animation — the
+   moment the thumbnail lands. Ink-derived so the light theme needs no override. */
+.cell::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(105deg,transparent 30%,
+    color-mix(in srgb,var(--ink) 4%,transparent) 45%,
+    color-mix(in srgb,var(--ink) 9%,transparent) 50%,
+    color-mix(in srgb,var(--ink) 4%,transparent) 55%,transparent 70%);
+  transform:translateX(-100%);
+  animation:sheen 1.6s var(--ease) infinite;
+}
+.cell.loaded::after{opacity:0;animation:none}
+@keyframes sheen{to{transform:translateX(100%)}}
+/* A held hover leans in — a whisper of zoom, compositor-only. The transition lives
+   on .cell img further down; placed before the .sel rules so a selected cell keeps
+   its stepped-back scale when hovered. */
+.cell:hover img{transform:scale(1.03)}
 .cell:hover{outline:2px solid var(--accent);outline-offset:-2px}
 .cell .play{
   position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
@@ -440,6 +458,14 @@ main{overflow:auto;position:relative}
    effect stays where it belongs: the small floating chrome over the photo. */
 .lightbox{position:fixed;inset:0;z-index:60;background:#08080b;display:grid;
   grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}
+/* Entrance, on open. display:none → grid restarts animations, so the hidden
+   attribute is the trigger. Opacity on the container, a breath of scale on the
+   stage — never on #lb-img, whose transform transitions WKWebView leaves pending
+   (see the trap above). */
+.lightbox:not([hidden]){animation:lbopen .18s var(--ease)}
+.lightbox:not([hidden]) .lb-stage{animation:lbstage .22s var(--ease)}
+@keyframes lbopen{from{opacity:0}}
+@keyframes lbstage{from{transform:scale(.985);opacity:0}}
 /* While zoomed the arrows pan, so hide the step buttons to avoid a mixed metaphor. */
 .lightbox[data-zoomed="1"] .lb-nav{opacity:0;pointer-events:none}
 .lb-nav{transition:opacity .15s var(--ease)}

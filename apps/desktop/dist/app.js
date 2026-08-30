@@ -514,10 +514,16 @@ function computeLayout(width) {
 function cellFor(p, w, h) {
   const img = el("img", { alt: p.name, loading: "lazy", decoding: "async" });
   // Ask for the *original* with ?t=<hash>: the handler serves the cached thumbnail
-  // or renders it now. Only visible cells ever ask, so thumbnails are produced in the
-  // order they are looked at.
-  img.src = photoUrl(p.path) + "?t=" + p.hash;
-  img.addEventListener("load", () => img.classList.add("on"), { once: true });
+  // or renders it now. The request fires only when the observer says the cell is
+  // actually approaching the viewport — a fast slider flick used to fire requests
+  // for a thousand pixels of rows on either side, cells the user never saw, and all
+  // of them queued behind the decodes that were wanted.
+  img.dataset.src = photoUrl(p.path) + "?t=" + p.hash;
+  img.addEventListener("load", () => {
+    img.classList.add("on");
+    img.closest(".cell")?.classList.add("loaded");   // ends the shimmer
+  }, { once: true });
+  io.observe(img);
   return el("div", {
     class: "cell" + (S.sel.has(p.hash) ? " sel" : ""),
     style: `width:${Math.max(40, w)}px;height:${h}px`,
@@ -568,7 +574,12 @@ function paintViewport() {
   stage.append(frag);
   for (const n of [...stage.children]) {
     const i = Number(n.dataset.b);
-    if (!wanted.has(i)) n.remove();
+    if (!wanted.has(i)) {
+      // Detached cells must leave the observer too: an observed-then-removed image
+      // is kept alive by it, and a fast scroller would accumulate hundreds.
+      n.querySelectorAll("img[data-src]").forEach(im => io.unobserve(im));
+      n.remove();
+    }
   }
 }
 
@@ -993,15 +1004,16 @@ function openViewer(list, index) {
   paintLightbox();
 }
 /* Stepping through a folder must not wait on a full-size decode.
-   The thumbnail is already cached, so it goes up immediately and the full image
-   replaces it when it arrives — if the viewer is still on that photograph. Holding an
-   arrow key then costs a cached thumbnail per frame instead of twelve megapixels. */
+   The thumbnail is already cached, so it goes up immediately and the 2000 px preview
+   (rendered once per photograph, then a ~400 KB JPEG) replaces it when it arrives —
+   if the viewer is still on that photograph. Holding an arrow key then costs a cached
+   thumbnail per frame instead of a twelve-megapixel original. */
 let lbLoadSeq = 0;
 
 function showFull(p) {
   const img = $("#lb-img");
   const seq = ++lbLoadSeq;
-  const full = photoUrl(p.path) + "?full=" + p.hash;
+  const full = photoUrl(p.path) + "?preview=" + p.hash;
   const thumb = photoUrl(p.path) + "?t=" + p.hash;
 
   img.classList.add("provisional");
@@ -1029,7 +1041,7 @@ function preloadAround(i) {
     if (!q || q.kind === "video") continue;
     const im = new Image();
     im.decoding = "async";
-    im.src = photoUrl(q.path) + "?full=" + q.hash;
+    im.src = photoUrl(q.path) + "?preview=" + q.hash;
   }
 }
 

@@ -105,6 +105,56 @@ fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Long edge of the lightbox preview.
+///
+/// The stepper was slow because every step loaded the full original — a 12–48 MP
+/// decode per keypress. Two thousand pixels fills a Retina window at full-screen
+/// size, and at ~400 KB it is the difference between a step and a wait.
+pub const PREVIEW_LONG: u32 = 2000;
+
+/// Where a photograph's preview lives, from the library root.
+pub fn preview_path_at(root: &std::path::Path, hash: &str) -> std::path::PathBuf {
+    root.join(crate::library::VAULT_DIR).join("derived").join(format!("p-{hash}.jpg"))
+}
+
+/// Render the lightbox preview: a [`PREVIEW_LONG`] JPEG derived once, on first view.
+///
+/// Returns `false` when no derived file was written because the source is already at
+/// or below [`PREVIEW_LONG`] and the webview can decode it as-is — the original is
+/// then the same view for none of the cost. HEIC always converts (the webview cannot
+/// decode it at any size), and an embedded camera preview of 2,000 px or more is used
+/// in preference to a full decode, exactly as thumbnails do.
+pub fn render_preview(src: &std::path::Path, dst: &std::path::Path) -> Result<bool> {
+    let (img, o, full_decode) = match std::fs::read(src)
+        .ok()
+        .and_then(|b| imageio::embedded_preview(&b, PREVIEW_LONG))
+    {
+        Some(preview) => (preview, imageio::orientation(src), false),
+        None if imageio::needs_conversion(src) => (imageio::load_rgb(src)?, 1, true),
+        None => (imageio::load_rgb_unrotated(src)?, imageio::orientation(src), true),
+    };
+    let (w, h) = (img.width(), img.height());
+    // Only a full decode knows the source is small; an embedded preview said to be
+    // at least PREVIEW_LONG may still stand in for a much larger original.
+    if full_decode && w.max(h) <= PREVIEW_LONG && o == 1 {
+        return Ok(false);
+    }
+    let scale = PREVIEW_LONG as f32 / w.max(h) as f32;
+    let shrunk = if scale < 1.0 {
+        image::imageops::resize(
+            &img,
+            (w as f32 * scale).round().max(1.0) as u32,
+            (h as f32 * scale).round().max(1.0) as u32,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        img
+    };
+    let out = imageio::apply_rgb(shrunk, o);
+    write_jpeg(&out, dst)?;
+    Ok(true)
+}
+
 /// Where ffmpeg is, when the environment will not say.
 ///
 /// An app launched from Finder does not inherit a shell's PATH — launchd hands it
@@ -167,12 +217,25 @@ fn ffmpeg_bin() -> Option<std::ffi::OsString> {
 /// Optional by design: ffmpeg is an external binary, so a missing one degrades to a
 /// video with no poster frame rather than failing the whole thumbnail pass.
 fn render_video(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
-    if let Some(p) = dst.parent() {
-        std::fs::create_dir_all(p)?;
-    }
     let Some(bin) = ffmpeg_bin() else {
         anyhow::bail!("ffmpeg not found");
     };
+    render_video_with(&bin, src, dst)
+}
+
+/// [`render_video`] against a named binary.
+///
+/// Resolving ffmpeg costs a process spawn (`-version`), so a caller building many
+/// posters resolves once and names the binary here. It is also the seam that lets a
+/// test supply a fake ffmpeg without mutating process-global state.
+pub fn render_video_with(
+    bin: &std::ffi::OsStr,
+    src: &std::path::Path,
+    dst: &std::path::Path,
+) -> Result<()> {
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p)?;
+    }
     let out = std::process::Command::new(bin)
         .args(["-loglevel", "error", "-y", "-ss", "00:00:01", "-i"])
         .arg(src)
@@ -186,8 +249,16 @@ fn render_video(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// The ffmpeg this process will use, if any.
+///
+/// Public because a multi-video pass wants to resolve once and hand the answer to
+/// [`render_video_with`], rather than pay a `-version` spawn per clip.
+pub fn resolve() -> Option<std::ffi::OsString> {
+    ffmpeg_bin()
+}
+
 pub fn have_ffmpeg() -> bool {
-    ffmpeg_bin().is_some()
+    resolve().is_some()
 }
 
 /// Build any missing thumbnails, for photos and videos alike. Returns how many were made.
@@ -201,10 +272,10 @@ pub fn build_with_progress(
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<usize> {
     let rows = lib.index.all()?;
-    let ffmpeg = have_ffmpeg();
+    let ffmpeg = resolve();
     let todo: Vec<(bool, std::path::PathBuf, std::path::PathBuf)> = rows
         .iter()
-        .filter(|r| r.kind == "photo" || (r.kind == "video" && ffmpeg))
+        .filter(|r| r.kind == "photo" || (r.kind == "video" && ffmpeg.is_some()))
         .map(|r| (r.kind == "video", lib.abs(&r.path), thumb_path(lib, &r.hash)))
         .filter(|(_, _, dst)| !dst.exists())
         .collect();
@@ -213,7 +284,12 @@ pub fn build_with_progress(
     let results: Vec<Result<()>> = todo
         .par_iter()
         .map(|(is_video, src, dst)| {
-            let ok = if *is_video { render_video(src, dst) } else { render_one(src, dst) };
+            let ok = match (ffmpeg.as_deref(), is_video) {
+                // Resolved once for the whole pass, not once per clip.
+                (Some(bin), true) => render_video_with(bin, src, dst),
+                (None, true) => Err(anyhow::anyhow!("ffmpeg not found")), // filtered out above
+                (_, false) => render_one(src, dst),
+            };
             counter.tick();
             ok.with_context(|| format!("thumbnail for {}", src.display()))
         })
@@ -296,6 +372,41 @@ mod tests {
             Some(OsString::from(&working)),
             "a broken candidate must not stop the search"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A photograph larger than the preview long edge gets a derived JPEG of exactly
+    /// that edge; one already small enough is served as itself and no file is written.
+    #[test]
+    fn previews_are_made_only_for_what_needs_one() {
+        let d = tmpdir("preview");
+        let big = d.join("big.jpg");
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            3000,
+            2000,
+            image::Rgb([120, 60, 30]),
+        ))
+        .save(&big)
+        .unwrap();
+        let dst = d.join("p-big.jpg");
+        assert!(render_preview(&big, &dst).unwrap(), "a large source makes a preview");
+        let (w, h) = image::image_dimensions(&dst).unwrap();
+        assert_eq!(w.max(h), PREVIEW_LONG);
+
+        let small = d.join("small.jpg");
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            800,
+            600,
+            image::Rgb([1, 2, 3]),
+        ))
+        .save(&small)
+        .unwrap();
+        let dst2 = d.join("p-small.jpg");
+        assert!(
+            !render_preview(&small, &dst2).unwrap(),
+            "a small source needs no derived file"
+        );
+        assert!(!dst2.exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
