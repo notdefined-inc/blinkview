@@ -209,6 +209,27 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
   </div>
 </div>
 
+<!-- Find (⌘F): a file finder, not a query. The omnibar parses dates, people and
+     scenes; this matches literal filename and folder across the whole library. -->
+<div class="sheet find" id="find" hidden>
+  <div class="find-panel" role="dialog" aria-modal="true" aria-label="Find a file">
+    <div class="find-head">
+      <span class="find-ico" aria-hidden="true">⌕</span>
+      <input id="find-input" class="find-input" type="text" autocomplete="off" spellcheck="false"
+             role="combobox" aria-expanded="true" aria-controls="find-list" aria-autocomplete="list"
+             placeholder="Find a file by name or folder" aria-label="Find a file by name or folder">
+      <span class="find-count num" id="find-count" aria-live="polite"></span>
+    </div>
+    <div class="find-list" id="find-list" role="listbox" aria-label="Matching files"></div>
+    <div class="find-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+      <span><kbd>↵</kbd> open</span>
+      <span><kbd>⇧↵</kbd> show in library</span>
+      <span><kbd>esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
 <div class="selbar" id="selbar" hidden>
   <span class="selcount num" id="selcount"></span>
   <button class="btn ghost sm" id="sel-all">Select all</button>

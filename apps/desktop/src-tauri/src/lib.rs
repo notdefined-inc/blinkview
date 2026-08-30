@@ -11,7 +11,7 @@
 
 use openfoto_core::{
     dedupe,
-    userdata::{PhotoMeta, UserDataSet},
+    userdata::{FolderView, PhotoMeta, UserData, UserDataSet},
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
     analyze, plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
@@ -1518,6 +1518,56 @@ async fn save_search(
     })
 }
 
+/// The directory holding a folder's own `openfoto.json`.
+fn folder_dir(root: &std::path::Path, folder: &str) -> std::path::PathBuf {
+    if folder.is_empty() { root.to_path_buf() } else { root.join(folder) }
+}
+
+/// How a folder is arranged.
+///
+/// Reads that folder's own file rather than the cascade: an arrangement is about the
+/// folder, not about the photographs in it, so a subfolder nobody arranged must not
+/// inherit one. One file read, deliberately — `UserDataSet::load` walks the whole tree
+/// (100 ms on a phone backup) and this runs every time a folder is selected.
+#[tauri::command]
+async fn folder_view(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    folder: String,
+) -> R<FolderView> {
+    with_readable(&state, &path, |lib| {
+        Ok(UserData::load(&folder_dir(lib.root(), &folder))?.view.unwrap_or_default())
+    })
+}
+
+/// Record how a folder is arranged. An empty sort with no order clears it.
+#[tauri::command]
+async fn set_folder_view(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    folder: String,
+    sort: String,
+    order: Vec<String>,
+) -> R<()> {
+    with(&state, &path, |lib| {
+        let dir = folder_dir(lib.root(), &folder);
+        if !dir.is_dir() {
+            anyhow::bail!("no such folder: {folder}");
+        }
+        let mut u = UserData::load(&dir)?;
+        let v = FolderView { sort, order };
+        u.view = (!v.is_empty()).then_some(v);
+        // An empty file is litter in a folder people browse in Finder.
+        if u.photos.is_empty() && u.searches.is_empty() && u.view.is_none() {
+            let _ = std::fs::remove_file(UserData::path(&dir));
+        } else {
+            u.save(&dir)?;
+        }
+        lib.invalidate_user_data();
+        Ok(())
+    })
+}
+
 #[tauri::command]
 async fn list_albums(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(String, usize)>> {
     with(&state, &path, |lib| {
@@ -2410,6 +2460,7 @@ pub fn run() {
             edit_photo, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
             plan_album_migration, apply_album_migration, list_searches, save_search,
+            folder_view, set_folder_view,
             plan_move, apply_move, forget_person, analyze_all, source_data, pending_work, analyze_resume
         ])
         .run(tauri::generate_context!())

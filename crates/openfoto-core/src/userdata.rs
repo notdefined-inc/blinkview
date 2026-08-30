@@ -64,6 +64,37 @@ pub struct UserData {
     /// photographs; it does not describe how the whole library is searched.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub searches: Vec<SavedSearch>,
+    /// How this folder is arranged. A folder saying how it is ordered is the same kind
+    /// of fact as a folder saying what is in it, so it lives here and travels with the
+    /// folder when it is copied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<FolderView>,
+}
+
+/// How one folder is arranged.
+///
+/// Deliberately *not* inherited down the tree the way [`PhotoMeta`] is. A rating
+/// applies to a photograph wherever it is read from, but an arrangement applies to the
+/// folder that was arranged; inheriting it would silently reorder subfolders nobody
+/// touched.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct FolderView {
+    /// newest | oldest | name | rating | size | custom. Unknown values are ignored by
+    /// the reader rather than rejected, so a newer openfoto writing a sort this one
+    /// does not know costs a default order, not an error.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sort: String,
+    /// Content hashes, front to back. Only read when `sort` is `custom`. A photograph
+    /// missing from this list is not hidden — it falls in after the listed ones, so
+    /// adding to an arranged folder does not drop it out of sight.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+}
+
+impl FolderView {
+    pub fn is_empty(&self) -> bool {
+        self.sort.is_empty() && self.order.is_empty()
+    }
 }
 
 impl UserData {
@@ -244,7 +275,7 @@ impl UserDataSet {
             let Some(u) = self.by_folder.get(&folder) else { continue };
             let dir = if folder.is_empty() { root.to_path_buf() } else { root.join(&folder) };
             let path = dir.join(FILE);
-            if u.photos.is_empty() && u.searches.is_empty() {
+            if u.photos.is_empty() && u.searches.is_empty() && u.view.is_none() {
                 // An empty file is litter in a folder people browse in Finder.
                 let _ = std::fs::remove_file(&path);
                 continue;
@@ -257,6 +288,21 @@ impl UserDataSet {
         }
         let _ = std::fs::remove_file(UserData::legacy_path(root));
         Ok(())
+    }
+
+    /// How a folder is arranged, or `None` if nobody has arranged it.
+    ///
+    /// Reads that folder's own file only. `get` walks ancestors because a rating is
+    /// about a photograph; this does not, because an arrangement is about a folder.
+    pub fn view(&self, folder: &str) -> Option<&FolderView> {
+        self.by_folder.get(folder).and_then(|u| u.view.as_ref())
+    }
+
+    /// Record how a folder is arranged. `None`, or an empty view, clears it.
+    pub fn set_view(&mut self, folder: &str, view: Option<FolderView>) {
+        let u = self.by_folder.entry(folder.to_string()).or_default();
+        u.view = view.filter(|v| !v.is_empty());
+        self.dirty.insert(folder.to_string());
     }
 
     /// The library's saved searches, which live only in the root file.
@@ -520,6 +566,52 @@ mod tests {
         let set = UserDataSet::load(d.path()).unwrap();
         // Photograph is two levels down; the root is the outermost cascade level.
         assert_eq!(set.get("h", "Trip/Greece Day3").rating, 3);
+    }
+
+    #[test]
+    fn an_arrangement_belongs_to_the_folder_that_was_arranged() {
+        let d = Tmp::new("view");
+        std::fs::create_dir_all(d.path().join("Trip/Day1")).unwrap();
+        let mut set = UserDataSet::default();
+        set.set_view("Trip", Some(FolderView { sort: "custom".into(), order: vec!["a".into(), "b".into()] }));
+        set.save(d.path()).unwrap();
+
+        let read = UserDataSet::load(d.path()).unwrap();
+        assert_eq!(read.view("Trip").map(|v| v.sort.as_str()), Some("custom"));
+        assert_eq!(read.view("Trip").unwrap().order, vec!["a".to_string(), "b".to_string()]);
+        // The child was not arranged, so it inherits nothing: an arrangement is about
+        // the folder, unlike a rating, which is about a photograph.
+        assert!(read.view("Trip/Day1").is_none());
+        assert!(read.view("").is_none());
+    }
+
+    #[test]
+    fn a_folder_carrying_only_an_arrangement_keeps_its_file() {
+        let d = Tmp::new("viewonly");
+        std::fs::create_dir_all(d.path().join("Trip")).unwrap();
+        let mut set = UserDataSet::default();
+        // No ratings at all — the emptiness check must not treat this as litter.
+        set.set_view("Trip", Some(FolderView { sort: "name".into(), order: vec![] }));
+        set.save(d.path()).unwrap();
+        assert!(d.path().join("Trip/openfoto.json").exists());
+
+        // Clearing it takes the file away again.
+        set.set_view("Trip", None);
+        set.save(d.path()).unwrap();
+        assert!(!d.path().join("Trip/openfoto.json").exists());
+    }
+
+    #[test]
+    fn an_arrangement_and_a_rating_share_one_file() {
+        let d = Tmp::new("viewrating");
+        std::fs::create_dir_all(d.path().join("Trip")).unwrap();
+        let mut set = UserDataSet::default();
+        set.edit("h", "Trip", |u| u.set_rating("h", 5));
+        set.set_view("Trip", Some(FolderView { sort: "oldest".into(), order: vec![] }));
+        set.save(d.path()).unwrap();
+        let read = UserDataSet::load(d.path()).unwrap();
+        assert_eq!(read.get("h", "Trip").rating, 5);
+        assert_eq!(read.view("Trip").map(|v| v.sort.as_str()), Some("oldest"));
     }
 
     #[test]

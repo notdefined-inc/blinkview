@@ -46,6 +46,7 @@ const S = {
   searches: [],
   expanded: null,
   sort: "newest",
+  order: [],               // custom arrangement of the selected folder, by hash
   group: "date",           // "date" or "folder" — how the grid sections itself
   photos: [],
   view: [],              // filtered/sorted photos currently on screen
@@ -487,6 +488,16 @@ function sectionFor(p) {
 function computeLayout(width) {
   const blocks = [];
   let y = 0;
+  // A custom arrangement *is* the order. Grouping it by day or folder would re-sort
+  // what someone placed by hand, so it draws as one run with no headings.
+  if (S.sort === "custom") {
+    for (const r of justify(S.view, width, ROW_H, GAP)) {
+      blocks.push({ kind: "row", y, h: r.h, items: r.items });
+      y += r.h + GAP;
+    }
+    LAYOUT = { blocks, height: y, width };
+    return;
+  }
   const groups = new Map();
   for (const p of S.view) {
     const key = S.group === "folder" ? sectionFor(p) : (p.taken_at ? DAY(p.taken_at) : "Undated");
@@ -524,11 +535,45 @@ function cellFor(p, w, h) {
     img.closest(".cell")?.classList.add("loaded");   // ends the shimmer
   }, { once: true });
   io.observe(img);
+  // Arranging by hand only makes sense over a whole folder. A search result or a
+  // person is a slice of several folders, and there is nowhere honest to record the
+  // order of a slice (ADR-0009: a folder owns its photographs).
+  const canArrange = canArrangeHere();
   return el("div", {
     class: "cell" + (S.sel.has(p.hash) ? " sel" : ""),
     style: `width:${Math.max(40, w)}px;height:${h}px`,
     title: p.name,
     "data-hash": p.hash,
+    draggable: canArrange ? "true" : false,
+    ondragstart: canArrange ? (e => {
+      dragHash = p.hash;
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox refuses to start a drag without data on the transfer.
+      e.dataTransfer.setData("text/plain", p.hash);
+      e.currentTarget.classList.add("dragging");
+    }) : null,
+    ondragend: canArrange ? (e => {
+      dragHash = null;
+      e.currentTarget.classList.remove("dragging");
+      clearDropMarks();
+    }) : null,
+    ondragover: canArrange ? (e => {
+      if (!dragHash || dragHash === p.hash) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const r = e.currentTarget.getBoundingClientRect();
+      const after = e.clientX > r.left + r.width / 2;
+      clearDropMarks();
+      e.currentTarget.classList.add(after ? "dropafter" : "dropbefore");
+    }) : null,
+    ondragleave: canArrange ? (e => e.currentTarget.classList.remove("dropbefore", "dropafter")) : null,
+    ondrop: canArrange ? (e => {
+      e.preventDefault();
+      const after = e.currentTarget.classList.contains("dropafter");
+      clearDropMarks();
+      if (dragHash && dragHash !== p.hash) reorderTo(dragHash, p.hash, after);
+      dragHash = null;
+    }) : null,
     onclick: e => {
       if (e.metaKey || e.ctrlKey) { toggleSel(p); return; }
       if (e.shiftKey) { rangeSel(p); return; }
@@ -1598,6 +1643,9 @@ async function selectSource(path) {
   renderSidebar();
   syncToastScope();
   renderGrid();
+  // The root of a library remembers its arrangement too, so read it before the
+  // photographs arrive and are sorted.
+  await loadFolderView();
   await busy("Loading library…", loadPhotos, path);
   refreshPeople();
   // Thumbnails are produced on demand by the photo:// handler as cells scroll into
@@ -1614,11 +1662,15 @@ async function selectSource(path) {
   // counts does not do.
   resumeUnfinished(path);
 }
-function selectFolder(f) {
+async function selectFolder(f) {
   S.folder = (S.folder === f ? null : f);
   S.person = null;
   S.resetScroll = true;
   renderSidebar();
+  // Each folder remembers how it was arranged, so the sort is a property of where you
+  // are standing rather than one setting for the window.
+  await loadFolderView();
+  renderFilters();
   applyFilter();
 }
 /** Remove a person. The photographs stay; only the claim about who is in them goes. */
@@ -2363,19 +2415,33 @@ function renderFilters() {
   const groups = [["date", "By date"], ["folder", "By folder"]];
   const gEl = $("#f-group");
   if (gEl) {
+    const arranged = S.sort === "custom";
     gEl.replaceChildren(...groups.map(([k, label]) =>
       el("button", {
-        class: "fopt", "aria-pressed": String(S.group === k),
+        class: "fopt", "aria-pressed": String(!arranged && S.group === k),
+        // Under a custom arrangement the grid is one run, so a grouping control that
+        // still looked live would be a lie.
+        disabled: arranged,
+        title: arranged ? "A custom arrangement is not grouped" : null,
         onclick: () => { S.group = k; renderGrid(); renderFilters(); }
       }, label)));
   }
 
   const sorts = [["newest", "Newest"], ["oldest", "Oldest"], ["name", "Name"],
-                 ["rating", "Rating"], ["size", "Size"]];
+                 ["rating", "Rating"], ["size", "Size"], ["custom", "Custom"]];
   $("#f-sort").replaceChildren(...sorts.map(([k, label]) =>
     el("button", {
       class: "fopt", "aria-pressed": String(S.sort === k),
-      onclick: () => { S.sort = k; applyFilter(); renderFilters(); }
+      title: k === "custom" ? "Drag photographs into the order you want" : null,
+      onclick: () => {
+        S.sort = k;
+        // Choosing Custom with nothing arranged yet starts from what is on screen,
+        // so the order does not jump the moment it is switched on.
+        if (k === "custom" && !S.order.length) S.order = S.view.map(p => p.hash);
+        applyFilter();
+        renderFilters();
+        saveFolderView();
+      }
     }, label)));
 }
 
@@ -2384,7 +2450,85 @@ function labelColour(l) {
            blue: "#60a5fa", purple: "#c4b5fd", grey: "#9ca3af" }[l] || "#888";
 }
 
+/* ---------------- arranging a folder ----------------
+   The arrangement lives in that folder's own `openfoto.json` (ADR-0010), beside the
+   ratings of the photographs it holds — a folder saying how it is ordered is the same
+   kind of fact as a folder saying what is in it, and it travels with the folder when
+   it is copied in Finder. It is read from that folder alone, never inherited: a
+   subfolder nobody arranged must not be reordered by its parent. */
+
+let dragHash = null;
+
+/** The folder whose arrangement is on screen. `""` is the library root. */
+function folderKey() {
+  return S.folder || "";
+}
+
+/** Arranging is only offered over a whole folder — not a search result or a person. */
+function canArrangeHere() {
+  return !S.person && S.cluster === null && !$("#search").value.trim();
+}
+
+function clearDropMarks() {
+  for (const c of document.querySelectorAll(".cell.dropbefore,.cell.dropafter")) {
+    c.classList.remove("dropbefore", "dropafter");
+  }
+}
+
+async function loadFolderView() {
+  S.sort = "newest";
+  S.order = [];
+  if (!S.source) return;
+  try {
+    const v = await invoke("folder_view", { path: S.source, folder: folderKey() });
+    if (v?.sort) S.sort = v.sort;
+    S.order = v?.order || [];
+  } catch {
+    // A folder with no file has no arrangement, which is not an error.
+  }
+}
+
+function saveFolderView() {
+  if (!S.source) return;
+  invoke("set_folder_view", {
+    path: S.source, folder: folderKey(), sort: S.sort, order: S.order,
+  }).catch(e => toast(String(e), "error"));
+}
+
+/** Move one photograph before or after another, and remember the result. */
+function reorderTo(fromHash, toHash, after) {
+  // Seed from what is on screen, so the first drag places everything rather than
+  // leaving the rest to fall in by date around one pinned photograph.
+  const order = S.order.length ? S.order.slice() : S.view.map(p => p.hash);
+  const known = new Set(order);
+  for (const p of S.view) if (!known.has(p.hash)) order.push(p.hash);
+
+  const from = order.indexOf(fromHash);
+  if (from < 0) return;
+  const [moved] = order.splice(from, 1);
+  const at = order.indexOf(toHash);
+  if (at < 0) return;
+  order.splice(after ? at + 1 : at, 0, moved);
+
+  S.order = order;
+  S.sort = "custom";
+  applyFilter();
+  renderFilters();
+  saveFolderView();
+}
+
 function sortView() {
+  if (S.sort === "custom") {
+    const rank = new Map(S.order.map((h, i) => [h, i]));
+    // A photograph added since the arrangement falls in after it, newest first,
+    // rather than disappearing from a folder someone arranged.
+    S.view.sort((a, b) => {
+      const ra = rank.has(a.hash) ? rank.get(a.hash) : Infinity;
+      const rb = rank.has(b.hash) ? rank.get(b.hash) : Infinity;
+      return ra !== rb ? ra - rb : (b.taken_at || 0) - (a.taken_at || 0);
+    });
+    return;
+  }
   const by = {
     newest: (a, b) => (b.taken_at || 0) - (a.taken_at || 0),
     oldest: (a, b) => (a.taken_at || 0) - (b.taken_at || 0),
@@ -2453,6 +2597,129 @@ async function toggleInfo() {
   ].filter(Boolean));
   panel.hidden = false;
 }
+
+/* ---------------- find (⌘F) ----------------
+   A file finder, deliberately separate from the omnibar. The omnibar parses a query —
+   dates, people, ratings, what a photograph shows — which is the right tool for "what
+   am I looking for" and the wrong one for "where did IMG_2431 go". This matches
+   literal filename and path, across the whole library rather than the selected folder,
+   because that is the question being asked. */
+
+const FIND_MAX = 300;
+let findHits = [], findAt = 0;
+
+function openFind() {
+  if (!S.source) return toast("Add a folder first");
+  $("#find").hidden = false;
+  const input = $("#find-input");
+  input.select();
+  input.focus();
+  runFind();
+}
+
+function closeFind() {
+  $("#find").hidden = true;
+}
+
+/** Every term must appear in the path, so a second word narrows rather than widens. */
+function findMatches(q) {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
+  return S.photos.filter(p => {
+    const hay = p.path.toLowerCase();
+    return terms.every(t => hay.includes(t));
+  });
+}
+
+function runFind() {
+  const q = $("#find-input").value.trim();
+  const all = findMatches(q);
+  findHits = all.slice(0, FIND_MAX);
+  findAt = 0;
+  // Past the cap the answer is to type more, not to scroll — so say how many were
+  // left out rather than pretending the list is all of them.
+  $("#find-count").textContent = !q ? ""
+    : all.length > FIND_MAX ? `${FIND_MAX} of ${all.length}`
+    : String(all.length);
+  renderFind();
+}
+
+function renderFind() {
+  const list = $("#find-list");
+  if (!findHits.length) {
+    list.replaceChildren(el("div", { class: "find-empty" },
+      $("#find-input").value.trim()
+        ? "No file with that in its name or folder."
+        : "Type part of a filename or a folder."));
+    return;
+  }
+  list.replaceChildren(...findHits.map((p, i) => el("button", {
+    class: "find-row", role: "option", "aria-selected": String(i === findAt),
+    onclick: e => { findAt = i; e.shiftKey ? revealFind() : openFindHit(); },
+  },
+    el("img", { class: "find-thumb", src: photoUrl(p.path) + "?t=" + p.hash,
+      alt: "", loading: "lazy", decoding: "async" }),
+    el("span", { class: "find-name" }, p.name),
+    el("span", { class: "find-sub" }, p.folder || "library root"))));
+  list.children[findAt]?.scrollIntoView({ block: "nearest" });
+}
+
+function moveFind(d) {
+  if (!findHits.length) return;
+  findAt = Math.max(0, Math.min(findHits.length - 1, findAt + d));
+  renderFind();
+}
+
+/** Open the highlighted match, stepping through the matches rather than the grid
+    behind them: the list you were looking at is the list the arrows should walk. */
+function openFindHit() {
+  const p = findHits[findAt];
+  if (!p) return;
+  closeFind();
+  S.lbScope = "view";
+  openViewer(findHits.slice(), findAt);
+}
+
+/** Show the highlighted match where it lives, selected and scrolled to. */
+async function revealFind() {
+  const p = findHits[findAt];
+  if (!p) return;
+  closeFind();
+  // A query in the omnibar could be hiding the very file just found, so revealing it
+  // means clearing whatever was filtering it out.
+  $("#search").value = "";
+  syncClear();
+  S.person = null; S.cluster = null; S.clusterHashes = null;
+  S.folder = p.folder || null;
+  S.resetScroll = false;
+  renderSidebar();
+  // The folder being revealed has its own arrangement.
+  await loadFolderView();
+  renderFilters();
+  applyFilter();
+  S.sel.clear(); S.sel.add(p.hash);
+  S.lastIndex = S.view.findIndex(x => x.hash === p.hash);
+  paintSel();
+  scrollToPhoto(p.hash);
+}
+
+/** Put a photograph's row in the middle of the viewport. */
+function scrollToPhoto(hash) {
+  const b = LAYOUT.blocks.find(b => b.kind === "row" && b.items.some(x => x.p.hash === hash));
+  if (!b) return;
+  const main = $("#main");
+  main.scrollTop = Math.max(0, b.y - main.clientHeight / 2 + b.h / 2);
+  paintViewport();
+}
+
+$("#find-input").addEventListener("input", runFind);
+$("#find-input").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { e.preventDefault(); moveFind(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); moveFind(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? revealFind() : openFindHit(); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeFind(); }
+});
+$("#find").addEventListener("click", e => { if (e.target.id === "find") closeFind(); });
 
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
@@ -2644,6 +2911,12 @@ addEventListener("keydown", e => {
   }
   if (e.key === "Escape") { hideCtx(); if (!$("#sheet").hidden) $("#sheet").hidden = true; else if (S.sel.size) clearSel(); }
   if (e.key === "/" && document.activeElement !== $("#search")) { e.preventDefault(); $("#search").focus(); }
+  // Before the typing guard: ⌘F is expected to work from inside a field too.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    $("#find").hidden ? openFind() : closeFind();
+    return;
+  }
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || "");
   if (typing) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); S.view.forEach(p => S.sel.add(p.hash)); paintSel(); }
