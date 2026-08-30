@@ -13,6 +13,9 @@
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px; --s8:32px; --s12:48px;
   --tb:64px; --side:256px;
   --ease:cubic-bezier(.2,.7,.3,1);
+  /* The map is drawn, so its palette is tokens like everything else. */
+  --map-sea:#070711; --map-land:#23233a; --map-coast:rgba(255,255,255,.22);
+  --map-pin-ring:rgba(9,9,16,.75);
   --shadow-float:0 18px 50px rgba(0,0,0,.5);
   --shadow-sheet:0 30px 90px rgba(0,0,0,.6);
 }
@@ -897,6 +900,8 @@ body.dropping::after{
 /* Hard-coded dark-chrome values, flipped. Hover washes become either a brightening
    (white over white glass) or a darkening, whichever reads on the surface. */
 :root[data-theme="light"] kbd{background:rgba(23,23,45,.06)}
+:root[data-theme="light"]{--map-sea:#d6e4f2;--map-land:#fdfefe;
+  --map-coast:rgba(23,23,45,.26);--map-pin-ring:rgba(255,255,255,.9)}
 :root[data-theme="light"] ::-webkit-scrollbar-thumb{background:rgba(23,23,45,.2);background-clip:content-box}
 :root[data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:rgba(23,23,45,.32);background-clip:content-box}
 :root[data-theme="light"] .wordmark{
@@ -980,3 +985,20 @@ body.dropping::after{
   background:color-mix(in srgb,var(--accent) 10%,transparent)}
 .presets{display:flex;gap:var(--s1);align-items:center}
 .fopt.sm{padding:3px var(--s2);font-size:12px}
+
+/* ---------------- map ----------------
+   Bundled vector outlines on a canvas. No tiles: a tile request would tell a server
+   where the photographs were taken, which is the one thing this app must not leak. */
+.mapview{position:absolute;inset:0;display:flex}
+.mapview canvas{width:100%;height:100%;display:block;cursor:grab}
+.mapview canvas.dragging{cursor:grabbing}
+.maphud{position:absolute;top:var(--s4);left:var(--s6);display:flex;align-items:baseline;
+  gap:var(--s3);padding:var(--s2) var(--s4);border-radius:var(--r-pill);
+  background:var(--glass-2);backdrop-filter:blur(26px) saturate(160%);
+  -webkit-backdrop-filter:blur(26px) saturate(160%);border:1px solid var(--stroke);
+  box-shadow:var(--shadow-float);pointer-events:none;max-width:min(560px,60%)}
+.mapcount{font-size:14px;font-weight:600;color:var(--ink)}
+.mapwhere{font-size:12px;color:var(--ink-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mapzoom{position:absolute;bottom:var(--s12);right:var(--s6);display:flex;flex-direction:column;gap:var(--s2)}
+.mapattr{position:absolute;bottom:var(--s3);right:var(--s6);font-size:11px;
+  color:var(--ink-faint);pointer-events:none;opacity:.75}

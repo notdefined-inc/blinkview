@@ -96,6 +96,20 @@ dispatch time, so an ffmpeg spawn can never occupy a photograph-decode thread. T
 lightbox steps through `.openfoto/derived/p-<hash>.jpg` — a 2000 px JPEG derived on
 first view — instead of decoding the 12–48 MP original per keypress.
 
+## Places, without a network
+
+    crates/openfoto-core/data/places.bin   170,860 places, 4.35 MB, packed
+    apps/desktop/dist/world{110,50}.json   Natural Earth outlines, two detail levels
+
+Both are produced only by `tools/build-geodata.sh`, and both ship inside the binary.
+`geo` resolves a coordinate to the nearest place through a one-degree grid index, and
+searches the same table by name so the map and the search box can never disagree about
+what a place is.
+
+The map is drawn on a canvas from the bundled outlines and never requests a tile. That
+is a privacy decision before it is a performance one: a tile request tells a server
+where the user has been, every time they pan.
+
 ## Why Rust
 The end goal is a shippable desktop app; bundling a Python runtime into one is the usual
 route to slow and fragile. `ort` runs the same ONNX models the prototype validated.

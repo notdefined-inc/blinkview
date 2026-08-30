@@ -192,6 +192,39 @@ The honest limit is phrasing coverage: an unknown wording fails rather than bein
 guessed at. That is the trade ADR-0012 accepts, and the first response to a phrasing
 someone expected to work is a synonym-table entry.
 
+### Where photographs were taken
+A map view (the pin in the titlebar) draws every located photograph, clustered, with the
+place name under the cursor. **It never fetches a tile.** Every other photo app streams
+raster tiles, which tells a tile server where its users have been on every pan — for a
+library whose premise is that nothing leaves the machine (ADR-0001), that is the one
+leak that would undo the premise. The basemap is Natural Earth outlines bundled at two
+levels of detail (149 KB and 1.4 MB), projected Web Mercator onto a canvas. The price is
+honest: no streets at high zoom, coastlines and pins instead. The upside is that there
+is nothing to wait for.
+
+Coordinates are read once and cached in the index against the content hash, including
+the answer "none" — otherwise every map open would re-read every screenshot in the
+library. A second pass over an unchanged library takes 3 ms.
+
+Place names come from `crates/openfoto-core/data/places.bin`: 170,860 places from
+GeoNames cities1000, packed to 4.35 MB with region and country names interned and
+coordinates as integer degrees × 10⁴. Both spellings are searched, so "reykjavik" finds
+"Reykjavík" — before that, "Fira" reached Firavitoba in Colombia rather than Firá on
+Santorini. Nothing here touches the network. Attribution (GeoNames CC BY 4.0, Natural
+Earth) is shown on the map, as the licence requires, and `tools/build-geodata.sh` is the
+only way the data is produced.
+
+A photograph with no coordinates can be given some: type a town, and the location is
+written into the file itself. That rebuilds the EXIF rather than appending a second APP1
+segment — the TIFF is parsed into its entries, the GPS directory replaced, and the whole
+block re-serialised with recomputed offsets, keeping the camera, the date and the
+embedded thumbnail. Because that is the one operation here that could corrupt a
+photograph, it is not trusted: **the rewritten file is read back and re-parsed before it
+replaces the original**, and a file that does not read back as what was just written is
+left exactly as it was. Verified on a real 4.2 MB phone photograph — camera, model and
+`DateTimeOriginal` intact, pixels unchanged, 126 bytes larger. JPEG only; HEIC and video
+are refused by name.
+
 ### Folders are the only grouping
 There are no albums (ADR-0009). A folder is where a photograph lives, nested folders are
 what albums were trying to be — `Trip/Greece Day3/` is how people organise photographs
@@ -645,6 +678,13 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 A map, and places. Photographs with EXIF GPS resolve to "City, Region,
+  Country" from a bundled 4.35 MB table of 170,860 places, and are drawn as clusters on
+  a canvas map built from bundled vector outlines — no tile is ever fetched, because a
+  tile request would tell a server where the photographs were taken. Photographs with no
+  coordinates can be given them by name, written into the file itself and read back
+  before the write is kept. Spec:
+  docs/SPECS/done/2026-08-30-places-and-the-map.md.
 - 2026-08-30 Face review can be corrected in both directions it was missing. A group of
   faces can be set aside — on a 40-photograph sample, detection found 8 groups of which
   4 were singletons, which is what the sidebar filling with strangers looks like — and

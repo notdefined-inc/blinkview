@@ -799,6 +799,7 @@ function showCtx(x, y) {
   items.push(el("hr"));
   items.push(item(`Move ${n} to\u2026`, "", moveSelectedPrompt));
   items.push(item(`Colour ${n}\u2026`, "", colourSelectedPrompt));
+  items.push(item(`Where was this?\u2026`, "", placePrompt));
   items.push(item(`Strip metadata from ${n}\u2026`, "", stripSelectedPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
@@ -2883,9 +2884,381 @@ async function toggleInfo() {
   panel.hidden = false;
 }
 
+/* ---------------- map ----------------
+   Drawn, never fetched. Every other photo app streams raster tiles, which means the
+   tile server learns where its users have been on every pan — for a library whose
+   whole premise is that nothing leaves the machine (ADR-0001), that is the one leak
+   that would undo the premise. So the basemap is Natural Earth outlines bundled at two
+   levels of detail, projected Web Mercator onto a canvas. The upside of having no
+   tiles to wait for is that it pans at frame rate from the first paint.
+
+   Places come from the bundled GeoNames table through `photo_places`, so the label
+   under the cursor is resolved the same way the search box resolves a typed city. */
+
+const MAP = {
+  points: [],        // {hash, path, lat, lon, place, wx, wy}
+  clusters: [],      // {x, y, n, items, place}
+  rings: { 110: null, 50: null },
+  zoom: 1.6,
+  cx: 0, cy: 20,     // centre, in degrees
+  hover: null,
+  raf: 0,
+  bucketZoom: null,
+};
+
+/* Web Mercator, normalised to 0..1. y is clamped short of the poles, where the
+   projection runs to infinity. */
+function project(lon, lat) {
+  const x = (lon + 180) / 360;
+  const s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180);
+  const y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
+  return [x, y];
+}
+function unproject(x, y) {
+  const lon = x * 360 - 180;
+  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180 / Math.PI;
+  return [lon, lat];
+}
+const mapScale = () => 256 * Math.pow(2, MAP.zoom);
+
+/** World pixels -> canvas pixels, given the current centre. */
+function mapView(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.width / dpr, h = canvas.height / dpr;
+  const s = mapScale();
+  const [ccx, ccy] = project(MAP.cx, MAP.cy);
+  return { w, h, s, ox: ccx * s - w / 2, oy: ccy * s - h / 2, dpr };
+}
+
+async function loadRings(level) {
+  if (MAP.rings[level]) return MAP.rings[level];
+  // Bundled beside the app; this is a local file read, not a network request.
+  const res = await fetch(`world${level}.json`);
+  const raw = await res.json();
+  // One Path2D per ring, built once in world space and drawn under a transform, so
+  // panning costs a matrix rather than a hundred thousand lineTo calls.
+  const paths = raw.map(ring => {
+    const p = new Path2D();
+    for (let i = 0; i < ring.length; i++) {
+      const [x, y] = project(ring[i][0], ring[i][1]);
+      i ? p.lineTo(x, y) : p.moveTo(x, y);
+    }
+    p.closePath();
+    return p;
+  });
+  MAP.rings[level] = paths;
+  return paths;
+}
+
+/** Group photographs that would land on top of each other, in world space so a pan
+    does not re-bucket. Recomputed only when the zoom level changes. */
+function clusterPoints() {
+  const s = mapScale();
+  const cell = 46 / s;                       // ~46px apart on screen
+  const buckets = new Map();
+  for (const p of MAP.points) {
+    const key = `${Math.floor(p.wx / cell)}:${Math.floor(p.wy / cell)}`;
+    let b = buckets.get(key);
+    if (!b) buckets.set(key, (b = { wx: 0, wy: 0, items: [] }));
+    b.wx += p.wx; b.wy += p.wy; b.items.push(p);
+  }
+  MAP.clusters = [...buckets.values()].map(b => ({
+    wx: b.wx / b.items.length,
+    wy: b.wy / b.items.length,
+    n: b.items.length,
+    items: b.items,
+    // The label of the most common place in the group reads better than the label of
+    // whichever photograph happened to be first.
+    place: commonest(b.items.map(i => i.place).filter(Boolean)),
+  }));
+  MAP.bucketZoom = Math.round(MAP.zoom * 2);
+}
+
+function commonest(list) {
+  const tally = new Map();
+  for (const v of list) tally.set(v, (tally.get(v) || 0) + 1);
+  let best = null, n = 0;
+  for (const [v, c] of tally) if (c > n) { best = v; n = c; }
+  return best;
+}
+
+function css(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function drawMap() {
+  const canvas = $("#mapcanvas");
+  if (!canvas || $("#mapview").hidden) return;
+  const ctx = canvas.getContext("2d");
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+  }
+  const v = mapView(canvas);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, v.w, v.h);
+
+  // Sea: a flat wash rather than a gradient, so land reads as the figure.
+  ctx.fillStyle = css("--map-sea");
+  ctx.fillRect(0, 0, v.w, v.h);
+
+  const level = MAP.zoom >= 4 ? 50 : 110;
+  const paths = MAP.rings[level] || MAP.rings[110];
+  if (paths) {
+    ctx.save();
+    ctx.translate(-v.ox, -v.oy);
+    ctx.scale(v.s, v.s);
+    ctx.fillStyle = css("--map-land");
+    ctx.strokeStyle = css("--map-coast");
+    // The transform scales line width too, so undo it to keep a hairline a hairline.
+    ctx.lineWidth = 1 / v.s;
+    for (const p of paths) { ctx.fill(p); ctx.stroke(p); }
+    ctx.restore();
+  }
+
+  if (Math.round(MAP.zoom * 2) !== MAP.bucketZoom) clusterPoints();
+
+  const accent = css("--accent");
+  for (const c of MAP.clusters) {
+    const x = c.wx * v.s - v.ox, y = c.wy * v.s - v.oy;
+    if (x < -60 || y < -60 || x > v.w + 60 || y > v.h + 60) continue;
+    const r = Math.min(30, 9 + Math.sqrt(c.n) * 3.2);
+    const hot = MAP.hover === c;
+    ctx.beginPath();
+    ctx.arc(x, y, r + (hot ? 3 : 0), 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = hot ? 1 : 0.88;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = css("--map-pin-ring");
+    ctx.stroke();
+    if (c.n > 1) {
+      ctx.fillStyle = css("--accent-ink");
+      ctx.font = `600 ${r > 16 ? 13 : 11}px ui-sans-serif,-apple-system,"SF Pro Text",sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(c.n), x, y + 0.5);
+    }
+  }
+}
+
+function scheduleMap() {
+  if (MAP.raf) return;
+  MAP.raf = requestAnimationFrame(() => { MAP.raf = 0; drawMap(); });
+}
+
+/** The cluster under a pointer, if any. */
+function clusterAt(clientX, clientY) {
+  const canvas = $("#mapcanvas");
+  const rect = canvas.getBoundingClientRect();
+  const v = mapView(canvas);
+  const px = clientX - rect.left, py = clientY - rect.top;
+  let best = null, bestD = 1e9;
+  for (const c of MAP.clusters) {
+    const x = c.wx * v.s - v.ox, y = c.wy * v.s - v.oy;
+    const r = Math.min(30, 9 + Math.sqrt(c.n) * 3.2) + 4;
+    const d = Math.hypot(px - x, py - y);
+    if (d <= r && d < bestD) { best = c; bestD = d; }
+  }
+  return best;
+}
+
+/** Frame every located photograph. */
+function fitMap() {
+  if (!MAP.points.length) { MAP.zoom = 1.4; MAP.cx = 0; MAP.cy = 20; return; }
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const p of MAP.points) {
+    x0 = Math.min(x0, p.wx); x1 = Math.max(x1, p.wx);
+    y0 = Math.min(y0, p.wy); y1 = Math.max(y1, p.wy);
+  }
+  const canvas = $("#mapcanvas");
+  const rect = canvas.getBoundingClientRect();
+  const pad = 120;
+  const w = Math.max(1e-6, x1 - x0), h = Math.max(1e-6, y1 - y0);
+  const fit = Math.min((rect.width - pad) / (w * 256), (rect.height - pad) / (h * 256));
+  MAP.zoom = Math.max(0.6, Math.min(12, Math.log2(Math.max(fit, 1e-6))));
+  [MAP.cx, MAP.cy] = unproject((x0 + x1) / 2, (y0 + y1) / 2);
+  MAP.bucketZoom = null;
+}
+
+async function openMap() {
+  if (!S.source) return toast("Add a folder first");
+  $("#mapview").hidden = false;
+  $("#stage").hidden = true;
+  // The map fills #main, so the grid's header would show through its own HUD.
+  document.querySelector(".libhead").hidden = true;
+  $("#qchips").dataset.wasShown = String(!$("#qchips").hidden);
+  $("#qchips").hidden = true;
+  $("#filters").dataset.wasShown = String(!$("#filters").hidden);
+  $("#filters").hidden = true;
+  $("#btn-map").setAttribute("aria-pressed", "true");
+  await loadRings(110);
+  loadRings(50);                                  // the finer level arrives behind us
+  // Reading GPS is a header parse, and the answer is cached against the content hash,
+  // so this is only slow the first time.
+  const found = await busy("Reading where photographs were taken…",
+    () => invoke("locate_photos", { path: S.source }), S.source);
+  const places = await invoke("photo_places", { path: S.source });
+  MAP.points = places.map(p => {
+    const [wx, wy] = project(p.lon, p.lat);
+    return { ...p, wx, wy };
+  });
+  MAP.bucketZoom = null;
+  fitMap();
+  clusterPoints();
+  const n = MAP.points.length;
+  $("#mapcount").textContent = n ? `${n} located` : "None located yet";
+  $("#mapwhere").textContent = n
+    ? `${MAP.clusters.length} place${MAP.clusters.length === 1 ? "" : "s"}`
+    : (found.checked
+        ? "No photograph here carries coordinates — select some and choose Where was this?"
+        : "");
+  scheduleMap();
+}
+
+function closeMap() {
+  $("#mapview").hidden = true;
+  $("#stage").hidden = false;
+  document.querySelector(".libhead").hidden = false;
+  $("#qchips").hidden = $("#qchips").dataset.wasShown !== "true";
+  $("#filters").hidden = $("#filters").dataset.wasShown !== "true";
+  $("#btn-map").setAttribute("aria-pressed", "false");
+}
+
+function toggleMap() {
+  $("#mapview").hidden ? openMap() : closeMap();
+}
+
+/** Show one cluster's photographs in the grid. */
+function showCluster(c) {
+  const want = new Set(c.items.map(i => i.hash));
+  closeMap();
+  S.person = null; S.cluster = null;
+  S.clusterHashes = want;
+  S.folder = null;
+  $("#search").value = "";
+  syncClear();
+  S.resetScroll = true;
+  renderSidebar();
+  applyFilter();
+  toast(`${want.size} from ${c.place || "here"}`, "ok");
+}
+
+{
+  const canvas = $("#mapcanvas");
+  let drag = null;
+  canvas.addEventListener("pointerdown", e => {
+    drag = { x: e.clientX, y: e.clientY, cx: MAP.cx, cy: MAP.cy, moved: false };
+    canvas.setPointerCapture(e.pointerId);
+    canvas.classList.add("dragging");
+  });
+  canvas.addEventListener("pointermove", e => {
+    if (drag) {
+      const v = mapView(canvas);
+      const [sx, sy] = project(drag.cx, drag.cy);
+      const nx = sx - (e.clientX - drag.x) / v.s;
+      const ny = sy - (e.clientY - drag.y) / v.s;
+      [MAP.cx, MAP.cy] = unproject(nx, Math.max(0, Math.min(1, ny)));
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 3) drag.moved = true;
+      scheduleMap();
+      return;
+    }
+    const c = clusterAt(e.clientX, e.clientY);
+    if (c !== MAP.hover) {
+      MAP.hover = c;
+      canvas.style.cursor = c ? "pointer" : "grab";
+      if (c) {
+        $("#mapcount").textContent = `${c.n} photograph${c.n === 1 ? "" : "s"}`;
+        $("#mapwhere").textContent = c.place || "somewhere unnamed";
+      } else {
+        $("#mapcount").textContent = `${MAP.points.length} located`;
+        $("#mapwhere").textContent = `${MAP.clusters.length} place${MAP.clusters.length === 1 ? "" : "s"}`;
+      }
+      scheduleMap();
+    }
+  });
+  const endDrag = e => {
+    if (drag && !drag.moved) {
+      const c = clusterAt(e.clientX, e.clientY);
+      if (c) showCluster(c);
+    }
+    drag = null;
+    canvas.classList.remove("dragging");
+  };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", () => { drag = null; canvas.classList.remove("dragging"); });
+  canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    // Zoom about the cursor, so the place under it stays under it.
+    const rect = canvas.getBoundingClientRect();
+    const v = mapView(canvas);
+    const wx = (e.clientX - rect.left + v.ox) / v.s;
+    const wy = (e.clientY - rect.top + v.oy) / v.s;
+    MAP.zoom = Math.max(0.6, Math.min(14, MAP.zoom - e.deltaY * 0.0022));
+    const nv = mapView(canvas);
+    const nx = wx - (e.clientX - rect.left) / nv.s + (nv.w / 2) / nv.s;
+    const ny = wy - (e.clientY - rect.top) / nv.s + (nv.h / 2) / nv.s;
+    [MAP.cx, MAP.cy] = unproject(nx, Math.max(0, Math.min(1, ny)));
+    if (MAP.zoom >= 4) loadRings(50);
+    scheduleMap();
+  }, { passive: false });
+}
+
+/** Give photographs that carry no coordinates a place, by name. */
+async function placePrompt() {
+  const hashes = [...S.sel];
+  if (!hashes.length) return;
+  const chosen = await new Promise(resolve => {
+    let d;
+    const list = el("div", { class: "movepicks" });
+    const input = el("input", {
+      class: "nameinput", type: "text", style: "width:100%",
+      placeholder: "A town or city — Santorini, Kyoto, Reykjavík",
+      "aria-label": "Where was this taken?",
+      oninput: async e => {
+        const q = e.target.value;
+        const hits = q.trim().length >= 2
+          ? await invoke("place_search", { query: q }).catch(() => [])
+          : [];
+        list.replaceChildren(...hits.map(p =>
+          el("button", { class: "sugg-pill", title: `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}`,
+            onclick: () => d.done(p) },
+            [p.name, p.region, p.country].filter((v, i, a) => v && a.indexOf(v) === i).join(", "))));
+      },
+      onkeydown: e => { e.stopPropagation(); if (e.key === "Escape") d.done(null); },
+    });
+    d = dialogFrame(`Where were these ${hashes.length} taken?`, [
+      el("p", { class: "asktext" },
+        "The place is written into the photographs themselves, so it travels with them. " +
+        "Each file is read back afterwards to check, and any that cannot be is left alone."),
+      input, list,
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel")),
+    ]);
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+    setTimeout(() => input.focus(), 40);
+  });
+  if (!chosen) return;
+  const msg = await busy(`Writing the location into ${hashes.length}…`,
+    () => invoke("set_photo_location", {
+      path: S.source, hashes, lat: chosen.lat, lon: chosen.lon }), S.source);
+  toast(msg, "ok");
+  clearSel();
+  await refreshSources(); await loadPhotos();
+}
+
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
 $("#btn-newfolder").onclick = newFolderPrompt;
+$("#btn-map").onclick = toggleMap;
+$("#map-in").onclick = () => { MAP.zoom = Math.min(14, MAP.zoom + 0.8); scheduleMap(); };
+$("#map-out").onclick = () => { MAP.zoom = Math.max(0.6, MAP.zoom - 0.8); scheduleMap(); };
+$("#map-fit").onclick = () => { fitMap(); scheduleMap(); };
 $("#btn-tools").onclick = openSheet;
 /* The initial theme is applied by an inline script in index.html (pre-paint);
    this only flips it and remembers the choice. */

@@ -1068,6 +1068,119 @@ async fn pending_work(state: tauri::State<'_, AppState>, path: String) -> R<Pend
     })
 }
 
+// ---------------------------------------------------------------- places
+
+/// One photograph on the map.
+#[derive(Serialize)]
+pub struct PhotoPlace {
+    hash: String,
+    path: String,
+    lat: f64,
+    lon: f64,
+    /// "Fira, South Aegean, Greece", or absent when the nearest known place is too far
+    /// away to be worth naming.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    place: Option<String>,
+}
+
+/// Fill in coordinates for photographs nobody has looked at yet.
+///
+/// Cheap and incremental: reading GPS is a header parse, and the answer — including
+/// "none" — is cached against the content hash, so opening the map a second time does
+/// no work.
+#[tauri::command]
+async fn locate_photos(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<openfoto_core::geo::Located> {
+    let sink = emitter(&app, "locate", &path);
+    with(&state, &path, |lib| openfoto_core::geo::locate(lib, &sink))
+}
+
+/// Every photograph that knows where it was taken.
+#[tauri::command]
+async fn photo_places(state: tauri::State<'_, AppState>, path: String) -> R<Vec<PhotoPlace>> {
+    with_readable(&state, &path, |lib| {
+        let by_hash: BTreeMap<String, String> = lib
+            .index
+            .all()?
+            .into_iter()
+            .map(|r| (r.hash, r.path))
+            .collect();
+        Ok(lib
+            .index
+            .located()?
+            .into_iter()
+            .filter_map(|(hash, lat, lon)| {
+                let path = by_hash.get(&hash)?.clone();
+                Some(PhotoPlace {
+                    place: openfoto_core::geo::nearest(lat, lon).map(|p| p.label()),
+                    hash,
+                    path,
+                    lat,
+                    lon,
+                })
+            })
+            .collect())
+    })
+}
+
+/// Places matching a typed name, for a photograph that has no coordinates of its own.
+#[tauri::command]
+async fn place_search(query: String) -> R<Vec<openfoto_core::geo::Place>> {
+    Ok(openfoto_core::geo::search(&query, 8))
+}
+
+/// Write a location into the photographs themselves.
+///
+/// Straight into the original file, as asked — but each rewrite is read back before it
+/// replaces anything (see `geo::write_gps`), and the content hash changes, so ratings
+/// and labels are carried across (ADR-0015).
+#[tauri::command]
+async fn set_photo_location(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    lat: f64,
+    lon: f64,
+) -> R<String> {
+    let sink = emitter(&app, "locate", &path);
+    with(&state, &path, |lib| {
+        let by_hash: BTreeMap<String, String> = lib
+            .index
+            .all()?
+            .into_iter()
+            .map(|r| (r.hash, r.path))
+            .collect();
+        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
+        for h in &hashes {
+            counter.tick();
+            let Some(rel) = by_hash.get(h) else { continue };
+            match openfoto_core::geo::write_gps(&lib.abs(rel), lat, lon) {
+                Ok(()) => {
+                    let new = scan::hash_file(&lib.abs(rel))?;
+                    lib.index.set_gps(&new, Some((lat, lon)))?;
+                    carried.push((folder_of(rel).to_string(), h.clone(), new));
+                    done += 1;
+                }
+                Err(e) => refused.push(e.to_string()),
+            }
+        }
+        carry_metadata(lib, &carried)?;
+        scan::scan(lib, false)?;
+        let where_to = openfoto_core::geo::nearest(lat, lon)
+            .map(|p| p.label())
+            .unwrap_or_else(|| format!("{lat:.4}, {lon:.4}"));
+        Ok(match refused.first() {
+            None => format!("{done} placed in {where_to}"),
+            Some(why) => format!("{done} placed in {where_to} · {} left alone — {why}", refused.len()),
+        })
+    })
+}
+
 // ---------------------------------------------------------------- semantic
 
 #[derive(Serialize)]
@@ -2782,6 +2895,7 @@ pub fn run() {
             dismiss_cluster, restore_dismissed, merge_people,
             edit_photo, edit_photos, strip_metadata, set_rating, set_label, set_album, list_albums, photo_detail,
             semantic_status, semantic_index, semantic_search,
+            locate_photos, photo_places, place_search, set_photo_location,
             plan_album_migration, apply_album_migration, list_searches, save_search,
             folder_view, set_folder_view,
             plan_move, apply_move, forget_person, analyze_all, source_data, pending_work, analyze_resume

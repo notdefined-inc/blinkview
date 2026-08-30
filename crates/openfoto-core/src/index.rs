@@ -45,6 +45,15 @@ impl Index {
             );
             CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
             CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+            -- Where a photograph was taken, keyed by content hash like everything else
+            -- derived, so it survives a rename or a move. A row with NULL coordinates
+            -- means *checked, and it has none* — without that the map would re-read
+            -- every screenshot in the library every time it opened.
+            CREATE TABLE IF NOT EXISTS gps (
+                hash TEXT PRIMARY KEY,
+                lat  REAL,
+                lon  REAL
+            );
             -- Keyed by content hash, not path: a renamed or moved file keeps its
             -- signature for free, which is what makes rescans cheap (ADR-0001).
             -- One row per detected face. Keyed by photo content hash, so faces
@@ -178,6 +187,50 @@ impl Index {
         self.conn
             .execute("DELETE FROM files WHERE path=?1", params![path])?;
         Ok(())
+    }
+
+    /// Record a photograph's coordinates, or that it has none.
+    pub fn set_gps(&self, hash: &str, at: Option<(f64, f64)>) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO gps(hash,lat,lon) VALUES(?1,?2,?3)
+             ON CONFLICT(hash) DO UPDATE SET lat=excluded.lat, lon=excluded.lon",
+            params![hash, at.map(|p| p.0), at.map(|p| p.1)],
+        )?;
+        Ok(())
+    }
+
+    /// `None` when the photograph has not been looked at; `Some(None)` when it was and
+    /// carried nothing.
+    pub fn get_gps(&self, hash: &str) -> Result<Option<Option<(f64, f64)>>> {
+        let mut q = self.conn.prepare("SELECT lat,lon FROM gps WHERE hash=?1")?;
+        let mut rows = q.query(params![hash])?;
+        match rows.next()? {
+            None => Ok(None),
+            Some(r) => {
+                let lat: Option<f64> = r.get(0)?;
+                let lon: Option<f64> = r.get(1)?;
+                Ok(Some(match (lat, lon) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                }))
+            }
+        }
+    }
+
+    /// Every photograph that has coordinates.
+    pub fn located(&self) -> Result<Vec<(String, f64, f64)>> {
+        let mut q = self
+            .conn
+            .prepare("SELECT hash,lat,lon FROM gps WHERE lat IS NOT NULL AND lon IS NOT NULL")?;
+        let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Content hashes already looked at, whatever the answer was.
+    pub fn gps_checked(&self) -> Result<std::collections::HashSet<String>> {
+        let mut q = self.conn.prepare("SELECT hash FROM gps")?;
+        let rows = q.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
     pub fn get_signature(&self, hash: &str) -> Result<Option<crate::imagesig::Signature>> {
