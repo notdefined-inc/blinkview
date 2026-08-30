@@ -75,7 +75,7 @@ Grab the installer for your platform from [**Releases**](https://github.com/notd
 
 The app is not notarized, so the first launch needs a nudge: on macOS, right-click → Open; on Windows, *More info* → *Run anyway*. An Apple Developer ID costs money a project with no revenue doesn't have.
 
-If macOS says the app is **damaged and can't be opened**, that is the v0.1.0 build, not your download: it shipped without a bundle signature, and Gatekeeper reports an invalid signature as damage. Later builds are ad-hoc signed and open with right-click → Open. To use v0.1.0 anyway, strip the quarantine flag:
+If macOS refuses to open it at all, clear the download quarantine flag and try again:
 
 ```sh
 xattr -cr /Applications/OpenFoto.app

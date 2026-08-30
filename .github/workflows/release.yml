@@ -79,8 +79,8 @@ jobs:
 
             The app is ad-hoc signed but not notarized. On macOS, right-click the app
             and choose Open; on Windows, choose *More info* → *Run anyway*. If macOS
-            calls the app *damaged*, that is a v0.1.0-only bug — it shipped with no
-            bundle signature — and `xattr -cr /Applications/OpenFoto.app` clears it.
+            refuses outright, `xattr -cr /Applications/OpenFoto.app` clears the
+            download quarantine flag.
 
             Face recognition and scene search need about 200 MB of models, downloaded
             on first use and verified against a pinned SHA-256. Everything else works

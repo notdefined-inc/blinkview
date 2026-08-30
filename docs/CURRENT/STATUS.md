@@ -504,14 +504,10 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
-- **The v0.1.0 macOS build will not open.** tauri-bundler signs the bundle only when a
-  signing identity is configured, and none was, so the app shipped carrying just the
-  linker's ad-hoc signature on the Mach-O with no `Contents/_CodeSignature`. `codesign
-  --verify` fails with "code has no resources but signature indicates they must be
-  present" and Gatekeeper reports that as *damaged* — which right-click → Open cannot
-  clear. Fixed for later builds by `signingIdentity: "-"` in tauri.conf.json; v0.1.0
-  itself needs `xattr -cr /Applications/OpenFoto.app`. Notarization still needs a paid
-  Developer ID, so first launch will keep asking for right-click → Open.
+- The app is ad-hoc signed but **not notarized**, which needs a paid Apple Developer ID.
+  First launch therefore needs right-click → Open on macOS. `spctl` rejects it, as it
+  rejects anything unnotarized; what matters is that the signature itself is valid, so
+  macOS offers the "unverified developer" prompt rather than calling the app damaged.
 - A pass over a library with many distinct resolutions still peaks around 1.1 GB on an
   8 GB machine. Allocator retention across image sizes is the underlying cause (see
   Memory above) and swapping the allocator does not fix it — mimalloc was measured and
@@ -547,6 +543,10 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 The macOS bundle is signed. The first v0.1.0 build shipped with no
+  `_CodeSignature` at all — tauri-bundler only signs when an identity is configured —
+  and Gatekeeper reports an invalid signature as *damaged*, which right-click → Open
+  cannot clear. `signingIdentity: "-"` fixes it; verified on the published .dmg.
 - 2026-08-30 The remove-source button works during an analysis pass. `source_data` runs
   before the confirmation dialog and took the blocking library lock, so the click did
   nothing for the length of the pass and the dialog then appeared all at once.
