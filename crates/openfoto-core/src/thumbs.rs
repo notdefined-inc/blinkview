@@ -105,6 +105,37 @@ fn render_one(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// Where ffmpeg is, when the environment will not say.
+///
+/// An app launched from Finder does not inherit a shell's PATH — launchd hands it
+/// `/usr/bin:/bin:/usr/sbin:/sbin` — so `ffmpeg` resolves in a terminal and not in the
+/// installed .app, which is where the packaged build silently produced no video
+/// thumbnails at all. These are the usual install prefixes for Homebrew on Apple
+/// silicon, Homebrew on Intel, and MacPorts or hand-built copies.
+const FFMPEG_FALLBACKS: &[&str] =
+    &["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"];
+
+/// The ffmpeg to run: whatever PATH offers, else the first well-known path present.
+fn ffmpeg_bin() -> Option<std::ffi::OsString> {
+    let runs = |cmd: &std::ffi::OsStr| {
+        std::process::Command::new(cmd)
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    let bare = std::ffi::OsString::from("ffmpeg");
+    if runs(&bare) {
+        return Some(bare);
+    }
+    FFMPEG_FALLBACKS
+        .iter()
+        .map(std::ffi::OsString::from)
+        .find(|c| std::path::Path::new(c).exists() && runs(c))
+}
+
 /// Grab a frame from a video via ffmpeg, if it is installed.
 ///
 /// Optional by design: ffmpeg is an external binary, so a missing one degrades to a
@@ -113,7 +144,10 @@ fn render_video(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     if let Some(p) = dst.parent() {
         std::fs::create_dir_all(p)?;
     }
-    let out = std::process::Command::new("ffmpeg")
+    let Some(bin) = ffmpeg_bin() else {
+        anyhow::bail!("ffmpeg not found");
+    };
+    let out = std::process::Command::new(bin)
         .args(["-loglevel", "error", "-y", "-ss", "00:00:01", "-i"])
         .arg(src)
         .args(["-frames:v", "1", "-vf", &format!("scale='min({THUMB_LONG},iw)':-2")])
@@ -127,13 +161,7 @@ fn render_video(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
 }
 
 pub fn have_ffmpeg() -> bool {
-    std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    ffmpeg_bin().is_some()
 }
 
 /// Build any missing thumbnails, for photos and videos alike. Returns how many were made.

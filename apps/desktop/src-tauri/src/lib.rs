@@ -1944,7 +1944,19 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
                             .and_then(|e| e.to_str())
                             .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "m4v"));
                         if openfoto_core::thumbs::render_to(&canon, &t, is_video).is_err() {
-                            // Fall back to the original rather than showing nothing.
+                            // Falling back to the original is only sane for a still.
+                            // A video's "thumbnail" would be the whole clip — read
+                            // into memory in one piece, handed to an <img>, and held
+                            // there by the webview. On a phone backup with 507 clips
+                            // averaging 32 MB that is 15.7 GB of video in the render
+                            // process, which macOS answers by killing it: the window
+                            // goes black, reloads, asks for the same thumbnails and
+                            // does it again. A video with no poster frame is the
+                            // documented degradation, so serve nothing and let the
+                            // cell keep its play badge.
+                            if is_video {
+                                return deny(404);
+                            }
                             return match std::fs::read(&canon) {
                                 Ok(b) => ok_response(b, &canon),
                                 Err(_) => deny(404),

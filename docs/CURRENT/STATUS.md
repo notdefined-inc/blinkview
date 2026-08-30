@@ -504,6 +504,14 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- The analysis pass filters to `kind == "photo"` (`analyze.rs`), so **no pass ever gives
+  a video a thumbnail**. `thumbs::build` handles videos and is now called only from an
+  example — the one-pass rewrite orphaned it. Videos still get a poster frame, but only
+  lazily, one cell at a time, when the grid asks for it.
+- ffmpeg is found by searching known install prefixes as well as `PATH`, because a
+  Finder-launched .app inherits launchd's `/usr/bin:/bin:/usr/sbin:/sbin` and not a
+  shell's. That covers Homebrew and MacPorts; an ffmpeg installed anywhere else is
+  still invisible to the packaged app, and bundling it as a sidecar is the real fix.
 - The app is ad-hoc signed but **not notarized**, which needs a paid Apple Developer ID.
   First launch therefore needs right-click → Open on macOS. `spctl` rejects it, as it
   rejects anything unnotarized; what matters is that the signature itself is valid, so
@@ -543,6 +551,11 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 A failed video thumbnail no longer serves the whole clip to the webview.
+  On a 507-video phone backup that put 15.7 GB of MP4 into the render process, which
+  macOS killed and restarted — the window going black mid-analysis, then re-requesting
+  the same thumbnails. Measured at 9.59 GB in `tauri://localhost` against 618 MB for
+  the Rust side.
 - 2026-08-30 The macOS bundle is signed. The first v0.1.0 build shipped with no
   `_CodeSignature` at all — tauri-bundler only signs when an identity is configured —
   and Gatekeeper reports an invalid signature as *damaged*, which right-click → Open
