@@ -401,17 +401,35 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
     let mut total: BTreeMap<String, usize> = BTreeMap::new();
     let mut has_children: BTreeMap<String, bool> = BTreeMap::new();
     for r in &rows {
-        if r.kind == "photo" { photos += 1 } else { videos += 1 }
+        // A photograph in Trash is deleted: the grid hides it and the Trash row counts
+        // it. Counting it in the library total as well is what made deleting look like
+        // it had done nothing — the number beside the folder never moved, because the
+        // photograph had merely gone from one counted place to another.
+        let trashed = in_folder(&r.path, TRASH);
+        if !trashed {
+            if r.kind == "photo" { photos += 1 } else { videos += 1 }
+        }
         let d = r.path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
         *own.entry(d.clone()).or_default() += 1;
         *total.entry(d.clone()).or_default() += 1;
         for a in ancestors(&d) {
+            // Trash rolls up into its own row, never into the library above it.
+            if trashed && a.is_empty() {
+                continue;
+            }
             *total.entry(a.clone()).or_default() += 1;
             has_children.insert(a, true);
         }
     }
     let folders = total;
-    let analysed = rows.iter().filter(|r| lib.faces_done(&r.hash).unwrap_or(false)).count();
+    // Progress is about photographs still in the library. Counting analysed trashed
+    // ones against a total that excludes them would offer "Look for people" a
+    // negative number.
+    let analysed = rows
+        .iter()
+        .filter(|r| !in_folder(&r.path, TRASH))
+        .filter(|r| lib.faces_done(&r.hash).unwrap_or(false))
+        .count();
     // One directory read, not one `stat` per photograph. At 200k photos the old form
     // was 200k syscalls every time the sidebar refreshed.
     let ready = std::fs::read_dir(lib.root().join(openfoto_core::library::VAULT_DIR).join("thumbs"))
@@ -1771,6 +1789,19 @@ async fn restore_photos(state: tauri::State<'_, AppState>, path: String, hashes:
     })
 }
 
+/// Move one file into the system Trash, crossing filesystems when it must.
+///
+/// `rename` is a metadata hop and cannot leave the volume, and `~/.Trash` sits on the
+/// boot volume while the library can be anywhere — a phone backup on an external drive
+/// failed against it with EXDEV for every file, and "Empty Trash" reported moving
+/// nothing. Copying the bytes across and then removing the original ends in the same
+/// place; if the remove fails the file exists in both, is not counted as moved, and
+/// the next attempt takes the clobber-avoiding name.
+fn move_to_system_trash(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+        .or_else(|_| std::fs::copy(from, to).and_then(|_| std::fs::remove_file(from)))
+}
+
 /// Hand the library Trash over to the system Trash.
 ///
 /// This is the one place openfoto stops being reversible by itself, so it hands off
@@ -1802,7 +1833,7 @@ async fn empty_trash(state: tauri::State<'_, AppState>, path: String) -> R<Strin
                 dest = sys.join(format!("{stem} {n}.{ext}"));
                 n += 1;
             }
-            if std::fs::rename(&p, &dest).is_ok() {
+            if move_to_system_trash(&p, &dest).is_ok() {
                 if let Some(rel) = lib.rel(&p) {
                     lib.index.remove_path(&rel)?;
                 }
@@ -2542,6 +2573,59 @@ mod tests {
         std::fs::copy(&real, &link).unwrap();
         let msg = source_conflict(&link, &[real.display().to_string()]).unwrap();
         assert!(msg.contains("already in your library"), "{msg}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The number beside a folder is what you can still see in it.
+    ///
+    /// Deleting moves a photograph into `Trash/`, where it stays indexed — so a total
+    /// taken over every row does not move when you delete, and the sidebar then
+    /// disagrees with a grid that hides trashed photographs.
+    #[test]
+    fn trashed_photographs_are_counted_by_the_trash_row_only() {
+        let dir = std::env::temp_dir().join(format!("openfoto-counts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Day1")).unwrap();
+        std::fs::create_dir_all(dir.join(TRASH)).unwrap();
+        // Indexing is by extension, so the bytes only have to differ: each file needs
+        // its own content hash to become its own row.
+        for (rel, bytes) in [
+            ("a.jpg", b"one".as_slice()),
+            ("Day1/b.jpg", b"two".as_slice()),
+            ("Trash/c.jpg", b"three".as_slice()),
+            ("Trash/d.mp4", b"four".as_slice()),
+        ] {
+            std::fs::write(dir.join(rel), bytes).unwrap();
+        }
+        let mut lib = Library::open(&dir).unwrap();
+        scan::scan(&mut lib, false).unwrap();
+        let info = describe(&mut lib).unwrap();
+
+        assert_eq!(info.photos, 2, "a trashed photograph is not in the library total");
+        assert_eq!(info.videos, 0, "a trashed clip is not in the library total");
+        let count = |p: &str| info.folders.iter().find(|f| f.path == p).map(|f| f.count);
+        assert_eq!(count(TRASH), Some(2), "the Trash row counts what is in the Trash");
+        assert_eq!(count(""), Some(2), "the library root does not roll up its Trash");
+        assert_eq!(count("Day1"), Some(1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn emptying_the_trash_moves_the_file_and_removes_the_original() {
+        let dir =
+            std::env::temp_dir().join(format!("openfoto-sys-trash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let from = dir.join("a.jpg");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&from, b"photo").unwrap();
+        // A differently-named parent stands in for ~/.Trash; the same-volume path is
+        // the rename, and the cross-volume fallback needs a second filesystem, which
+        // is verified against a real external drive instead of here.
+        let dest = dir.join("system").join("a.jpg");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        move_to_system_trash(&from, &dest).unwrap();
+        assert!(!from.exists(), "the original must not linger in the library Trash");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"photo");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

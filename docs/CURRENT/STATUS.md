@@ -26,6 +26,19 @@ Trash with a count, selections there offer Restore, and a separate "Empty…" ha
 files to the macOS Trash — the one step openfoto cannot undo, which is why it is
 explicit and confirms first.
 
+Counts follow what you can see. A photograph in Trash is counted by the Trash row and
+by nothing else: it used to be counted in the library total as well, so the grid hid it
+while the sidebar went on including it, and deleting appeared to change nothing. On the
+reference phone backup that was 115 photographs and clips counted twice. The sidebar
+also refreshes on the delete itself rather than on the next click of the source —
+re-reading committed index state, not rescanning, measured at **79 ms** across all
+three reference libraries (3,699 indexed files).
+
+Emptying the Trash works across filesystems. `rename` is a metadata hop and cannot
+leave the volume, and `~/.Trash` is on the boot disk, so a library on an external drive
+failed with EXDEV for every file and reported moving nothing at all. It falls back to
+copy-then-remove, which ends in the same place.
+
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
@@ -577,6 +590,16 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 Deleting reads honestly. Three faults, one symptom — the numbers not
+  moving. The Trash row and the folder counts only refreshed on the next click of the
+  source, because `deleteSelected` was the one mutation path that reloaded the grid
+  without refreshing the sidebar. The library total counted trashed photographs, which
+  the grid hides, so the count beside a folder stayed the same when you deleted from it
+  (115 of them on the reference backup). And "Empty Trash" moved nothing at all for a
+  library on an external drive: `std::fs::rename` cannot cross a filesystem, and every
+  file failed with EXDEV against `~/.Trash` on the boot disk. Verified end to end on a
+  fixture on the external volume — file physically in `~/.Trash`, library Trash empty —
+  and against the real libraries for the counts.
 - 2026-08-30 Adding a folder that overlaps a source you already have is refused with an
   explanation instead of silently double-indexing the photographs. Re-adding a folder,
   adding a subfolder of a source, and adding the parent of a source all fail with a

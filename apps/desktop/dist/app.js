@@ -747,7 +747,10 @@ async function deleteSelected() {
   const msg = await busy(`Moving ${hashes.length} to Trash…`,
     () => invoke("delete_photos", { path: S.source, hashes }));
   toast(msg + " — press ⌘Z to undo", "ok");
-  clearSel(); await reload();
+  // Counts live in the sidebar: the folder that just got lighter and the Trash that
+  // got its first photograph. The plan already updated the index, so this is a
+  // re-read, not a rescan — the same cost as clicking the source.
+  clearSel(); await refreshSources(); await reload();
 }
 /* ---------------- saved searches ----------------
    What albums were used for across folders (ADR-0009). Only the query is stored, so a
@@ -3392,6 +3395,8 @@ function fillActionCard(card, a) {
         }
         toast(msg + " \u2014 \u2318Z to undo", "ok");
         await loadPhotos();
+        // Deletions change the folder and Trash counts as much as any other move.
+        await refreshSources();
         card.replaceChildren(el("p", { class: "asentence" }, msg));
         } catch (err) {
           e.target.disabled = false;
