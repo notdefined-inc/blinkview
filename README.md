@@ -73,7 +73,13 @@ Grab the installer for your platform from [**Releases**](https://github.com/notd
 | **Windows** | `.msi` |
 | **Linux** | `.AppImage` and `.deb` — needs glibc 2.38+ (Ubuntu 24.04, Fedora 39, Debian 13 or newer) |
 
-The app is not code-signed yet, so the first launch needs a nudge: on macOS, right-click → Open; on Windows, *More info* → *Run anyway*. Signing certificates cost money that a project with no revenue doesn't have.
+The app is not notarized, so the first launch needs a nudge: on macOS, right-click → Open; on Windows, *More info* → *Run anyway*. An Apple Developer ID costs money a project with no revenue doesn't have.
+
+If macOS says the app is **damaged and can't be opened**, that is the v0.1.0 build, not your download: it shipped without a bundle signature, and Gatekeeper reports an invalid signature as damage. Later builds are ad-hoc signed and open with right-click → Open. To use v0.1.0 anyway, strip the quarantine flag:
+
+```sh
+xattr -cr /Applications/OpenFoto.app
+```
 
 **Face recognition and scene search are optional.** They need about 200 MB of models, downloaded on first use, from Hugging Face and the OpenCV model zoo. Every download is checked against a pinned SHA-256 before it's installed. Skip it and everything else still works.
 

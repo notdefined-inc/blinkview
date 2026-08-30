@@ -504,6 +504,14 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- **The v0.1.0 macOS build will not open.** tauri-bundler signs the bundle only when a
+  signing identity is configured, and none was, so the app shipped carrying just the
+  linker's ad-hoc signature on the Mach-O with no `Contents/_CodeSignature`. `codesign
+  --verify` fails with "code has no resources but signature indicates they must be
+  present" and Gatekeeper reports that as *damaged* — which right-click → Open cannot
+  clear. Fixed for later builds by `signingIdentity: "-"` in tauri.conf.json; v0.1.0
+  itself needs `xattr -cr /Applications/OpenFoto.app`. Notarization still needs a paid
+  Developer ID, so first launch will keep asking for right-click → Open.
 - A pass over a library with many distinct resolutions still peaks around 1.1 GB on an
   8 GB machine. Allocator retention across image sizes is the underlying cause (see
   Memory above) and swapping the allocator does not fix it — mimalloc was measured and
