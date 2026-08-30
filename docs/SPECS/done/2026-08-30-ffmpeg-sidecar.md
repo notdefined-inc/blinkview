@@ -1,5 +1,5 @@
 # Bundle ffmpeg as a sidecar
-Status: Agreed   Owner: notdefined   Date: 2026-08-30
+Status: Done (shipped in v0.1.0, tag `3f0e993`, 2026-08-30)   Owner: notdefined   Date: 2026-08-30
 
 ## Problem
 
@@ -100,7 +100,12 @@ something reproducible from a pinned URL.
       `cargo build` of the desktop crate, not only by `tauri build` — with the codec and
       size checks of criteria 7 and 8 run against the produced binary (touches:
       .github/workflows/)
-- [ ] 6. Verify criteria 6 and 9 on a real release artefact: one ffmpeg per installer,
-      and `codesign --verify` still passing with a Mach-O sidecar inside the bundle
-- [ ] 5. Doc sync: ADR-0014 to Accepted, STATUS.md drops the ffmpeg known issue, README
+- [x] 6. Verify criteria 6 and 9 on a real release artefact: one ffmpeg per installer,
+      and `codesign --verify` still passing with a Mach-O sidecar inside the bundle —
+      done on the draft v0.1.0 (tag `3f0e993`): macOS dmg carries exactly one
+      `Contents/MacOS/ffmpeg`, arm64, and `codesign --verify --deep --strict` passes
+      with `--validated` on the sidecar; the deb carries exactly one `usr/bin/ffmpeg`,
+      ELF x86-64; the Windows job ran `check-ffmpeg.sh` green against the MSYS2 build
+      and the NSIS bundle only succeeds with the triple's sidecar present.
+- [x] 5. Doc sync: ADR-0014 to Accepted, STATUS.md drops the ffmpeg known issue, README
       stops telling users to install ffmpeg (touches: docs/, README.md)
