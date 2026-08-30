@@ -1,4 +1,4 @@
-/* openfoto desktop.
+/* Blinkview desktop.
    The engine lives in Rust; this file is presentation and interaction only. */
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -129,11 +129,11 @@ async function checkUpdates(manual = false) {
   try {
     const info = await invoke("check_for_updates");
     if (!info.available) {
-      if (manual) toast(`OpenFoto ${info.current} is up to date`, "ok");
+      if (manual) toast(`Blinkview ${info.current} is up to date`, "ok");
       return;
     }
     pendingUpdate = info;
-    $("#update-title").textContent = `OpenFoto ${info.latest} is ready`;
+    $("#update-title").textContent = `Blinkview ${info.latest} is ready`;
     $("#update-note").textContent = `You have ${info.current} · GitHub release`;
     $("#update-banner").hidden = false;
     document.body.classList.add("has-update");
@@ -292,7 +292,7 @@ function renderSidebar() {
         el("span", { class: "grow" }, s.missing ? `${s.name} (missing)` : s.name)),
       el("span", { class: "n num" },
         s.missing ? "" : (s.indexing || S.busy[s.path] ? "indexing\u2026" : String(s.photos))),
-      el("button", { class: "mini sact", title: `Remove ${s.name} from openfoto`,
+      el("button", { class: "mini sact", title: `Remove ${s.name} from Blinkview`,
         onclick: e => { e.stopPropagation(); removeSource(s.path); } }, "\u2715"));
   }));
 
@@ -409,7 +409,7 @@ function renderSidebar() {
   ];
   if (count) {
     rows2.push(el("button", {
-      class: "row", title: "Hand these to the system Trash — openfoto can no longer undo it",
+      class: "row", title: "Hand these to the system Trash — Blinkview can no longer undo it",
       onclick: emptyTrash,
     }, el("span", { class: "grow", style: "color:var(--ink-faint)" }, "Empty\u2026")));
   }
@@ -440,13 +440,13 @@ function saveFolderState() {
   try {
     const out = {};
     for (const [src, set] of Object.entries(S.expanded || {})) out[src] = [...set];
-    localStorage.setItem("openfoto.expanded", JSON.stringify(out));
+    localStorage.setItem("blinkview.expanded", JSON.stringify(out));
   } catch { /* private window, or storage disabled — the tree still works */ }
 }
 
 function loadFolderState() {
   try {
-    const raw = JSON.parse(localStorage.getItem("openfoto.expanded") || "{}");
+    const raw = JSON.parse(localStorage.getItem("blinkview.expanded") || "{}");
     S.expanded = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, new Set(v)]));
   } catch { S.expanded = {}; }
 }
@@ -770,7 +770,7 @@ function renderGrid() {
         ? `Reading what your photos show, for \u201C${S.semantic.query}\u201D.`
         : S.photos.length
           ? "No photos match this filter."
-          : "This folder has no photos openfoto can read, or it has not finished indexing."),
+          : "This folder has no photos Blinkview can read, or it has not finished indexing."),
       !looking && S.photos.length
         ? el("button", { class: "btn ghost", onclick: () => selectSource(S.source) }, "Show all photos")
         : null));
@@ -796,7 +796,7 @@ function renderWelcome() {
   $("#stage").replaceChildren(el("div", { class: "welcome" },
     el("div", { class: "art" }, mark || "◎"),
     el("h2", {}, "Your folders, your photos"),
-    el("p", {}, "OpenFoto reads folders you already have. Nothing is copied into a database, and nothing moves unless you ask. Add a folder to begin."),
+    el("p", {}, "Blinkview reads folders you already have. Nothing is copied into a database, and nothing moves unless you ask. Add a folder to begin."),
     el("button", { class: "btn", onclick: addSource }, "Add a folder")));
 }
 
@@ -994,7 +994,7 @@ async function stripSelectedPrompt() {
     `Strip metadata from ${hashes.length} photograph${hashes.length === 1 ? "" : "s"}?`,
     "Camera, lens, exposure and any location are removed. The pixels are untouched — " +
     "nothing is re-encoded — and each original is kept in Originals/, because the date " +
-    "openfoto sorts by comes from that metadata. Videos and HEIC are left alone.",
+    "Blinkview sorts by comes from that metadata. Videos and HEIC are left alone.",
     "Strip");
   if (!ok) return;
   const msg = await busy(`Stripping ${hashes.length}\u2026`,
@@ -1199,7 +1199,7 @@ async function restoreSelected() {
 }
 async function emptyTrash() {
   const ok = await confirmDialog("Empty the Trash",
-    "Move everything in Trash to the macOS Trash? openfoto can no longer undo this — Finder can still recover the files.",
+    "Move everything in Trash to the macOS Trash? Blinkview can no longer undo this — Finder can still recover the files.",
     "Empty Trash", true);
   if (!ok) return;
   const msg = await busy("Emptying Trash…", () => invoke("empty_trash", { path: S.source }));
@@ -2233,7 +2233,7 @@ async function autodetect(path) {
   } catch { /* reported by busy */ }
 }
 /* Removing a folder is not deleting photographs, and the dialog has to make that
-   obvious — it is the fear the question raises. Deleting what openfoto wrote is offered
+   obvious — it is the fear the question raises. Deleting what Blinkview wrote is offered
    in the same breath but is never the default, because half of it (ratings, names)
    cannot be reproduced by anything (ADR-0007). */
 async function removeSource(path) {
@@ -2251,13 +2251,13 @@ async function removeSource(path) {
   const choice = await new Promise(resolve => {
     const dlg = dialogFrame(`Remove ${name}?`, [
       el("p", { class: "asktext" },
-        "It stops appearing in openfoto. ",
+        "It stops appearing in Blinkview. ",
         el("b", {}, "Your photographs are not deleted"),
         " \u2014 the folder and everything in it stays exactly where it is."),
       el("label", { class: "purgerow", for: "purge-data" },
         purge,
         el("span", {},
-          el("b", {}, "Also delete openfoto's own files"),
+          el("b", {}, "Also delete Blinkview's own files"),
           el("span", { class: "asub" },
             mb >= 0.1 ? ` ${mb.toFixed(mb < 10 ? 1 : 0)} MB of thumbnails and index, which would be rebuilt` : " the cache",
             lost.length
@@ -2469,14 +2469,14 @@ async function applyDuplicateReview() {
   if (!rejected.length) return;
   const bytes = rejected.reduce((sum, item) => sum + item.bytes, 0);
   const ok = await confirmDialog("Move reviewed files to Trash?",
-    `${rejected.length} file${rejected.length === 1 ? "" : "s"} (${bytesLabel(bytes)}) will move to OpenFoto Trash. Nothing is permanently erased, and ⌘Z restores the exact prior folders.`,
+    `${rejected.length} file${rejected.length === 1 ? "" : "s"} (${bytesLabel(bytes)}) will move to Blinkview Trash. Nothing is permanently erased, and ⌘Z restores the exact prior folders.`,
     "Move to Trash", true);
   if (!ok) return;
   const msg = await busy("Applying duplicate decisions…",
     () => invoke("apply_duplicate_review", {
       path: S.source, rejections: rejected.map(item => ({ hash: item.hash, path: item.path })),
     }), S.source);
-  toast(msg + " — empty OpenFoto Trash when you are ready to reclaim the space", "ok");
+  toast(msg + " — empty Blinkview Trash when you are ready to reclaim the space", "ok");
   closeDuplicateReview();
   await refreshSources(); await loadPhotos();
 }
@@ -2570,7 +2570,7 @@ function openSheet() {
     renameBlock(),
     el("div", { class: "op", id: "op-faces" },
       el("div", { class: "txt" }, el("b", {}, "Find people"),
-        el("span", { id: "faces-note" }, "Detect faces, then name the groups openfoto finds.")),
+        el("span", { id: "faces-note" }, "Detect faces, then name the groups Blinkview finds.")),
       el("button", { class: "btn ghost", onclick: analyze }, "Detect faces"),
       el("button", { class: "btn", onclick: openReview }, "Review people")),
     el("div", { class: "op" },
@@ -2955,7 +2955,7 @@ function askKeepOriginal() {
         el("div", { class: "sheet-head" }, el("h2", {}, "Save changes")),
         el("div", { class: "sheet-body" },
           el("p", { class: "asktext" },
-            "openfoto can keep the untouched original so you can go back to it."),
+            "Blinkview can keep the untouched original so you can go back to it."),
           el("label", { class: "askopt" },
             el("input", { type: "radio", name: "keep", value: "1", checked: true }),
             el("span", {}, el("b", {}, "Keep the original"),
@@ -3164,7 +3164,7 @@ function jumpToMonth(key) {
 }
 
 /* ---------------- arranging a folder ----------------
-   The arrangement lives in that folder's own `openfoto.json` (ADR-0010), beside the
+   The arrangement lives in that folder's own `blinkview.json` (ADR-0010), beside the
    ratings of the photographs it holds — a folder saying how it is ordered is the same
    kind of fact as a folder saying what is in it, and it travels with the folder when
    it is copied in Finder. It is read from that folder alone, never inherited: a

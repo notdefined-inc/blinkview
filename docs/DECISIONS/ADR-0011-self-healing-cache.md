@@ -5,7 +5,7 @@ Status: Accepted (extends ADR-0001)
 
 ## Context
 
-ADR-0001 promises `.openfoto/` is disposable. Disposable is not the same as
+ADR-0001 promises `.blinkview/` is disposable. Disposable is not the same as
 self-correcting, and three things break the promise in practice:
 
 - Photographs added, removed or reorganised in Finder while the app is closed.
@@ -15,8 +15,8 @@ self-correcting, and three things break the promise in practice:
 
 Obsidian is the cautionary case. Its sync pain comes from `.obsidian/` mixing precious
 state — workspace layout, plugin settings — with cache, so a conflict can lose real work
-and the folder cannot simply be deleted. openfoto already separated those (ADR-0007,
-ADR-0010): everything in `.openfoto/` is reproducible, everything precious is not in it.
+and the folder cannot simply be deleted. blinkview already separated those (ADR-0007,
+ADR-0010): everything in `.blinkview/` is reproducible, everything precious is not in it.
 
 That separation makes a strong policy available.
 

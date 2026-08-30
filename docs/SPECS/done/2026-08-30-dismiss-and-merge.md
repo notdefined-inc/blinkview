@@ -29,7 +29,7 @@ embeddings away. A correction should not make recognition worse.
 durable identity — its id is a position in a recomputed list. Every face is already
 addressed by `(photo content hash, face index)`, which survives rescans, renames and
 moves, so that pair is what is stored, as `"<hash>:<idx>"` in a new `dismissed` list on
-`People`. It lives in `openfoto-people.json` beside the names, so it survives deleting
+`People`. It lives in `blinkview-people.json` beside the names, so it survives deleting
 the cache (ADR-0007) and travels with the folder.
 
 `cluster_unassigned` filters dismissed faces out before grouping. A dismissed face is
@@ -49,7 +49,7 @@ as a hidden person (a threshold that can swallow someone real).
 ## Acceptance criteria
 1. Dismissing an unnamed group removes it from the sidebar without touching any
    photograph, and the photographs stay in the library.
-2. It stays dismissed across a re-cluster, an app restart, and a deleted `.openfoto/`.
+2. It stays dismissed across a re-cluster, an app restart, and a deleted `.blinkview/`.
 3. A dismissed face is not offered as a suggestion for any other group.
 4. The sidebar shows how many are dismissed, and one click brings them all back.
 5. Restoring re-creates the same groups as before they were dismissed.
@@ -63,7 +63,7 @@ as a hidden person (a threshold that can swallow someone real).
 
 ## Tasks
 - [x] 1. `People::dismiss/is_dismissed/restore_dismissed/merge` + tests
-      (touches: crates/openfoto-core/src/faces/people.rs)
+      (touches: crates/blinkview-core/src/faces/people.rs)
 - [x] 2. `cluster_unassigned` skips dismissed faces (touches: faces/pipeline.rs)
 - [x] 3. `dismiss_cluster`, `restore_dismissed`, `merge_people` commands; dismissed
       count on the overview (touches: apps/desktop/src-tauri/src/lib.rs)
@@ -80,8 +80,8 @@ problem this spec exists for.
   group vanished, the other seven were untouched (`[9,3,3,2,1,1,1,1]` → `[3,3,2,1,1,1,1]`),
   and the library still held 40 photographs before and after.
 - Re-clustering did not bring it back.
-- It persisted as `"<hash>:<idx>"` in `openfoto-people.json` **at the library root**,
-  with nothing written into `.openfoto/`, so it survives deleting the cache by
+- It persisted as `"<hash>:<idx>"` in `blinkview-people.json` **at the library root**,
+  with nothing written into `.blinkview/`, so it survives deleting the cache by
   construction (ADR-0007) — and a unit test asserts the round trip.
 - Restoring reported *9 faces back for naming* and re-created **exactly** the groups
   that existed before: `[9,3,3,2,1,1,1,1]`.

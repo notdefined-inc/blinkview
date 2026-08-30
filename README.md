@@ -2,7 +2,7 @@
 
 <img src="assets/logo.png" width="120" alt="">
 
-# OpenFoto
+# Blinkview
 
 **Your photos are already organised. They're in folders. Why does no app believe you?**
 
@@ -32,17 +32,17 @@ Every one of them, free or paid, old or new, makes the same move: **it takes you
 
 ## The idea
 
-What Obsidian is to Markdown, OpenFoto is to your photo library.
+What Obsidian is to Markdown, Blinkview is to your photo library.
 
-**The folders are the database.** Not a metaphor. There is no library file, no import step, no proprietary container. Point OpenFoto at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.
+**The folders are the database.** Not a metaphor. There is no library file, no import step, no proprietary container. Point Blinkview at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.
 
-Delete OpenFoto tomorrow and you lose *nothing*. Your folders sit exactly where they were, named exactly what you named them — plus a small readable `openfoto.json` beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.
+Delete Blinkview tomorrow and you lose *nothing*. Your folders sit exactly where they were, named exactly what you named them — plus a small readable `blinkview.json` beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.
 
-Everything else — thumbnails, the index, face embeddings — lives in a `.openfoto/` folder that is **safe to delete**. Delete it and it rebuilds. That's not a caveat; it's the promise the whole design is built to keep.
+Everything else — thumbnails, the index, face embeddings — lives in a `.blinkview/` folder that is **safe to delete**. Delete it and it rebuilds. That's not a caveat; it's the promise the whole design is built to keep.
 
 ## What it actually does
 
-**Finds faces, offline.** Detection and recognition run on your machine. Nothing is uploaded. Nothing phones home. You name someone once and OpenFoto files the rest — and when it isn't sure, it says so and leaves the photo alone, because a confidently wrong answer is worse than an honest shrug.
+**Finds faces, offline.** Detection and recognition run on your machine. Nothing is uploaded. Nothing phones home. You name someone once and Blinkview files the rest — and when it isn't sure, it says so and leaves the photo alone, because a confidently wrong answer is worse than an honest shrug.
 
 **Searches by what's *in* the picture.** Type `a church` and get the church. Type `snowy mountains` and get the mountains. No tagging, no training — a vision model reads the pixels. Ask for `the sea` in a library with no sea and it returns nothing, on purpose. Below the confidence threshold it would rather say nothing than guess.
 
@@ -61,11 +61,11 @@ Everything else — thumbnails, the index, face embeddings — lives in a `.open
 - **No cloud, no account, no sync.** There is nowhere to sign in.
 - **No telemetry.** Nothing is measured, collected or sent. There is no analytics code to audit because there is none to write.
 - **No paid tier.** There is no feature behind a wall, because there is no wall.
-- **No library format.** If OpenFoto vanished tomorrow, your folders wouldn't notice.
+- **No library format.** If Blinkview vanished tomorrow, your folders wouldn't notice.
 
 ## Install
 
-Grab the installer for your platform from [**Releases**](https://github.com/notdefined-inc/openfoto/releases/latest).
+Grab the installer for your platform from [**Releases**](https://github.com/notdefined-inc/blinkview/releases/latest).
 
 | | |
 |---|---|
@@ -78,7 +78,7 @@ The app is not notarized, so the first launch needs a nudge: on macOS, right-cli
 If macOS refuses to open it at all, clear the download quarantine flag and try again:
 
 ```sh
-xattr -cr /Applications/OpenFoto.app
+xattr -cr /Applications/Blinkview.app
 ```
 
 **Face recognition and scene search are optional.** They need about 200 MB of models, downloaded on first use, from Hugging Face and the OpenCV model zoo. Every download is checked against a pinned SHA-256 before it's installed. Skip it and everything else still works.
@@ -88,12 +88,12 @@ xattr -cr /Applications/OpenFoto.app
 You need [Rust](https://rustup.rs) 1.88+ and [Node](https://nodejs.org) (for the frontend tests only — there's no bundler, no build step, no `node_modules`).
 
 ```bash
-git clone https://github.com/notdefined-inc/openfoto
-cd openfoto
+git clone https://github.com/notdefined-inc/blinkview
+cd blinkview
 
 ./tools/build-ffmpeg.sh                      # once: the ffmpeg the app bundles
-cargo run -p openfoto-desktop --release      # the app
-cargo run -p openfoto-cli -- --help          # the command line
+cargo run -p blinkview-desktop --release      # the app
+cargo run -p blinkview-cli -- --help          # the command line
 
 cargo test --workspace                       # 124 tests
 node apps/desktop/tests/grammar.test.mjs     # the command grammar
@@ -106,11 +106,11 @@ On Linux you'll need the usual WebKitGTK development packages; Tauri's [prerequi
 There's also a CLI, which does everything the app does and is the honest way to try this on a library you care about:
 
 ```bash
-openfoto scan     -C ~/Photos     # index; never modifies a photo
-openfoto analyze  -C ~/Photos     # thumbnails, faces and scene search in one pass
-openfoto find     -C ~/Photos "a night sky"
-openfoto dedupe   -C ~/Photos     # preview first, always
-openfoto undo     -C ~/Photos     # reverse anything
+blinkview scan     -C ~/Photos     # index; never modifies a photo
+blinkview analyze  -C ~/Photos     # thumbnails, faces and scene search in one pass
+blinkview find     -C ~/Photos "a night sky"
+blinkview dedupe   -C ~/Photos     # preview first, always
+blinkview undo     -C ~/Photos     # reverse anything
 ```
 
 ## How it's built
@@ -127,6 +127,6 @@ Issues and pull requests welcome. The house rules are in [`AGENTS.md`](AGENTS.md
 
 [GPL-3.0-or-later](LICENSE).
 
-OpenFoto is free software, and the licence exists to keep it that way: if you ship a modified version, you ship your changes too. It's GPLv3 rather than GPLv2 for a specific reason — the windowing and tokenizer libraries underneath are Apache-2.0, which the FSF considers incompatible with GPLv2.
+Blinkview is free software, and the licence exists to keep it that way: if you ship a modified version, you ship your changes too. It's GPLv3 rather than GPLv2 for a specific reason — the windowing and tokenizer libraries underneath are Apache-2.0, which the FSF considers incompatible with GPLv2.
 
 The models are downloaded, not bundled, and carry their own licences: [YuNet](https://github.com/opencv/opencv_zoo) and [SFace](https://github.com/opencv/opencv_zoo) from the OpenCV model zoo, and [MobileCLIP-S0](https://huggingface.co/Xenova/mobileclip_s0) for scene search.

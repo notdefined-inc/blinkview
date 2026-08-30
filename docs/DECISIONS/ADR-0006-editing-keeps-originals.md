@@ -13,8 +13,8 @@ the original plus an adjustments blob and renders on demand; Google retains the 
 behind an explicit revert; Samsung keeps it alongside. None of them silently overwrites
 a user's file.
 
-They can do that because each owns a database. openfoto deliberately does not, and
-`.openfoto/` is disposable by design (ADR-0001). Keeping the only copy of an original
+They can do that because each owns a database. blinkview deliberately does not, and
+`.blinkview/` is disposable by design (ADR-0001). Keeping the only copy of an original
 there would mean **deleting a cache destroys the user's photograph** — which is worse
 than any of the three products we are learning from.
 
@@ -30,7 +30,7 @@ unrecoverable, because a user who has decided is entitled to decide.
 
 Rejected: **edits in the vault**, which would be lost with a cache the docs promise is
 disposable. Rejected: **sidecar edit files**, which are invisible to every other
-application and so break the premise that a folder organised by openfoto is just a
+application and so break the premise that a folder organised by blinkview is just a
 folder of photographs.
 
 ## Order of operations
@@ -53,7 +53,7 @@ preview lies about the result, so `filterFor()` in the frontend deliberately mir
 
 Good: the guarantee those three products offer, without inventing a database. Finder
 shows the originals. Other applications see an ordinary edited JPEG rather than an edit
-list they cannot read. Deleting `.openfoto/` still costs nothing.
+list they cannot read. Deleting `.blinkview/` still costs nothing.
 
 Costly: an edited photo is a re-encode, so repeated edit cycles lose quality — unlike
 Apple's model, which always re-renders from the original. `Originals/` grows and is the

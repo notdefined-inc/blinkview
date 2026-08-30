@@ -26,12 +26,12 @@ Select results, Save this search…). It composes the existing commands only; th
 per-session and nothing is persisted. Native `prompt()`/`confirm()` are gone — glass
 dialogs instead.
 
-Run it: `cargo run -p openfoto-desktop`.
+Run it: `cargo run -p blinkview-desktop`.
 
 Deleting moves photos to a `Trash/` folder **inside the library**, not the system
 Trash, so it is journalled and undoable like every other operation. The sidebar shows
 Trash with a count, selections there offer Restore, and a separate "Empty…" hands the
-files to the macOS Trash — the one step openfoto cannot undo, which is why it is
+files to the macOS Trash — the one step blinkview cannot undo, which is why it is
 explicit and confirms first.
 
 Counts follow what you can see. A photograph in Trash is counted by the Trash row and
@@ -60,13 +60,20 @@ Videos are indexed, get poster frames via ffmpeg when it is installed, and play 
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
 ### Where your data lives
-`openfoto.json` (ratings, labels, saved searches) and `openfoto-people.json` (names) sit
-at the library root, not in `.openfoto/` — and since ADR-0010 an `openfoto.json` may
+`blinkview.json` (ratings, labels, saved searches) and `blinkview-people.json` (names) sit
+at the library root, not in `.blinkview/` — and since ADR-0010 an `blinkview.json` may
 also sit in **any folder**, with the nearest one winning. Writes land in the folder that
 holds the photograph, which is what makes copying a folder in Finder carry its ratings
 with it. Deleting the cache loses nothing you authored — there
-is a test that writes a name and a rating, deletes `.openfoto/` outright, and asserts
+is a test that writes a name and a rating, deletes `.blinkview/` outright, and asserts
 both survive. Libraries written by an earlier version are migrated when opened.
+
+A library written before the rename from OpenFoto is adopted whole on first open
+(ADR-0017): `.openfoto/` becomes `.blinkview/` so the index is inherited rather than
+rebuilt, `openfoto.json` and `openfoto-people.json` are renamed as they are read, and
+the source list is copied over from the old bundle identifier's directory. Nothing in a
+photo folder changes but those two filenames — `Trash/`, `Originals/`, `Duplicates/`
+and `Scenery/` were never brand-named.
 
 ### Editing
 Rotate, flip, straighten (with auto-trim of the blank corners), crop with handles and
@@ -99,7 +106,7 @@ membership, and had done since editing existed. ADR-0015 has the account.
 ### Formats
 JPEG, PNG and **HEIC** for photos; MP4/MOV/M4V for video. HEIC is transcoded by macOS
 `sips` and cached — thumbnails to the usual cache, full-size views to
-`.openfoto/derived/<hash>.jpg` on first open. Verified against 12 real iPhone files:
+`.blinkview/derived/<hash>.jpg` on first open. Verified against 12 real iPhone files:
 they scan, thumbnail and display. WKWebView genuinely cannot show HEIC (an `<img>`
 reports `naturalWidth: 0`), which is why the transcode exists. See ADR-0005 — this is
 the project's only macOS-only dependency.
@@ -223,7 +230,7 @@ Coordinates are read once and cached in the index against the content hash, incl
 the answer "none" — otherwise every map open would re-read every screenshot in the
 library. A second pass over an unchanged library takes 3 ms.
 
-Place names come from `crates/openfoto-core/data/places.bin`: 170,860 places from
+Place names come from `crates/blinkview-core/data/places.bin`: 170,860 places from
 GeoNames cities1000, packed to 4.35 MB with region and country names interned and
 coordinates as integer degrees × 10⁴. Both spellings are searched, so "reykjavik" finds
 "Reykjavík" — before that, "Fira" reached Firavitoba in Colombia rather than Firá on
@@ -256,7 +263,7 @@ you say where things are going to go. Empty folders are listed from disk, since 
 derived from the index cannot see them.
 
 **Each folder remembers how it is arranged.** The sort — newest, oldest, name, rating,
-size, or a custom order you drag by hand — lives in that folder's own `openfoto.json`,
+size, or a custom order you drag by hand — lives in that folder's own `blinkview.json`,
 beside the ratings of the photographs it holds, so it survives a relaunch and travels
 with the folder when it is copied in Finder. It is read from that folder alone and
 never inherited: an arrangement is about the folder, unlike a rating, which is about a
@@ -273,19 +280,19 @@ rather than guessed at.
 
 **Saved searches** replace what albums were used for across folders. Only the query is
 stored, so they stay current as photographs are added. They live in the root
-`openfoto.json`; a folder describes its photographs, not how the library is searched.
+`blinkview.json`; a folder describes its photographs, not how the library is searched.
 
 Person names are matched as whole phrases before the query is tokenised, so a person
 called "Anna Maria" is one name rather than two stray words.
 
 ### The cache looks after itself
-`.openfoto/` is disposable *and* self-correcting (ADR-0011). Libraries scan on open, so
+`.blinkview/` is disposable *and* self-correcting (ADR-0011). Libraries scan on open, so
 photographs added or reorganised in Finder appear without anyone pressing anything — the
 size and mtime fast path keeps that cheap.
 
 Open libraries are also **watched** (FSEvents via `notify`), so photographs arriving
 while the window is open show up on their own. Events are debounced: pasting 40 files
-produces one rescan, not forty. Anything inside `.openfoto/` is ignored, since reacting
+produces one rescan, not forty. Anything inside `.blinkview/` is ignored, since reacting
 to our own thumbnail and index writes would rescan in a loop. A corrupt index is detected and rebuilt
 silently, because nothing user-authored is in it.
 
@@ -305,9 +312,9 @@ minutes and waiting for it before even showing the folder is what made adding on
 like a hang.
 
 A folder is refused if it overlaps a source you already have — in either direction.
-Every source is an independent library with its own `.openfoto/`, so a subfolder added
+Every source is an independent library with its own `.blinkview/`, so a subfolder added
 as its own source would be indexed twice, analysed twice, and removing either copy
-could delete `openfoto.json` metadata the other still reads; adding the parent of an
+could delete `blinkview.json` metadata the other still reads; adding the parent of an
 existing source has the same problems in reverse. Re-adding a folder that is already a
 source is refused too, so the window says "already in your library" instead of
 pretending to add it. Paths are compared canonicalized, so the same folder through a
@@ -375,9 +382,9 @@ count froze at 204 and stayed there — and re-adding it, which resumed.
 ### Removing a folder
 Each source has a visible ✕ rather than a right-click nobody finds. It asks first, and
 the dialog leads with the thing being feared: **your photographs are not deleted** — the
-folder and everything in it stays where it is, it simply stops appearing in openfoto.
+folder and everything in it stays where it is, it simply stops appearing in blinkview.
 
-The same dialog offers to delete what openfoto itself wrote, unchecked. It is never the
+The same dialog offers to delete what blinkview itself wrote, unchecked. It is never the
 default because it covers two unlike things and says so: the cache costs a rescan, while
 ratings, labels, saved searches and names cannot be reproduced by anything (ADR-0007).
 The counts are real — "0.5 MB of thumbnails and index, which would be rebuilt · and 2
@@ -385,7 +392,7 @@ rated or labelled, which cannot be recovered" — so the cost is visible before 
 
 Verified both ways on a real folder: removing plainly left all twelve photographs, the
 cache and the metadata; removing with the option ticked left all twelve photographs and
-nothing else of openfoto's.
+nothing else of blinkview's.
 
 ### Stepping through the viewer
 Arrow keys walk **exactly what is on screen, in the order it is shown** — which, with a
@@ -430,7 +437,7 @@ correction makes recognition better. Forgetting one of them, the only option bef
 threw its reference faces away.
 
 **Not every face is someone to name.** A group can be set aside, which records the
-faces — `"<photo hash>:<face index>"` — in `openfoto-people.json` rather than the
+faces — `"<photo hash>:<face index>"` — in `blinkview-people.json` rather than the
 cluster, because a cluster's id is a position in a list recomputed on every pass. The
 photographs are untouched and the faces stay in the index; the sidebar says how many are
 set aside and brings them all back in one click. Dismissing deliberately learns nothing:
@@ -488,8 +495,8 @@ mentions a GPU — treat them as a league table, not a photo finish.
 | Embedding 80,000 assets | wall clock |
 |---|---|
 | Immich `ViT-B-32__laion2b_e16` | 80 min |
-| **openfoto, parallel (not yet shipped)** | **110 min** |
-| **openfoto, as it ships today** | **194 min** |
+| **blinkview, parallel (not yet shipped)** | **110 min** |
+| **blinkview, as it ships today** | **194 min** |
 | Immich `ViT-B-16-SigLIP-384__webli` | 270 min |
 
 So: the same league, faster than their heavier model, behind their light one. Not slow,
@@ -523,7 +530,7 @@ Measured across the bridge at real size with `bench_payload`, rather than extrap
 | 200,000 | **794 ms** | 32 ms |
 
 The Rust side is not the cost — building and serialising 2,433 photographs takes 4.8 ms,
-of which serialisation is 0.9 ms. Reading the whole folder tree for `openfoto.json` costs
+of which serialisation is 0.9 ms. Reading the whole folder tree for `blinkview.json` costs
 200 ms, but only the first time a library is opened.
 
 An earlier projection of 3.8 s for a 200,000-photograph switch was extrapolated from a
@@ -538,7 +545,7 @@ regardless of library size, and counted atomically so parallel work never report
 count going backwards.
 
 ### Models
-`openfoto models fetch` downloads four ONNX models into `~/.cache/openfoto/models`
+`blinkview models fetch` downloads four ONNX models into `~/.cache/blinkview/models`
 (YuNet and SFace for faces, MobileCLIP-S0 vision and text for search, 204 MB total),
 and the app offers the same when they are missing. Downloads come from the LFS *media*
 endpoint — `raw.githubusercontent.com` returns a 133-byte pointer that loads as a
@@ -608,7 +615,7 @@ Peak is flat in library size, so nothing leaks: the footprint is the work in fli
 What drives it is **allocator retention across image sizes**. macOS keeps freed large
 blocks per size class, so a library of one resolution recycles a single block for ever
 while a mixed library strands a region per size — during a pass `vmmap` showed 48.8M
-live in `MALLOC_LARGE` against 348.0M dirty in 26 *empty* regions. `openfoto-demo` is
+live in `MALLOC_LARGE` against 348.0M dirty in 26 *empty* regions. `blinkview-demo` is
 uniformly 4000x1848, which is exactly why dev testing never saw this.
 
 Worker count is the lever, and it is now sized from physical memory rather than cores
@@ -624,7 +631,7 @@ alone — one worker per 4 GB, capped at four. On 226 photographs across 76 reso
 Four workers was the worst setting on both axes at once: most memory *and* slowest,
 because an 8 GB machine swaps. The old sizing read core count alone and so handed this
 machine four. With the memory-aware default it takes two and peaks at 1143 MB.
-`OPENFOTO_WORKERS` still overrides, for a machine that wants less again.
+`BLINKVIEW_WORKERS` still overrides, for a machine that wants less again.
 
 **mimalloc was measured and rejected.** At one worker it is a clear win — six ABBA pairs,
 every one negative, mean -211 MB (-23.5%), and order-independent. At the default worker
@@ -665,7 +672,7 @@ face alone, which is the intended bias. Reproduce with
 - A pass over a library with many distinct resolutions still peaks around 1.1 GB on an
   8 GB machine. Allocator retention across image sizes is the underlying cause (see
   Memory above) and swapping the allocator does not fix it — mimalloc was measured and
-  is worse at the default worker count. `OPENFOTO_WORKERS` lowers it further.
+  is worse at the default worker count. `BLINKVIEW_WORKERS` lowers it further.
 - The desktop app's `photo://` image pool is sized independently of the analysis
   workers (`clamp(2, 6)` off core count, `apps/desktop/src-tauri/src/lib.rs`), and every
   in-flight request holds a decoded full-size frame. During a pass the two pools
@@ -727,7 +734,7 @@ face alone, which is the intended bias. Reproduce with
 - 2026-08-30 A pass over the things a photo manager is expected to have. ⌘F focuses the
   search field, and a chip says how many matches the current folder is hiding. Every
   folder remembers its sort, including a custom order dragged by hand, in its own
-  `openfoto.json`. Folders can be made from the sidebar. Deleting can go to a folder of
+  `blinkview.json`. Folders can be made from the sidebar. Deleting can go to a folder of
   your choosing rather than only `Trash/`. Bulk rename takes a pattern and a scope — the
   selection, or the folder you are in — with `%%n` numbering in capture order. Colour
   presets apply to one photograph or a whole selection. Metadata is readable in the info
@@ -791,10 +798,10 @@ face alone, which is the intended bias. Reproduce with
   resizing for detection straight from the borrow rather than through a `DynamicImage`
   round-trip.
 - 2026-08-27 Repo bootstrapped; ADR-0001..0003 and the v1 spec written.
-- 2026-08-27 `openfoto-core`: library/index/scan/plan/journal/fsops/rename/timesource.
-- 2026-08-27 `openfoto` CLI: scan, status, rename, undo, history. Nothing mutates
+- 2026-08-27 `blinkview-core`: library/index/scan/plan/journal/fsops/rename/timesource.
+- 2026-08-27 `blinkview` CLI: scan, status, rename, undo, history. Nothing mutates
   without `--apply`.
-- 2026-08-27 Task 10: `openfoto faces review` — a dark, photo-first review page served
+- 2026-08-27 Task 10: `blinkview faces review` — a dark, photo-first review page served
   from localhost, with live re-suggestion. Naming three people cut the remaining review
   from 15 clusters / 110 faces to 6 / 31.
 - 2026-08-27 Task 9: people.json, discriminative assignment, EXIF orientation fix.

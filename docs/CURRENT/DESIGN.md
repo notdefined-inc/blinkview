@@ -1,6 +1,6 @@
 # Design direction — Aurora Glass
 
-Applies to every openfoto surface. Binding for all UI work: tokens only, an ad-hoc
+Applies to every blinkview surface. Binding for all UI work: tokens only, an ad-hoc
 value is a bug.
 
 ## Archetype

@@ -3,7 +3,7 @@ Status: Shipped 2026-08-30 · Owner: notdefined · 2026-08-30
 
 ## Problem
 
-OpenFoto already finds near-duplicates correctly: dHash proposes candidates, normalized
+Blinkview already finds near-duplicates correctly: dHash proposes candidates, normalized
 pixel RMSE confirms them, complete-linkage prevents chaining, and Laplacian variance
 selects the sharpest member. The desktop currently reduces that evidence to a generic
 file-move plan. A person cannot compare a burst, override the suggested keeper, or see
@@ -14,7 +14,7 @@ how much space a decision will recover before applying it.
 - No cloud model or upload. Detection and scoring remain on-device.
 - No automatic deletion. A recommendation is never a decision.
 - No new album database. “Add to Album” is “Move to Folder” under ADR-0009.
-- No permanent erase in this flow. Rejected files first enter OpenFoto Trash and remain
+- No permanent erase in this flow. Rejected files first enter Blinkview Trash and remain
   undoable.
 
 ## Design
@@ -44,7 +44,7 @@ on-disk sidecar and filesystem structures as the rest of the app.
 1. Every returned group has passed pixel confirmation and complete-linkage grouping.
 2. The suggested keeper is deterministic and has the highest sharpness score.
 3. No file changes until the user confirms the complete keep/trash plan.
-4. Applying a batch moves only rejected hashes to OpenFoto Trash and `undo` restores
+4. Applying a batch moves only rejected hashes to Blinkview Trash and `undo` restores
    the exact prior tree.
 5. Reclaim totals equal the byte sizes of the files selected for Trash.
 6. A user can override every suggested keeper, rate a photo, and move it to a folder.

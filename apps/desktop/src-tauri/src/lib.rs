@@ -1,15 +1,15 @@
-//! openfoto desktop — a shell over `openfoto-core`.
+//! blinkview desktop — a shell over `blinkview-core`.
 //!
 //! The CLI and this app are peers over one engine: every command here calls the same
-//! functions `openfoto` does, so the two can never disagree about what a library
+//! functions `blinkview` does, so the two can never disagree about what a library
 //! contains or what an operation will do.
 //!
 //! A *source* is a folder the user has added. Each one is an independent library with
-//! its own disposable `.openfoto/`, which is what lets sources be added and removed
+//! its own disposable `.blinkview/`, which is what lets sources be added and removed
 //! freely without any global database. The list of sources is the only app-level state,
 //! and losing it costs nothing but re-adding folders.
 
-use openfoto_core::{
+use blinkview_core::{
     dedupe,
     userdata::{FolderView, PhotoMeta, UserData, UserDataSet},
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
@@ -60,7 +60,7 @@ static IMAGE_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock:
     let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     rayon::ThreadPoolBuilder::new()
         .num_threads(n.clamp(2, 6))
-        .thread_name(|i| format!("openfoto-img-{i}"))
+        .thread_name(|i| format!("blinkview-img-{i}"))
         .build()
         .expect("image pool")
 });
@@ -75,7 +75,7 @@ static IMAGE_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock:
 static VIDEO_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock::new(|| {
     rayon::ThreadPoolBuilder::new()
         .num_threads(2)
-        .thread_name(|i| format!("openfoto-video-{i}"))
+        .thread_name(|i| format!("blinkview-video-{i}"))
         .build()
         .expect("video pool")
 });
@@ -132,11 +132,32 @@ struct SourcesFile {
     sources: Vec<String>,
 }
 
+/// The bundle identifier before the rename (ADR-0017). It names the directory the
+/// source list lives in, so it has to survive the rename or every existing install
+/// opens on an empty sidebar, looking as though it forgot every library.
+const LEGACY_IDENTIFIER: &str = "dev.notdefined.openfoto";
+
 fn sources_path(app: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     let dir = app.path().app_config_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&dir);
-    dir.join("sources.json")
+    let path = dir.join("sources.json");
+    adopt_legacy_sources(&dir, &path);
+    path
+}
+
+/// Copy, not move: a source list is small, and leaving the old one in place keeps the
+/// previous install working if someone goes back to it.
+fn adopt_legacy_sources(dir: &std::path::Path, path: &std::path::Path) {
+    if path.exists() {
+        return;
+    }
+    let Some(legacy) = dir.parent().map(|p| p.join(LEGACY_IDENTIFIER).join("sources.json")) else {
+        return;
+    };
+    if legacy.is_file() && std::fs::copy(&legacy, path).is_ok() {
+        eprintln!("[blinkview] carried the source list over from {}", legacy.display());
+    }
 }
 
 fn load_sources(app: &tauri::AppHandle) -> Vec<String> {
@@ -271,13 +292,13 @@ fn start_watching(app: &tauri::AppHandle, state: &AppState, root: &str) {
             Ok(n) => {
                 let _ = app.emit("library-changed", (root_owned.clone(), n));
             }
-            Err(e) => eprintln!("[openfoto] rescan after a change failed: {e}"),
+            Err(e) => eprintln!("[blinkview] rescan after a change failed: {e}"),
         }
     });
     if let Err(e) = res {
         // Not fatal: without a watcher the library is merely as current as its last
         // open, which is how it behaved before.
-        eprintln!("[openfoto] could not watch {root}: {e}");
+        eprintln!("[blinkview] could not watch {root}: {e}");
     }
 }
 
@@ -324,7 +345,7 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
         None => scan::scan(&mut lib, false),
     };
     if let Err(e) = scanned {
-        eprintln!("[openfoto] scan on open failed for {root}: {e}");
+        eprintln!("[blinkview] scan on open failed for {root}: {e}");
     }
     if let Some(app) = &handle {
         let _ = app.emit("source-ready", root.to_string());
@@ -458,7 +479,7 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         .count();
     // One directory read, not one `stat` per photograph. At 200k photos the old form
     // was 200k syscalls every time the sidebar refreshed.
-    let ready = std::fs::read_dir(lib.root().join(openfoto_core::library::VAULT_DIR).join("thumbs"))
+    let ready = std::fs::read_dir(lib.root().join(blinkview_core::library::VAULT_DIR).join("thumbs"))
         .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "jpg")).count())
         .unwrap_or(0)
         .min(photos);
@@ -567,9 +588,9 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
 
 /// Why `candidate` may not become a source, or `None` when it may.
 ///
-/// Every source is an independent library with its own `.openfoto/`, so a folder that
+/// Every source is an independent library with its own `.blinkview/`, so a folder that
 /// overlaps an existing source would be indexed twice, analysed twice, and removing
-/// either copy could delete `openfoto.json` metadata the other still reads. Both
+/// either copy could delete `blinkview.json` metadata the other still reads. Both
 /// directions are refused, not warned about; the way out is one step (remove the
 /// nested source first). Paths are canonicalized before comparing — symlinks and case
 /// differences resolve to the same folder, and two sources reaching one vault is the
@@ -681,16 +702,16 @@ async fn autodetect_faces(
     })
 }
 
-/// What openfoto would leave behind, or take away, when a folder is removed.
+/// What blinkview would leave behind, or take away, when a folder is removed.
 ///
-/// Shown before asking, because "delete openfoto's data" covers two very different
+/// Shown before asking, because "delete blinkview's data" covers two very different
 /// things: a cache that costs a rescan, and ratings and names that no machine can
 /// reproduce (ADR-0007).
 #[derive(Serialize, Default)]
 pub struct SourceData {
-    /// Bytes under `.openfoto/` — thumbnails, index, journal. Rebuildable.
+    /// Bytes under `.blinkview/` — thumbnails, index, journal. Rebuildable.
     cache_bytes: u64,
-    /// How many `openfoto.json` files, across the folder tree.
+    /// How many `blinkview.json` files, across the folder tree.
     metadata_files: usize,
     /// Photographs carrying a rating, a label or an album. Not reproducible.
     described: usize,
@@ -715,7 +736,7 @@ fn dir_bytes(p: &std::path::Path) -> u64 {
 async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<SourceData> {
     let root = std::path::PathBuf::from(&path);
     let mut d = SourceData {
-        cache_bytes: dir_bytes(&root.join(openfoto_core::library::VAULT_DIR)),
+        cache_bytes: dir_bytes(&root.join(blinkview_core::library::VAULT_DIR)),
         ..Default::default()
     };
     // The metadata is read through the library so the cascade is counted the same way
@@ -731,7 +752,7 @@ async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<Sourc
     for e in walk_metadata(&root) {
         d.metadata_files += 1;
         if let Ok(bytes) = std::fs::read(&e) {
-            if let Ok(u) = serde_json::from_slice::<openfoto_core::userdata::UserData>(&bytes) {
+            if let Ok(u) = serde_json::from_slice::<blinkview_core::userdata::UserData>(&bytes) {
                 d.described += u.photos.len();
             }
         }
@@ -743,7 +764,7 @@ async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<Sourc
 }
 
 /// Every folder at or below `root`, relative to it, skipping the cache and hidden
-/// folders. `.openfoto` is excluded by the leading dot, like every other hidden name.
+/// folders. `.blinkview` is excluded by the leading dot, like every other hidden name.
 fn walk_dirs(root: &std::path::Path) -> Vec<String> {
     fn rec(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -763,10 +784,10 @@ fn walk_dirs(root: &std::path::Path) -> Vec<String> {
     out
 }
 
-/// Every `openfoto.json` at or below `root`, skipping the cache and hidden folders.
+/// Every `blinkview.json` at or below `root`, skipping the cache and hidden folders.
 fn walk_metadata(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
-    let f = root.join(openfoto_core::userdata::FILE);
+    let f = root.join(blinkview_core::userdata::FILE);
     if f.is_file() {
         out.push(f);
     }
@@ -780,9 +801,9 @@ fn walk_metadata(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-/// Remove a folder from openfoto. The photographs are never touched.
+/// Remove a folder from blinkview. The photographs are never touched.
 ///
-/// `purge` additionally deletes what openfoto wrote into the folder. That is offered
+/// `purge` additionally deletes what blinkview wrote into the folder. That is offered
 /// but never the default: the cache costs only a rescan, while the ratings and names
 /// go for good.
 #[tauri::command]
@@ -803,12 +824,12 @@ fn remove_source(
     }
 
     if purge != Some(true) {
-        return Ok("Removed from openfoto. Nothing on disk was changed.".into());
+        return Ok("Removed from blinkview. Nothing on disk was changed.".into());
     }
 
     let root = std::path::PathBuf::from(&path);
     let mut removed = 0usize;
-    if std::fs::remove_dir_all(root.join(openfoto_core::library::VAULT_DIR)).is_ok() {
+    if std::fs::remove_dir_all(root.join(blinkview_core::library::VAULT_DIR)).is_ok() {
         removed += 1;
     }
     for f in walk_metadata(&root) {
@@ -816,15 +837,15 @@ fn remove_source(
             removed += 1;
         }
     }
-    if std::fs::remove_file(openfoto_core::faces::people::People::path(&root)).is_ok() {
+    if std::fs::remove_file(blinkview_core::faces::people::People::path(&root)).is_ok() {
         removed += 1;
     }
-    Ok(format!("Removed, and deleted {removed} openfoto file(s). Your photographs are untouched."))
+    Ok(format!("Removed, and deleted {removed} blinkview file(s). Your photographs are untouched."))
 }
 
 /// Make a folder inside the library.
 ///
-/// Folders are the only grouping openfoto has (ADR-0009), so making one before there
+/// Folders are the only grouping blinkview has (ADR-0009), so making one before there
 /// is anything to put in it is not a convenience — it is how you say where things are
 /// going to go. Validated through `fsops`, because the reference drive is exFAT and
 /// macOS will happily create a name that volume cannot carry.
@@ -837,7 +858,7 @@ async fn create_folder(
 ) -> R<String> {
     with(&state, &path, |lib| {
         let name = name.trim();
-        openfoto_core::fsops::validate_filename(name)?;
+        blinkview_core::fsops::validate_filename(name)?;
         let parent = parent.trim().trim_matches('/');
         if !lib.abs(parent).is_dir() {
             anyhow::bail!("{} is not a folder in this library", if parent.is_empty() { "the library root" } else { parent });
@@ -1022,7 +1043,7 @@ pub struct Pending {
     thumbs_missing: usize,
     faces_missing: usize,
     clip_missing: usize,
-    /// Files openfoto cannot decode. Reported so the count is explained rather than
+    /// Files blinkview cannot decode. Reported so the count is explained rather than
     /// silently outstanding for ever.
     unreadable: usize,
     /// Whether each stage was ever begun. Resuming is for work already started; a
@@ -1106,9 +1127,9 @@ async fn locate_photos(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     path: String,
-) -> R<openfoto_core::geo::Located> {
+) -> R<blinkview_core::geo::Located> {
     let sink = emitter(&app, "locate", &path);
-    with(&state, &path, |lib| openfoto_core::geo::locate(lib, &sink))
+    with(&state, &path, |lib| blinkview_core::geo::locate(lib, &sink))
 }
 
 /// Every photograph that knows where it was taken.
@@ -1128,7 +1149,7 @@ async fn photo_places(state: tauri::State<'_, AppState>, path: String) -> R<Vec<
             .filter_map(|(hash, lat, lon)| {
                 let path = by_hash.get(&hash)?.clone();
                 Some(PhotoPlace {
-                    place: openfoto_core::geo::nearest(lat, lon).map(|p| p.label()),
+                    place: blinkview_core::geo::nearest(lat, lon).map(|p| p.label()),
                     hash,
                     path,
                     lat,
@@ -1141,8 +1162,8 @@ async fn photo_places(state: tauri::State<'_, AppState>, path: String) -> R<Vec<
 
 /// Places matching a typed name, for a photograph that has no coordinates of its own.
 #[tauri::command]
-async fn place_search(query: String) -> R<Vec<openfoto_core::geo::Place>> {
-    Ok(openfoto_core::geo::search(&query, 8))
+async fn place_search(query: String) -> R<Vec<blinkview_core::geo::Place>> {
+    Ok(blinkview_core::geo::search(&query, 8))
 }
 
 /// Write a location into the photographs themselves.
@@ -1167,12 +1188,12 @@ async fn set_photo_location(
             .into_iter()
             .map(|r| (r.hash, r.path))
             .collect();
-        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let counter = blinkview_core::progress::Counter::new(hashes.len(), &sink);
         let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
         for h in &hashes {
             counter.tick();
             let Some(rel) = by_hash.get(h) else { continue };
-            match openfoto_core::geo::write_gps(&lib.abs(rel), lat, lon) {
+            match blinkview_core::geo::write_gps(&lib.abs(rel), lat, lon) {
                 Ok(()) => {
                     let new = scan::hash_file(&lib.abs(rel))?;
                     lib.index.set_gps(&new, Some((lat, lon)))?;
@@ -1184,7 +1205,7 @@ async fn set_photo_location(
         }
         carry_metadata(lib, &carried)?;
         scan::scan(lib, false)?;
-        let where_to = openfoto_core::geo::nearest(lat, lon)
+        let where_to = blinkview_core::geo::nearest(lat, lon)
             .map(|p| p.label())
             .unwrap_or_else(|| format!("{lat:.4}, {lon:.4}"));
         Ok(match refused.first() {
@@ -1231,13 +1252,13 @@ async fn set_photo_datetime(
             .into_iter()
             .map(|r| (r.hash, r.path))
             .collect();
-        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let counter = blinkview_core::progress::Counter::new(hashes.len(), &sink);
         let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
         for hash in &hashes {
             counter.tick();
             let Some(rel) = by_hash.get(hash) else { continue };
             let cached_gps = lib.index.get_gps(hash)?;
-            match openfoto_core::geo::write_datetime(&lib.abs(rel), wanted) {
+            match blinkview_core::geo::write_datetime(&lib.abs(rel), wanted) {
                 Ok(()) => {
                     let new = scan::hash_file(&lib.abs(rel))?;
                     if let Some(gps) = cached_gps {
@@ -1655,7 +1676,7 @@ async fn models_fetch(app: tauri::AppHandle) -> R<String> {
 fn edit_each(
     lib: &mut Library,
     hashes: &[String],
-    mut f: impl FnMut(&mut openfoto_core::userdata::UserData, &str),
+    mut f: impl FnMut(&mut blinkview_core::userdata::UserData, &str),
 ) -> anyhow::Result<()> {
     let folders: BTreeMap<String, String> = lib
         .index
@@ -1712,7 +1733,7 @@ async fn plan_album_migration(
     path: String,
 ) -> R<MigrationView> {
     with(&state, &path, |lib| {
-        let m = openfoto_core::albums::plan(lib)?;
+        let m = blinkview_core::albums::plan(lib)?;
         Ok(MigrationView {
             moves: m.plan.len(),
             folders: m.folders.into_iter().collect(),
@@ -1725,7 +1746,7 @@ async fn plan_album_migration(
 #[tauri::command]
 async fn apply_album_migration(state: tauri::State<'_, AppState>, path: String) -> R<String> {
     with(&state, &path, |lib| {
-        let m = openfoto_core::albums::plan(lib)?;
+        let m = blinkview_core::albums::plan(lib)?;
         if m.plan.is_empty() {
             return Ok("Nothing to move.".into());
         }
@@ -1790,7 +1811,7 @@ async fn plan_move(
     dest: String,
 ) -> R<MoveView> {
     with(&state, &path, |lib| {
-        let p = openfoto_core::plan::move_into(lib, &hashes, &dest)?;
+        let p = blinkview_core::plan::move_into(lib, &hashes, &dest)?;
         Ok(MoveView {
             dest: dest.trim().trim_matches('/').to_string(),
             moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
@@ -1807,7 +1828,7 @@ async fn apply_move(
     dest: String,
 ) -> R<String> {
     with(&state, &path, |lib| {
-        let p = openfoto_core::plan::move_into(lib, &hashes, &dest)?;
+        let p = blinkview_core::plan::move_into(lib, &hashes, &dest)?;
         if p.is_empty() {
             return Ok("Nothing to move.".into());
         }
@@ -1824,7 +1845,7 @@ async fn apply_move(
 async fn list_searches(
     state: tauri::State<'_, AppState>,
     path: String,
-) -> R<Vec<openfoto_core::userdata::SavedSearch>> {
+) -> R<Vec<blinkview_core::userdata::SavedSearch>> {
     with(&state, &path, |lib| {
         Ok(UserDataSet::load(lib.root())?.searches().to_vec())
     })
@@ -1846,7 +1867,7 @@ async fn save_search(
     })
 }
 
-/// The directory holding a folder's own `openfoto.json`.
+/// The directory holding a folder's own `blinkview.json`.
 fn folder_dir(root: &std::path::Path, folder: &str) -> std::path::PathBuf {
     if folder.is_empty() { root.to_path_buf() } else { root.join(folder) }
 }
@@ -1920,8 +1941,8 @@ pub struct PhotoDetail {
     /// What the file says about how it was taken. Absent fields are genuinely absent —
     /// a screenshot has none of them, and anything through a messaging app has been
     /// stripped already.
-    exif: openfoto_core::metadata::Exif,
-    /// Whether openfoto could remove that record without re-encoding the pixels.
+    exif: blinkview_core::metadata::Exif,
+    /// Whether blinkview could remove that record without re-encoding the pixels.
     strippable: bool,
 }
 
@@ -1963,8 +1984,8 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             faces,
             people,
             meta: lib.user_data()?.get(&hash, folder_of(&row.path)),
-            exif: openfoto_core::metadata::read(&lib.abs(&row.path)),
-            strippable: openfoto_core::metadata::strippable(&lib.abs(&row.path)),
+            exif: blinkview_core::metadata::read(&lib.abs(&row.path)),
+            strippable: blinkview_core::metadata::strippable(&lib.abs(&row.path)),
             hash,
         })
     })
@@ -1975,14 +1996,14 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
 /// Rotate and/or crop one photo.
 ///
 /// `keep_original` defaults to true and moves the untouched file to `Originals/`,
-/// mirroring how deleting moves a photo to `Trash/`. See openfoto_core::edit for why
+/// mirroring how deleting moves a photo to `Trash/`. See blinkview_core::edit for why
 /// the original is not kept in the (disposable) vault.
 #[tauri::command]
 async fn edit_photo(
     state: tauri::State<'_, AppState>,
     path: String,
     hash: String,
-    edit: openfoto_core::edit::Edit,
+    edit: blinkview_core::edit::Edit,
 ) -> R<String> {
     with(&state, &path, |lib| {
         let row = lib
@@ -1991,7 +2012,7 @@ async fn edit_photo(
             .into_iter()
             .find(|r| r.hash == hash)
             .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
-        let out = openfoto_core::edit::apply(lib, &row.path, &edit)?;
+        let out = blinkview_core::edit::apply(lib, &row.path, &edit)?;
         // The file changed, so its hash did: re-scan to re-identify it, and drop the
         // stale thumbnail and face data keyed to the old content.
         let _ = std::fs::remove_file(thumbs::thumb_path(lib, &hash));
@@ -2041,7 +2062,7 @@ async fn edit_photos(
     state: tauri::State<'_, AppState>,
     path: String,
     hashes: Vec<String>,
-    edit: openfoto_core::edit::Edit,
+    edit: blinkview_core::edit::Edit,
 ) -> R<String> {
     let sink = emitter(&app, "edit", &path);
     with(&state, &path, |lib| {
@@ -2051,12 +2072,12 @@ async fn edit_photos(
             .into_iter()
             .map(|r| (r.hash, r.path))
             .collect();
-        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let counter = blinkview_core::progress::Counter::new(hashes.len(), &sink);
         let (mut done, mut failed, mut carried) = (0usize, Vec::new(), Vec::new());
         for h in &hashes {
             counter.tick();
             let Some(rel) = by_hash.get(h) else { continue };
-            match openfoto_core::edit::apply(lib, rel, &edit) {
+            match blinkview_core::edit::apply(lib, rel, &edit) {
                 Ok(out) => {
                     // The content changed, so the thumbnail keyed to the old bytes is
                     // now a picture of something that no longer exists.
@@ -2099,12 +2120,12 @@ async fn strip_metadata(
             .into_iter()
             .map(|r| (r.hash, r.path))
             .collect();
-        let counter = openfoto_core::progress::Counter::new(hashes.len(), &sink);
+        let counter = blinkview_core::progress::Counter::new(hashes.len(), &sink);
         let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
         for h in &hashes {
             counter.tick();
             let Some(rel) = by_hash.get(h) else { continue };
-            match openfoto_core::metadata::strip_file(lib, rel, keep) {
+            match blinkview_core::metadata::strip_file(lib, rel, keep) {
                 Ok(out) => {
                     let _ = std::fs::remove_file(thumbs::thumb_path(lib, h));
                     carried.push((folder_of(rel).to_string(), h.clone(), out.hash));
@@ -2149,13 +2170,13 @@ async fn delete_photos(
     with(&state, &path, |lib| {
         std::fs::create_dir_all(lib.abs(&dest))?;
         let want: BTreeSet<String> = hashes.into_iter().collect();
-        let mut plan = openfoto_core::Plan::new("delete");
+        let mut plan = blinkview_core::Plan::new("delete");
         for r in lib.index.all()? {
             if !want.contains(&r.hash) || in_folder(&r.path, &dest) {
                 continue;
             }
             let name = r.path.rsplit('/').next().unwrap_or(&r.path);
-            plan.ops.push(openfoto_core::Op::Move {
+            plan.ops.push(blinkview_core::Op::Move {
                 hash: r.hash.clone(),
                 from: r.path.clone(),
                 to: format!("{dest}/{name}"),
@@ -2191,14 +2212,14 @@ async fn rename_photo(
         if !new_name.to_lowercase().ends_with(&format!(".{}", ext.to_lowercase())) {
             new_name = format!("{new_name}.{ext}");
         }
-        openfoto_core::fsops::validate_filename(&new_name)?;
+        blinkview_core::fsops::validate_filename(&new_name)?;
         let dir = row.path.rsplit_once('/').map(|(d, _)| format!("{d}/")).unwrap_or_default();
         let to = format!("{dir}{new_name}");
         if to == row.path {
             return Ok("Name unchanged".into());
         }
-        let mut plan = openfoto_core::Plan::new("rename-one");
-        plan.ops.push(openfoto_core::Op::Rename { hash, from: row.path, to: to.clone() });
+        let mut plan = blinkview_core::Plan::new("rename-one");
+        plan.ops.push(blinkview_core::Op::Rename { hash, from: row.path, to: to.clone() });
         plan.apply(lib)?;
         Ok(format!("Renamed to {new_name}"))
     })
@@ -2236,14 +2257,14 @@ async fn untag_person(
 
         // Anything sitting in that person's folder goes back to the library root.
         let want: BTreeSet<String> = hashes.iter().cloned().collect();
-        let mut plan = openfoto_core::Plan::new("untag");
+        let mut plan = blinkview_core::Plan::new("untag");
         for r in lib.index.all()? {
             if !want.contains(&r.hash) {
                 continue;
             }
             if r.path.starts_with(&format!("{person}/")) {
                 let name = r.path.rsplit('/').next().unwrap_or(&r.path).to_string();
-                plan.ops.push(openfoto_core::Op::Move {
+                plan.ops.push(blinkview_core::Op::Move {
                     hash: r.hash.clone(),
                     from: r.path.clone(),
                     to: name,
@@ -2291,13 +2312,13 @@ async fn untag_person(
 async fn restore_photos(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>) -> R<String> {
     with(&state, &path, |lib| {
         let want: BTreeSet<String> = hashes.into_iter().collect();
-        let mut plan = openfoto_core::Plan::new("restore");
+        let mut plan = blinkview_core::Plan::new("restore");
         for r in lib.index.all()? {
             if !want.contains(&r.hash) || !r.path.starts_with(&format!("{TRASH}/")) {
                 continue;
             }
             let name = r.path.rsplit('/').next().unwrap_or(&r.path).to_string();
-            plan.ops.push(openfoto_core::Op::Move { hash: r.hash.clone(), from: r.path.clone(), to: name });
+            plan.ops.push(blinkview_core::Op::Move { hash: r.hash.clone(), from: r.path.clone(), to: name });
         }
         if plan.is_empty() {
             return Ok("Nothing to restore".into());
@@ -2323,7 +2344,7 @@ fn move_to_system_trash(from: &std::path::Path, to: &std::path::Path) -> std::io
 
 /// Hand the library Trash over to the system Trash.
 ///
-/// This is the one place openfoto stops being reversible by itself, so it hands off
+/// This is the one place blinkview stops being reversible by itself, so it hands off
 /// rather than unlinking: the files land in the macOS Trash where Finder can still
 /// recover them. The library journal cannot undo this, which is why it is a separate,
 /// explicit action rather than part of delete.
@@ -2483,7 +2504,7 @@ struct GithubRelease {
 }
 
 fn release_url_is_safe(url: &str) -> bool {
-    url.strip_prefix("https://github.com/notdefined-inc/openfoto/releases/")
+    url.strip_prefix("https://github.com/notdefined-inc/blinkview/releases/")
         .and_then(|tail| tail.strip_prefix("tag/"))
         .is_some_and(|tag| {
             !tag.is_empty()
@@ -2505,15 +2526,15 @@ async fn check_for_updates() -> R<UpdateInfo> {
         .build()
         .new_agent();
     let mut response = agent
-        .get("https://api.github.com/repos/notdefined-inc/openfoto/releases/latest")
+        .get("https://api.github.com/repos/notdefined-inc/blinkview/releases/latest")
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", format!("OpenFoto/{}", *APP_VERSION))
+        .header("User-Agent", format!("Blinkview/{}", *APP_VERSION))
         .call()
         .map_err(err)?;
     let release: GithubRelease = serde_json::from_reader(response.body_mut().as_reader()).map_err(err)?;
     if release.draft || release.prerelease || !release_url_is_safe(&release.html_url) {
-        return Err("GitHub returned a release OpenFoto will not offer".into());
+        return Err("GitHub returned a release Blinkview will not offer".into());
     }
     let current = semver::Version::parse(&APP_VERSION).map_err(err)?;
     let latest = parse_release_tag(&release.tag_name)?;
@@ -2528,7 +2549,7 @@ async fn check_for_updates() -> R<UpdateInfo> {
 #[tauri::command]
 async fn open_update(url: String) -> R<()> {
     if !release_url_is_safe(&url) {
-        return Err("refusing to open a non-OpenFoto release URL".into());
+        return Err("refusing to open a non-Blinkview release URL".into());
     }
     #[cfg(target_os = "macos")]
     {
@@ -2625,7 +2646,7 @@ async fn duplicate_review(
     with(&state, &path, |lib| {
         // Both passes are incremental. GPS is a cheap header read and lets the review
         // offer trip-sized batches; signatures remain the on-device Vision evidence.
-        openfoto_core::geo::locate(lib, &sink)?;
+        blinkview_core::geo::locate(lib, &sink)?;
         dedupe::ensure_signatures_with_progress(lib, &sink)?;
         let user = lib.user_data()?.clone();
         let groups = dedupe::find_groups(lib, &dedupe::Options::default())?;
@@ -2638,7 +2659,7 @@ async fn duplicate_review(
                 .index
                 .get_gps(&keep_hash)?
                 .flatten()
-                .and_then(|(lat, lon)| openfoto_core::geo::nearest(lat, lon))
+                .and_then(|(lat, lon)| blinkview_core::geo::nearest(lat, lon))
                 .map(|p| p.label());
             let (batch_id, batch_title, batch_detail) = duplicate_batch(group.keep.taken_at, place);
             let reclaimable = group.duplicates.iter().map(|r| r.size.max(0) as u64).sum();
@@ -2719,13 +2740,13 @@ async fn apply_duplicate_review(
         if rejections.is_empty() {
             return Ok("Nothing to move".into());
         }
-        let rows: BTreeMap<String, openfoto_core::index::FileRow> = lib
+        let rows: BTreeMap<String, blinkview_core::index::FileRow> = lib
             .index
             .all()?
             .into_iter()
             .map(|row| (row.path.clone(), row))
             .collect();
-        let mut plan = openfoto_core::Plan::new("duplicate review");
+        let mut plan = blinkview_core::Plan::new("duplicate review");
         for rejected in rejections {
             let row = rows
                 .get(&rejected.path)
@@ -2737,7 +2758,7 @@ async fn apply_duplicate_review(
                 continue;
             }
             let name = row.path.rsplit('/').next().unwrap_or(&row.path);
-            plan.ops.push(openfoto_core::Op::Move {
+            plan.ops.push(blinkview_core::Op::Move {
                 hash: row.hash.clone(),
                 from: row.path.clone(),
                 to: format!("{TRASH}/{name}"),
@@ -2759,7 +2780,7 @@ fn build_plan(
     param: Option<f32>,
     mkdirs: bool,
     progress: &(dyn Fn(usize, usize) + Sync),
-) -> anyhow::Result<openfoto_core::Plan> {
+) -> anyhow::Result<blinkview_core::Plan> {
     Ok(match op {
         "dedupe" => {
             dedupe::ensure_signatures_with_progress(lib, progress)?;
@@ -2903,7 +2924,7 @@ async fn undo(state: tauri::State<'_, AppState>, path: String, id: Option<String
 /// effectively unrestricted here, since a source can be any folder the user picks.
 /// Registering our own scheme makes the boundary explicit and auditable: a request is
 /// served only if it resolves inside a folder the user has actually added.
-/// Point `openfoto-core` at the ffmpeg bundled beside this executable.
+/// Point `blinkview-core` at the ffmpeg bundled beside this executable.
 ///
 /// Tauri's `externalBin` places `ffmpeg-<target-triple>` next to the binary — inside
 /// `Contents/MacOS` on macOS — and strips the triple at install time, so at runtime it
@@ -2934,7 +2955,7 @@ fn export_bundled_ffmpeg(app: &tauri::App) {
         }
     };
     let _ = app;
-    unsafe { std::env::set_var(openfoto_core::thumbs::FFMPEG_ENV, &candidate) };
+    unsafe { std::env::set_var(blinkview_core::thumbs::FFMPEG_ENV, &candidate) };
 }
 
 /// Bytes budget for the thumbnail cache.
@@ -3050,7 +3071,7 @@ fn video_thumb_miss(path: &std::path::Path, hash: Option<&str>, sources: &[Strin
     let Some(hash) = hash else { return false };
     sources
         .iter()
-        .all(|s| !openfoto_core::thumbs::thumb_path_at(std::path::Path::new(s), hash).exists())
+        .all(|s| !blinkview_core::thumbs::thumb_path_at(std::path::Path::new(s), hash).exists())
 }
 
 fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
@@ -3103,9 +3124,9 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     // what makes the stepper quick — a step used to decode the full original every
     // time, and a 12–48 MP decode per keypress is a wait, not a step.
     if let (Some(hash), Some(root)) = (preview_hash.as_deref(), source_root(&canon)) {
-        let p = openfoto_core::thumbs::preview_path_at(&root, hash);
+        let p = blinkview_core::thumbs::preview_path_at(&root, hash);
         if !p.exists() {
-            match openfoto_core::thumbs::render_preview(&canon, &p) {
+            match blinkview_core::thumbs::render_preview(&canon, &p) {
                 Ok(true) => {}
                 // The source is small enough to be its own preview.
                 Ok(false) => {
@@ -3124,14 +3145,14 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     }
 
     // Full-size request for a format the webview cannot decode: serve a cached JPEG.
-    if thumb_hash.is_none() && openfoto_core::imageio::needs_conversion(&canon) {
+    if thumb_hash.is_none() && blinkview_core::imageio::needs_conversion(&canon) {
         if let (Some(hash), Some(root)) = (full_hash, source_root(&canon)) {
             let derived = root
-                .join(openfoto_core::library::VAULT_DIR)
+                .join(blinkview_core::library::VAULT_DIR)
                 .join("derived")
                 .join(format!("{hash}.jpg"));
             if !derived.exists()
-                && openfoto_core::imageio::convert_to_jpeg(&canon, &derived).is_err()
+                && blinkview_core::imageio::convert_to_jpeg(&canon, &derived).is_err()
             {
                 return deny(500);
             }
@@ -3149,13 +3170,13 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
             match source_root(&canon) {
                 None => canon.clone(),
                 Some(root) => {
-                    let t = openfoto_core::thumbs::thumb_path_at(&root, hash);
+                    let t = blinkview_core::thumbs::thumb_path_at(&root, hash);
                     if !t.exists() {
                         let is_video = canon
                             .extension()
                             .and_then(|e| e.to_str())
                             .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "m4v"));
-                        if openfoto_core::thumbs::render_to(&canon, &t, is_video).is_err() {
+                        if blinkview_core::thumbs::render_to(&canon, &t, is_video).is_err() {
                             // Falling back to the original is only sane for a still.
                             // A video's "thumbnail" would be the whole clip — read
                             // into memory in one piece, handed to an <img>, and held
@@ -3363,7 +3384,7 @@ pub fn run() {
             forget_person, analyze_all, source_data, pending_work, analyze_resume
         ])
         .run(tauri::generate_context!())
-        .expect("error while running openfoto");
+        .expect("error while running blinkview");
 }
 
 #[cfg(test)]
@@ -3478,7 +3499,7 @@ mod tests {
 
     #[test]
     fn a_source_cannot_be_added_twice_or_nested() {
-        let dir = std::env::temp_dir().join(format!("openfoto-conflict-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("blinkview-conflict-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let parent = dir.join("Backup");
         let child = parent.join("day1");
@@ -3512,7 +3533,7 @@ mod tests {
     #[test]
     fn the_same_folder_through_a_symlink_is_still_a_duplicate() {
         let dir =
-            std::env::temp_dir().join(format!("openfoto-conflict-link-{}", std::process::id()));
+            std::env::temp_dir().join(format!("blinkview-conflict-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let real = dir.join("real");
         std::fs::create_dir_all(&real).unwrap();
@@ -3533,7 +3554,7 @@ mod tests {
     /// disagrees with a grid that hides trashed photographs.
     #[test]
     fn trashed_photographs_are_counted_by_the_trash_row_only() {
-        let dir = std::env::temp_dir().join(format!("openfoto-counts-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("blinkview-counts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Day1")).unwrap();
         std::fs::create_dir_all(dir.join(TRASH)).unwrap();
@@ -3563,7 +3584,7 @@ mod tests {
     #[test]
     fn emptying_the_trash_moves_the_file_and_removes_the_original() {
         let dir =
-            std::env::temp_dir().join(format!("openfoto-sys-trash-{}", std::process::id()));
+            std::env::temp_dir().join(format!("blinkview-sys-trash-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let from = dir.join("a.jpg");
         std::fs::create_dir_all(&dir).unwrap();
@@ -3581,7 +3602,7 @@ mod tests {
 
     #[test]
     fn only_a_video_owed_a_poster_is_routed_to_ffmpeg() {
-        let dir = std::env::temp_dir().join(format!("openfoto-route-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("blinkview-route-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let sources = vec![dir.display().to_string()];
@@ -3591,7 +3612,7 @@ mod tests {
         // A video with no poster anywhere is the slow case.
         assert!(video_thumb_miss(&clip, Some("abc"), &sources));
         // Write its poster under the source: no longer a miss.
-        let t = openfoto_core::thumbs::thumb_path_at(&dir, "abc");
+        let t = blinkview_core::thumbs::thumb_path_at(&dir, "abc");
         std::fs::create_dir_all(t.parent().unwrap()).unwrap();
         std::fs::write(&t, b"poster").unwrap();
         assert!(!video_thumb_miss(&clip, Some("abc"), &sources));
@@ -3627,14 +3648,14 @@ mod tests {
     #[test]
     fn only_this_repositories_release_tags_can_be_opened() {
         assert!(release_url_is_safe(
-            "https://github.com/notdefined-inc/openfoto/releases/tag/v0.1.0"
+            "https://github.com/notdefined-inc/blinkview/releases/tag/v0.1.0"
         ));
         assert!(!release_url_is_safe("https://example.com/releases/tag/v0.1.0"));
         assert!(!release_url_is_safe(
-            "https://github.com/notdefined-inc/openfoto/releases/../../other"
+            "https://github.com/notdefined-inc/blinkview/releases/../../other"
         ));
         assert!(!release_url_is_safe(
-            "https://github.com/notdefined-inc/openfoto/releases/tag/v0.1.0?download=1"
+            "https://github.com/notdefined-inc/blinkview/releases/tag/v0.1.0?download=1"
         ));
     }
 

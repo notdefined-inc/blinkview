@@ -4,13 +4,13 @@ Status: Shipped 2026-08-30 · Owner: notdefined · 2026-08-30
 ## Problem
 
 Scans, screenshots, and cameras with the wrong clock can have absent or incorrect
-capture times. OpenFoto can already write corrected GPS coordinates directly into JPEG
+capture times. Blinkview can already write corrected GPS coordinates directly into JPEG
 EXIF and re-key all hash-addressed metadata, but there is no equivalent date command.
 Changing only the index would violate the vault invariant: a rescan would forget it.
 
 ## Non-goals
 
-- No date stored only in SQLite or `.openfoto/`.
+- No date stored only in SQLite or `.blinkview/`.
 - No guessing a timezone or offsetting a whole camera clock in this first version.
 - No silent fallback to filesystem mtime.
 - No rewrite of unsupported containers. They are reported and left unchanged.
@@ -23,7 +23,7 @@ TIFF/EXIF writer is generalized to set `DateTimeOriginal`, `DateTimeDigitized`, 
 IFD0 `DateTime` value in `YYYY:MM:DD HH:MM:SS` form. Existing EXIF, orientation, and GPS
 entries are preserved.
 
-Every file is written atomically, decoded again, and verified before OpenFoto accepts
+Every file is written atomically, decoded again, and verified before Blinkview accepts
 the operation. Its new BLAKE3 hash replaces the old identity in user metadata and the
 source is rescanned. Unsupported or malformed files remain byte-for-byte unchanged and
 are included in the result summary.

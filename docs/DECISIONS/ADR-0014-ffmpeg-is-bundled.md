@@ -31,9 +31,9 @@ on the machines that happen to have it.
 **Bundle ffmpeg with the application** as a Tauri `externalBin` sidecar, one static
 build per shipped target.
 
-`openfoto-core` must not learn about Tauri: it is used by the CLI, which has no bundle.
-The desktop app resolves its sidecar at startup and exports `OPENFOTO_FFMPEG`; core
-resolves ffmpeg as `OPENFOTO_FFMPEG` → `PATH` → known install prefixes. The CLI is
+`blinkview-core` must not learn about Tauri: it is used by the CLI, which has no bundle.
+The desktop app resolves its sidecar at startup and exports `BLINKVIEW_FFMPEG`; core
+resolves ffmpeg as `BLINKVIEW_FFMPEG` → `PATH` → known install prefixes. The CLI is
 unchanged and keeps using whatever the system provides.
 
 Rejected: **platform-native frame extraction** (AVFoundation, Media Foundation, ffmpeg
@@ -47,7 +47,7 @@ cannot be built on a maybe.
 ## Consequences
 
 Each installer grows by roughly 30–40 MB for a static build carrying only the codecs
-openfoto needs; the macOS `.dmg` goes from about 16 MB to about 50 MB. Only the matching
+blinkview needs; the macOS `.dmg` goes from about 16 MB to about 50 MB. Only the matching
 platform's binary is bundled, so no installer carries all three.
 
 ffmpeg's GPL builds are GPLv2-or-later, which is compatible with this project's

@@ -43,7 +43,7 @@ upstream itself has abandoned that platform.
 
 **Later: phone apps as *clients*.** The phone does not run the library — it connects to
 the desktop app over the network, the way Immich and Ente do. That matters because it
-leaves ADR-0009 and ADR-0010 untouched: folders and `openfoto.json` stay on a real
+leaves ADR-0009 and ADR-0010 untouched: folders and `blinkview.json` stay on a real
 filesystem on the machine that holds the photographs, and the phone never needs one.
 A native mobile port would have contradicted both decisions, since iOS has no
 user-visible filesystem and Android's scoped storage is not one either.

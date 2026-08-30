@@ -226,6 +226,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "blinkview-cli"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "blinkview-core",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
+name = "blinkview-core"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "image",
+ "jpeg-decoder",
+ "kamadak-exif",
+ "ndarray",
+ "ort",
+ "rayon",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "tokenizers",
+ "ureq",
+ "walkdir",
+]
+
+[[package]]
+name = "blinkview-desktop"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "blinkview-core",
+ "chrono",
+ "drag",
+ "http",
+ "notify",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "rayon",
+ "semver",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-mcp-bridge",
+ "ureq",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3117,64 +3175,6 @@ checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
 dependencies = [
  "cc",
  "pkg-config",
-]
-
-[[package]]
-name = "openfoto-cli"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "clap",
- "openfoto-core",
- "serde_json",
-]
-
-[[package]]
-name = "openfoto-core"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "blake3",
- "chrono",
- "image",
- "jpeg-decoder",
- "kamadak-exif",
- "ndarray",
- "ort",
- "rayon",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "tokenizers",
- "ureq",
- "walkdir",
-]
-
-[[package]]
-name = "openfoto-desktop"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "chrono",
- "drag",
- "http",
- "notify",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "openfoto-core",
- "rayon",
- "semver",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-mcp-bridge",
- "ureq",
 ]
 
 [[package]]

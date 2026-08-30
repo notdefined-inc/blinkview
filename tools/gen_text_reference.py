@@ -12,7 +12,7 @@ import hashlib, json, pathlib, sys
 import numpy as np, onnxruntime as ort
 from tokenizers import Tokenizer
 
-MODELS = pathlib.Path.home() / ".cache/openfoto/models"
+MODELS = pathlib.Path.home() / ".cache/blinkview/models"
 OUT = pathlib.Path(__file__).resolve().parent.parent / "tests/fixtures/clip_text_reference.json"
 CTX = 77  # CLIP's fixed context; the encoder rejects anything shorter
 
@@ -29,7 +29,7 @@ QUERIES = [
 def main() -> int:
     model = MODELS / "clip-text.onnx"
     if not model.exists():
-        print(f"missing {model} — run `openfoto models fetch` first", file=sys.stderr)
+        print(f"missing {model} — run `blinkview models fetch` first", file=sys.stderr)
         return 1
     tok = Tokenizer.from_file(str(MODELS / "clip-tokenizer.json"))
     sess = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])

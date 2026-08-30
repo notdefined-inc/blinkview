@@ -3,7 +3,7 @@ Status: Shipped 2026-08-30 · Owner: notdefined · 2026-08-30
 
 ## Problem
 
-OpenFoto indexes common videos, accepts Finder folders, and provides timeline sorting,
+Blinkview indexes common videos, accepts Finder folders, and provides timeline sorting,
 but the everyday macOS workflows around those capabilities are incomplete: video uses
 obtrusive native controls, Live Photo pairs appear as separate files, export has no
 system share sheet, the timeline lacks a quick month jump, and releases are invisible.
@@ -51,28 +51,28 @@ folder drop remains the current Tauri event path.
 ### Release checks
 
 At launch, and when `Check for Updates…` is chosen, the backend requests GitHub's latest
-release metadata with an explicit `OpenFoto/<version>` user agent. It sends no library,
+release metadata with an explicit `Blinkview/<version>` user agent. It sends no library,
 path, photo, search, or hardware data. A newer semantic version creates an unobtrusive
 banner; Download opens that release page. There is no auto-download or auto-install.
 Network errors are silent at launch and visible only for a manual check.
 
 ## Dependency evaluation
 
-- **objc2 + objc2-app-kit:** maintained Rust bindings for the AppKit APIs OpenFoto needs;
+- **objc2 + objc2-app-kit:** maintained Rust bindings for the AppKit APIs Blinkview needs;
   permissive MIT/Apache-2.0/Zlib licensing, already present transitively through Tauri,
   no daemon or runtime dependency. Cost: macOS-specific unsafe boundary and feature
   selection. Chosen behind `cfg(target_os = "macos")` with a tiny public API.
 - **Tauri updater plugin:** established, permissively licensed, and excellent for signed
   in-app installs. It is unnecessary here because the requirement explicitly stops at
   notifying and opening a Download page; adopting it would add signing manifests and an
-  install surface OpenFoto does not use. Not chosen.
+  install surface Blinkview does not use. Not chosen.
 - **GitHub Releases REST API through existing ureq:** maintained server contract, no new
   networking library, small integration. Cost: unauthenticated rate limits and GitHub
   contact on launch. Chosen with a short timeout and manual retry.
 - **CrabNebula `drag` crate:** maintained by an established Tauri vendor, cross-platform,
   permissively licensed, and purpose-built for real outbound file drags. The companion
   plugin accepts arbitrary absolute paths from JavaScript, which is broader authority
-  than OpenFoto needs. Chosen as a Rust-only dependency behind a command that resolves
+  than Blinkview needs. Chosen as a Rust-only dependency behind a command that resolves
   content hashes itself.
 
 ## Acceptance criteria

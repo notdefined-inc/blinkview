@@ -24,9 +24,9 @@ Native services are narrow Rust edge adapters:
   Other platforms return a named unsupported result until an equivalent native adapter
   is designed.
 - Update checks use the existing HTTP client to request only GitHub's latest release
-  metadata with OpenFoto's application version in the user agent. The response is
+  metadata with Blinkview's application version in the user agent. The response is
   validated and the Download action may open only the returned `github.com` release URL.
-- No updater plugin or installer is included. OpenFoto never downloads or executes an
+- No updater plugin or installer is included. Blinkview never downloads or executes an
   update in the background.
 
 ## Consequences

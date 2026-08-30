@@ -41,10 +41,10 @@ the stepper arrows feel slow — a 12–48 MP original per keypress.
 `LazyLock<Mutex<ThumbCache>>`, 64 MiB budget, true LRU via generation stamps, O(n)
 eviction over ≤ a few hundred entries. `serve_photo` consults it before every cached
 read (thumb, derived) and inserts after. Content-addressed thumbs never change, so
-there is no invalidation problem. Held in the Tauri crate — `openfoto-core` stays
+there is no invalidation problem. Held in the Tauri crate — `blinkview-core` stays
 Tauri-free.
 
-**2. Video posters built by the analysis pass** (`crates/openfoto-core/src/analyze.rs`).
+**2. Video posters built by the analysis pass** (`crates/blinkview-core/src/analyze.rs`).
 When `stages.thumbs`, after the photo pass: a video sub-pass over `kind == "video"`
 rows whose poster is missing, on its own **2-thread** pool (2 × 140 MB worst case is
 the memory-safe ceiling on the 8 GB dev machine), gated on `have_ffmpeg()`, checking
@@ -59,10 +59,10 @@ never occupy image-decode threads.
 the cell is genuinely approaching the viewport. The scroll-out cleanup loop unobserves
 removed cells so detached nodes do not accumulate in the observer.
 
-**4. A 2000 px preview variant** (`crates/openfoto-core/src/thumbs.rs`).
+**4. A 2000 px preview variant** (`crates/blinkview-core/src/thumbs.rs`).
 `PREVIEW_LONG = 2000`; `render_preview` decodes once (embedded camera preview first,
 same as thumbnails), resizes to 2000 long edge, writes
-`<root>/.openfoto/derived/p-<hash>.jpg` — unless the source's long edge is already
+`<root>/.blinkview/derived/p-<hash>.jpg` — unless the source's long edge is already
 ≤ 2000 px, in which case there is nothing to make and the original is served. The
 light-box asks for `?preview=<hash>`; the handler serves the derived file, rendering it
 on first request. `?full=` keeps its current behaviour untouched. First view of a photo
@@ -105,11 +105,11 @@ requests is the disease, not the cure).
 ## Tasks
 
 - [x] 1. Video sub-pass in `run_cancellable` + `video_workers()`; test with a fake
-      ffmpeg that writes a fixture JPEG (touches: crates/openfoto-core/src/analyze.rs)
+      ffmpeg that writes a fixture JPEG (touches: crates/blinkview-core/src/analyze.rs)
 - [x] 2. `ThumbCache` LRU + serve_photo integration (touches:
       apps/desktop/src-tauri/src/lib.rs)
 - [x] 3. `render_preview` / `preview_path_at` / `?preview=` serve path; `VIDEO_POOL`
-      dispatch routing; lightbox `?preview=` (touches: crates/openfoto-core/src/thumbs.rs,
+      dispatch routing; lightbox `?preview=` (touches: crates/blinkview-core/src/thumbs.rs,
       apps/desktop/src-tauri/src/lib.rs, apps/desktop/dist/app.js)
 - [x] 4. IO wiring: `dataset.src` + observe/unobserve (touches: apps/desktop/dist/app.js)
 - [x] 5. Compositor-only animations + reduced-motion (touches:

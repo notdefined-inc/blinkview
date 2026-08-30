@@ -19,7 +19,7 @@ most common thing this app cannot do. Face embeddings cannot answer it (ADR-0008
 
 ## Design
 
-`openfoto-core::semantic`, mirroring the shape of `faces`:
+`blinkview-core::semantic`, mirroring the shape of `faces`:
 
 ```
 fetch          two more entries in faces::fetch::specs(), SHA-pinned
@@ -41,13 +41,13 @@ above 0.20 and both failures below 0.18. Configurable via a flag.
 
 ## Acceptance criteria
 
-1. `openfoto models fetch` installs both encoders, SHA-verified, and `models status`
+1. `blinkview models fetch` installs both encoders, SHA-verified, and `models status`
    reports them.
 2. Text and image encoders both produce 512-d vectors with unit length to 1e-4.
 3. A text embedding computed in Rust matches the Python reference for the same string
    to cosine >= 0.999 — the ADR-0004 parity rule.
 4. `semantic analyze` embeds every photo once; a second run does no work.
-5. Deleting `.openfoto/` and rescanning reproduces identical embeddings.
+5. Deleting `.blinkview/` and rescanning reproduces identical embeddings.
 6. On the reference library, "a night sky" returns night photographs in its top 4 and
    scores above 0.20.
 7. Queries below the threshold return nothing rather than the least-bad photo.

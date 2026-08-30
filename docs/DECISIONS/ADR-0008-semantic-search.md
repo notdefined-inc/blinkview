@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-"Find the photo with the dog" is how people actually look for photographs, and openfoto
+"Find the photo with the dog" is how people actually look for photographs, and blinkview
 could not answer it. The existing embeddings are no help: SFace produces 128 numbers
 trained solely to tell one person's face from another. Nothing in that vector knows what
 a dog is — asking it about "sky" is like asking a fingerprint reader what someone wore.

@@ -12,7 +12,7 @@ The obvious implementation is a small local LLM translating a sentence into a ca
 is also the wrong one here, for a reason specific to what this app already has.
 
 An LLM photo agent does two jobs: work out **which photographs**, and work out **what to
-do with them**. openfoto already does the first, deterministically, in `parseQuery` —
+do with them**. blinkview already does the first, deterministically, in `parseQuery` —
 dates in any combination, people, ratings, labels, types, and since ADR-0008 what a
 photograph shows. That resolution is *exact* where a model would be approximate: asked
 for August 2026, a parser is right and a model is probably right.

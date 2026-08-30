@@ -1,0 +1,15 @@
+[package]
+name = "blinkview-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "blinkview"
+path = "src/main.rs"
+
+[dependencies]
+blinkview-core = { path = "../blinkview-core" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true

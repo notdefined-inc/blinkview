@@ -6,7 +6,7 @@ Status: Accepted (supersedes albums-as-metadata, shipped 2026-08-28)
 ## Context
 
 The app shipped two ways to group photographs: **folders**, which are real directories
-and exclusive, and **albums**, which are strings in `openfoto.json` and many-to-many.
+and exclusive, and **albums**, which are strings in `blinkview.json` and many-to-many.
 
 Two concepts, and the second was never load-bearing:
 
@@ -25,7 +25,7 @@ library is exFAT.
 
 But the premise is wrong. **Albums exist to compensate for weak search.** Apple and
 Google Photos have them because their libraries are black boxes with no filing at all;
-Lightroom has Collections because re-filing is expensive there. openfoto searches by
+Lightroom has Collections because re-filing is expensive there. blinkview searches by
 date, person, rating, label and — since ADR-0008 — by what a photograph shows. When
 anything can be found, the cost of filing it in exactly one place collapses.
 
@@ -53,7 +53,7 @@ the filter treated the tree as flat.
 ## Consequences
 
 Good: one mutation path (`Plan` → `Journal` → undo) for all organisation, so grouping
-becomes undoable where it previously was not. `openfoto.json` shrinks to ratings and
+becomes undoable where it previously was not. `blinkview.json` shrinks to ratings and
 labels — the things that genuinely have no location. The natural-language layer loses a
 verb and an ambiguity: "move these to Greece" needs no album-versus-folder question.
 

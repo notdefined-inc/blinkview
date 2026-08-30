@@ -8,7 +8,7 @@ Removing EXIF before sending a photograph to someone is an ordinary, reasonable 
 to want: it carries the camera, the lens, the exposure, and often the coordinates of
 where it was taken.
 
-But openfoto reads a photograph's date from EXIF first (ADR-0003), and that measurement
+But blinkview reads a photograph's date from EXIF first (ADR-0003), and that measurement
 was decisive: a correct 300-photograph sample showed **100%** carry `DateTimeOriginal`,
 disagreeing with the camera filename in 13% of cases. `taken_at` is what the grid sorts
 by, what the date headings group by, and what every date query in the search language
@@ -28,7 +28,7 @@ then to mtime. A phone backup named `20260820_120132.jpg` survives that; a file 
 ## Decision
 
 **Stripping keeps the original in `Originals/` by default**, exactly as editing does,
-and the confirmation says why: the date openfoto sorts by comes from the metadata being
+and the confirmation says why: the date blinkview sorts by comes from the metadata being
 removed.
 
 Two supporting choices:
@@ -52,7 +52,7 @@ than attempted.
   from the library, only from that copy.
 - `Originals/` grows. It is visible in Finder and the user can empty it, which is the
   same bargain editing already makes (ADR-0006).
-- Ratings and labels survive, but not for free. They live in `openfoto.json` keyed by
+- Ratings and labels survive, but not for free. They live in `blinkview.json` keyed by
   **content hash** (ADR-0007), and stripping changes the bytes and therefore the hash,
   so the rewrite carries them across explicitly (`UserDataSet::rekey`). Writing this
   ADR is what surfaced that: the first implementation lost a five-star rating on every

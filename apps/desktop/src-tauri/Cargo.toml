@@ -1,11 +1,11 @@
 [package]
-name = "openfoto-desktop"
+name = "blinkview-desktop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "openfoto_desktop_lib"
+name = "blinkview_desktop_lib"
 # Desktop only. The staticlib/cdylib targets exist for Tauri mobile and cost ~650MB
 # of build artifacts we never link.
 crate-type = ["rlib"]
@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-openfoto-core = { path = "../../../crates/openfoto-core" }
+blinkview-core = { path = "../../../crates/blinkview-core" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 serde = { workspace = true }

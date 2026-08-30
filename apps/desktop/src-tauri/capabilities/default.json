@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the OpenFoto window. The UI-verification bridge is not here: it is a development-only plugin, and naming its permission would make a shipping build fail to compile.",
+  "description": "Permissions for the Blinkview window. The UI-verification bridge is not here: it is a development-only plugin, and naming its permission would make a shipping build fail to compile.",
   "windows": [
     "main"
   ],

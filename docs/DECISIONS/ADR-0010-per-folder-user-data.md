@@ -6,7 +6,7 @@ Status: Accepted (extends ADR-0007)
 ## Context
 
 ADR-0007 moved ratings, labels and names out of the disposable cache to a single
-`openfoto.json` at the library root. That fixed data loss on `rm -rf .openfoto`, but
+`blinkview.json` at the library root. That fixed data loss on `rm -rf .blinkview`, but
 left a hole the root placement cannot close:
 
 **Copy `Trip/` out of the library in Finder and the metadata does not come with it.**
@@ -23,9 +23,9 @@ makes a folder self-describing.
 
 ## Decision
 
-**`openfoto.json` may exist in any folder, and the nearest one wins.**
+**`blinkview.json` may exist in any folder, and the nearest one wins.**
 
-- **Reads cascade.** For a photograph, consult the `openfoto.json` in its own folder,
+- **Reads cascade.** For a photograph, consult the `blinkview.json` in its own folder,
   then each ancestor up to the library root. Nearest wins for scalars (rating, label);
   union for sets (people).
 - **Writes go to the folder that directly contains the photograph.** This is the rule
@@ -61,6 +61,6 @@ already validates before touching the disk.
 Also costly: reading one photograph's rating may open several files. Cascades are
 resolved once per scan and held in memory, not walked per photograph.
 
-A library written by an earlier version has a single root `openfoto.json`. It keeps
+A library written by an earlier version has a single root `blinkview.json`. It keeps
 working unchanged — the root is simply the outermost level of the cascade — and entries
 migrate down to their photograph's folder the next time they are written.

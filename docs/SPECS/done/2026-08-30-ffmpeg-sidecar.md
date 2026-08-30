@@ -16,8 +16,8 @@ until commit `b2c44e1` the failure served the whole clip to the webview: 15.7 GB
 - No change to the CLI's behaviour: it keeps using whatever ffmpeg the system provides.
 - No ffmpeg build pipeline in CI. Binaries are fetched from a pinned upstream release
   and checksummed, the same contract the ONNX models already use.
-- Not a full ffmpeg. Only the codecs openfoto needs (see criterion 7).
-- `openfoto-core` does not learn about Tauri.
+- Not a full ffmpeg. Only the codecs blinkview needs (see criterion 7).
+- `blinkview-core` does not learn about Tauri.
 
 ## Design
 
@@ -29,8 +29,8 @@ Contract between the app and core, which is the whole of the coupling:
 
 | | |
 |---|---|
-| `OPENFOTO_FFMPEG` | absolute path to an ffmpeg binary. Set by the desktop app at startup from the resolved sidecar path. Unset elsewhere. |
-| `thumbs::ffmpeg_bin() -> Option<OsString>` | resolves `OPENFOTO_FFMPEG` → `PATH` → `FFMPEG_FALLBACKS`, returning the first that answers `-version` with success. |
+| `BLINKVIEW_FFMPEG` | absolute path to an ffmpeg binary. Set by the desktop app at startup from the resolved sidecar path. Unset elsewhere. |
+| `thumbs::ffmpeg_bin() -> Option<OsString>` | resolves `BLINKVIEW_FFMPEG` → `PATH` → `FFMPEG_FALLBACKS`, returning the first that answers `-version` with success. |
 
 Binaries live in `apps/desktop/src-tauri/binaries/`, are git-ignored, and are produced
 by `tools/build-ffmpeg.sh` against `tools/ffmpeg.lock` (source tarball URL + SHA-256 +
@@ -59,12 +59,12 @@ something reproducible from a pinned URL.
 
 1. With `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and no ffmpeg installed, the packaged app
    produces a poster frame for an MP4.
-2. `ffmpeg_bin()` prefers `OPENFOTO_FFMPEG` over a different ffmpeg on `PATH`.
+2. `ffmpeg_bin()` prefers `BLINKVIEW_FFMPEG` over a different ffmpeg on `PATH`.
 3. `ffmpeg_bin()` returns `None` when no candidate answers `-version` successfully, and
    `render_video` then fails without spawning anything.
 4. A binary whose SHA-256 does not match `tools/ffmpeg.lock` fails the fetch script with
    a non-zero exit and is not written to `binaries/`.
-5. The CLI with no `OPENFOTO_FFMPEG` set behaves exactly as it does today.
+5. The CLI with no `BLINKVIEW_FFMPEG` set behaves exactly as it does today.
 6. Each installer contains exactly one ffmpeg, for its own target triple.
 7. The bundled binary handles the formats a phone, a camera and a download actually
    produce. Verified by asserting each name appears in `-demuxers`/`-decoders`/
@@ -87,12 +87,12 @@ something reproducible from a pinned URL.
 
 ## Tasks
 
-- [x] 2. `ffmpeg_bin()` honours `OPENFOTO_FFMPEG` first; unit tests for criteria 2 and 3
-      (touches: crates/openfoto-core/src/thumbs.rs) — done, three tests
+- [x] 2. `ffmpeg_bin()` honours `BLINKVIEW_FFMPEG` first; unit tests for criteria 2 and 3
+      (touches: crates/blinkview-core/src/thumbs.rs) — done, three tests
 - [x] 1. `tools/ffmpeg.lock` + `tools/build-ffmpeg.sh`: pinned sources, checksums, the
       configure flags of criterion 7, CI cache keyed on the lock (touches: tools/) —
       done, builds 9.6 MB on arm64 macOS with every format in criterion 7 present
-- [x] 3. `externalBin` config; app exports `OPENFOTO_FFMPEG` at startup from the resolved
+- [x] 3. `externalBin` config; app exports `BLINKVIEW_FFMPEG` at startup from the resolved
       sidecar path (touches: apps/desktop/src-tauri/) — done
 - [x] 5. Doc sync: STATUS.md drops the ffmpeg known issue, README and CONTRIBUTING carry
       the new build step (touches: docs/, README.md, CONTRIBUTING.md)

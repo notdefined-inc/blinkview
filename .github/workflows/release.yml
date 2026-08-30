@@ -127,7 +127,7 @@ jobs:
           # build that ships.
           args: --target ${{ matrix.target }} -- --no-default-features
           tagName: ${{ github.ref_name }}
-          releaseName: "OpenFoto ${{ github.ref_name }}"
+          releaseName: "Blinkview ${{ github.ref_name }}"
           releaseBody: |
             Installers for macOS, Windows and Linux are attached below. The macOS
             build is Apple Silicon only: ONNX Runtime no longer ships a macOS x64
@@ -135,7 +135,7 @@ jobs:
 
             The app is ad-hoc signed but not notarized. On macOS, right-click the app
             and choose Open; on Windows, choose *More info* → *Run anyway*. If macOS
-            refuses outright, `xattr -cr /Applications/OpenFoto.app` clears the
+            refuses outright, `xattr -cr /Applications/Blinkview.app` clears the
             download quarantine flag.
 
             Face recognition and scene search need about 200 MB of models, downloaded

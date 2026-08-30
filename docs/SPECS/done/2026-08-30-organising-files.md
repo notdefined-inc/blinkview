@@ -2,7 +2,7 @@
 Status: Done (shipped 2026-08-30)   Owner: notdefined   Date: 2026-08-30
 
 ## Problem
-Folders are the only grouping openfoto has (ADR-0009), but a folder can only be brought
+Folders are the only grouping blinkview has (ADR-0009), but a folder can only be brought
 into existence as a side effect of moving photographs into a name typed in the move bar
 (`lib.rs:1487`). There is no "new folder". Deleting always lands in the library `Trash/`
 (`lib.rs:1632`) with no way to say "put these somewhere else instead". And renaming in
@@ -64,7 +64,7 @@ which is the one thing chrono has no notion of.
 - [x] 1. `create_folder` command + sidebar ＋ and dialog (touches: lib.rs, app.js, app.css)
 - [x] 2. Disk-listed empty folders in `describe()` (touches: lib.rs)
 - [x] 3. `delete_photos` dest + "Delete to…" (touches: lib.rs, app.js)
-- [x] 4. `rename::plan_scoped` + `%%n` counter + tests (touches: crates/openfoto-core/src/rename.rs)
+- [x] 4. `rename::plan_scoped` + `%%n` counter + tests (touches: crates/blinkview-core/src/rename.rs)
 - [x] 5. Rename sheet: pattern field, live preview, scope line (touches: lib.rs, app.js)
 
 ## Verification notes

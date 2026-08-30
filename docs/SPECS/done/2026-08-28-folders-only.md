@@ -12,12 +12,12 @@ cross-cutting views. Metadata lives beside the photographs it describes, so copy
 folder in Finder takes everything with it. The cache converges on its own.
 
 The test of success: **copy `Trip/Greece Day3/` to a machine that has never run
-openfoto, and it is still an organised, self-describing thing** — folder name, photos,
+blinkview, and it is still an organised, self-describing thing** — folder name, photos,
 ratings, names.
 
 ## Scope
 
-Core: prefix folder queries, cascading `openfoto.json`, metadata migration inside moves,
+Core: prefix folder queries, cascading `blinkview.json`, metadata migration inside moves,
 integrity check and staged rebuild, album→folder migration.
 App: folder tree sidebar, roll-up grid with subfolder sections, grouping toggle, saved
 searches replacing the albums panel.
@@ -34,7 +34,7 @@ the natural-language verb layer (its own spec, unblocked by this one).
 3. With grouping set to folder, the grid sections by subfolder with sticky headers, the
    way it already sections by date. The toggle switches between folder and date.
 4. A rating written to a photograph in `Trip/Greece Day3/` lands in
-   `Trip/Greece Day3/openfoto.json`, not the library root.
+   `Trip/Greece Day3/blinkview.json`, not the library root.
 5. Copying that folder alone to an empty directory and opening it as a library shows the
    rating and the face names, with no other files present.
 6. Reading a photograph's metadata consults its folder, then ancestors, nearest wins for
@@ -42,10 +42,10 @@ the natural-language verb layer (its own spec, unblocked by this one).
 7. Moving a photograph between folders migrates its metadata entry in the same `Plan`,
    and `undo` restores both the file and the entry.
 8. A corrupt `index.sqlite` is detected on open, deleted and rebuilt, with no dialog and
-   no loss of anything under `openfoto.json`.
+   no loss of anything under `blinkview.json`.
 9. Adding photographs to a folder outside the app, then opening it, indexes exactly the
    new files — unchanged files are not rehashed.
-10. Deleting `.openfoto/` and reopening rebuilds: the grid is usable before thumbnails
+10. Deleting `.blinkview/` and reopening rebuilds: the grid is usable before thumbnails
     and embeddings finish.
 11. A photograph deleted and restored keeps its CLIP embedding — it is not recomputed.
 12. Existing albums are offered as folders to materialise; names containing exFAT's

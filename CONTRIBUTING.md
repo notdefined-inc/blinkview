@@ -17,8 +17,8 @@ code wins and the docs get fixed.
 
 ```bash
 ./tools/build-ffmpeg.sh                  # once: builds the bundled ffmpeg sidecar
-cargo run -p openfoto-desktop            # the app, with the UI-verification bridge
-cargo run -p openfoto-cli -- --help      # the command line
+cargo run -p blinkview-desktop            # the app, with the UI-verification bridge
+cargo run -p blinkview-cli -- --help      # the command line
 ```
 
 The sidecar is declared in `tauri.conf.json` as an `externalBin`, which Tauri treats as

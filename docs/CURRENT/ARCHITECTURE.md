@@ -2,8 +2,8 @@
 
 ## Today
 
-    crates/openfoto-core/       all logic; no UI, no CLI concerns
-    crates/openfoto-cli/        `openfoto` binary — thin wrapper over core
+    crates/blinkview-core/       all logic; no UI, no CLI concerns
+    crates/blinkview-cli/        `blinkview` binary — thin wrapper over core
     apps/desktop/src-tauri/     Tauri v2 shell — same core crate
     apps/desktop/dist/          frontend: index.html, app.css, app.js (no bundler)
 
@@ -13,8 +13,8 @@ or what an operation will do.
 
 ## Intended shape
 
-    crates/openfoto-core/   Rust lib. All logic: scan, hash, dedupe, faces, plan/apply/undo.
-    crates/openfoto-cli/    Rust bin. Thin argument parsing over core. Ships first.
+    crates/blinkview-core/   Rust lib. All logic: scan, hash, dedupe, faces, plan/apply/undo.
+    crates/blinkview-cli/    Rust bin. Thin argument parsing over core. Ships first.
     apps/desktop/           Tauri v2 desktop viewer. Same core crate, web frontend.
 
 The CLI and the eventual GUI are peers over one engine. The CLI is never demoted to a
@@ -23,28 +23,28 @@ legacy interface.
 ## Sources
 
 The desktop app holds a list of *source folders*, each an independent library with its
-own disposable `.openfoto/`. The list lives in the app config directory and is the only
+own disposable `.blinkview/`. The list lives in the app config directory and is the only
 app-level state; losing it costs nothing but re-adding folders. There is deliberately no
 global database — that is the whole premise (ADR-0001).
 
 ## What lives where
 
     <library>/
-      openfoto.json          ratings, labels, how the
+      blinkview.json          ratings, labels, how the
                              folder is arranged           user-authored
-      openfoto-people.json   names + reference faces      user-authored
+      blinkview-people.json   names + reference faces      user-authored
       Trash/  Originals/     deleted and pre-edit photos  visible, journalled
-      .openfoto/             index, thumbs, faces, …      100% derived, disposable
+      .blinkview/             index, thumbs, faces, …      100% derived, disposable
 
 The split is the point. Only the two JSON files and the two folders hold anything a
 machine cannot reproduce, and all four are visible in Finder and travel with the folder
-when it is copied. `.openfoto/` can be deleted at any time and costs only recomputation —
+when it is copied. `.blinkview/` can be deleted at any time and costs only recomputation —
 without qualification. See ADR-0007.
 
 ## The vault
 
     <library>/              any folder; photos live in ordinary subfolders
-      .openfoto/            entirely derived — safe to delete, rebuilt by `scan`
+      .blinkview/            entirely derived — safe to delete, rebuilt by `scan`
         index.sqlite        hash -> path, EXIF, phash, face embeddings
         thumbs/             content-addressed thumbnail cache
         derived/            lightbox previews and HEIC transcodes, by hash
@@ -93,12 +93,12 @@ touches the filesystem. Cells ask for their `src` only as they approach the view
 (IntersectionObserver), so a fast flick no longer queues rows the user never sees.
 Videos render their poster frames on a dedicated two-thread pool, dispatched at scheme
 dispatch time, so an ffmpeg spawn can never occupy a photograph-decode thread. The
-lightbox steps through `.openfoto/derived/p-<hash>.jpg` — a 2000 px JPEG derived on
+lightbox steps through `.blinkview/derived/p-<hash>.jpg` — a 2000 px JPEG derived on
 first view — instead of decoding the 12–48 MP original per keypress.
 
 ## Places, without a network
 
-    crates/openfoto-core/data/places.bin   170,860 places, 4.35 MB, packed
+    crates/blinkview-core/data/places.bin   170,860 places, 4.35 MB, packed
     apps/desktop/dist/world{110,50}.json   Natural Earth outlines, two detail levels
 
 Both are produced only by `tools/build-geodata.sh`, and both ship inside the binary.

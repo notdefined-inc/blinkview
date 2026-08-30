@@ -11,8 +11,8 @@ sending a photograph to someone.
 ## Non-goals
 - No raw processing, curves, or per-channel colour. Three adjustments and named presets
   built from them.
-- Stripping does not touch openfoto's own files: ratings and names live in
-  `openfoto.json`, not in the photograph (ADR-0007), so they survive stripping.
+- Stripping does not touch blinkview's own files: ratings and names live in
+  `blinkview.json`, not in the photograph (ADR-0007), so they survive stripping.
 - No stripping of HEIC or video in this spec — refused with a reason, not attempted.
 
 ## Design
@@ -70,7 +70,7 @@ that is a decision worth recording — see the ADR this spec adds.
 - [x] 1. `Adjust::PRESETS` in core + preset chips in the editor (touches: edit.rs, app.js)
 - [x] 2. `edit_photos` batch command with progress (touches: lib.rs, app.js)
 - [x] 3. EXIF detail read + info panel rows (touches: lib.rs, app.js)
-- [x] 4. `metadata::strip` for JPEG and PNG + tests (touches: crates/openfoto-core/src/metadata.rs)
+- [x] 4. `metadata::strip` for JPEG and PNG + tests (touches: crates/blinkview-core/src/metadata.rs)
 - [x] 5. `strip_metadata` command + UI, ADR on the date consequence (touches: lib.rs, app.js, docs/DECISIONS)
 
 ## Verification notes
@@ -85,9 +85,9 @@ and GPS coordinates:
 - **The decoded pixels are byte-identical** between the original kept in `Originals/`
   and the stripped file (compared by decoding both), while the file shrank
   10,646 → 10,360 bytes. That is the claim the segment rewrite exists to make.
-- A video was refused by name — *0 stripped · 1 left alone — openfoto cannot strip MP4
+- A video was refused by name — *0 stripped · 1 left alone — blinkview cannot strip MP4
   files* — and a mixed batch finished the rest: *2 stripped · originals kept in
-  Originals/ · 1 left alone — openfoto cannot strip MP4 files*.
+  Originals/ · 1 left alone — blinkview cannot strip MP4 files*.
 - A batch colour over two photographs reported *2 changed* and kept both originals.
 - Ratings and labels survive both operations even though the content hash changes
   (verified: five stars and a red label on a stripped photograph, five stars on a

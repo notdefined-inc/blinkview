@@ -1,4 +1,4 @@
-"""Pack GeoNames and Natural Earth into what openfoto bundles. Driven by build-geodata.sh."""
+"""Pack GeoNames and Natural Earth into what blinkview bundles. Driven by build-geodata.sh."""
 import io, json, os, struct
 
 work, root = os.environ["WORK"], os.environ["ROOT"]
@@ -57,7 +57,7 @@ for name, alt, lat, lon, cc, reg, _pop in rows:
     buf += struct.pack("<B", len(ab)) + ab
     buf += struct.pack("<iiHH", round(lat * 1e4), round(lon * 1e4), ci[cc], ri[reg])
 
-open(f"{root}/crates/openfoto-core/data/places.bin", "wb").write(buf)
+open(f"{root}/crates/blinkview-core/data/places.bin", "wb").write(buf)
 print(f"places.bin: {len(rows)} places, {len(countries)} countries, "
       f"{len(regions)} regions, {len(buf)/1048576:.2f} MB")
 

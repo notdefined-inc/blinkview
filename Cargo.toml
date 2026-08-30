@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/openfoto-core", "crates/openfoto-cli", "apps/desktop/src-tauri"]
+members = ["crates/blinkview-core", "crates/blinkview-cli", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.0.1"
@@ -9,7 +9,7 @@ edition = "2021"
 # `chunks_exact` with a constant size.
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/notdefined-inc/openfoto"
+repository = "https://github.com/notdefined-inc/blinkview"
 description = "A photo manager that treats your folders as the truth."
 
 [workspace.dependencies]

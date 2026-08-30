@@ -1,15 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenFoto",
+  "productName": "Blinkview",
   "version": "0.1.0",
-  "identifier": "dev.notdefined.openfoto",
+  "identifier": "dev.notdefined.blinkview",
   "build": {
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "openfoto",
+        "title": "Blinkview",
         "width": 1440,
         "height": 920,
         "minWidth": 900,
@@ -46,7 +46,7 @@
       "icons/icon.ico"
     ],
     "shortDescription": "A photo manager that treats your folders as the truth.",
-    "longDescription": "OpenFoto reads the folders you already have. No import, no library file, no cloud, no account. Face recognition and search by what a photograph shows both run on your machine. Delete OpenFoto and your folders are untouched.",
+    "longDescription": "Blinkview reads the folders you already have. No import, no library file, no cloud, no account. Face recognition and search by what a photograph shows both run on your machine. Delete Blinkview and your folders are untouched.",
     "copyright": "GPL-3.0-or-later",
     "category": "Photography",
     "macOS": {

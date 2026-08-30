@@ -12,13 +12,13 @@ Global contract applies (~/.codex/AGENTS.md). Repo specifics below override it.
 ## Project rules
 
 **The vault invariant — this is the product.**
-- Photos on disk are the only source of truth. `.openfoto/` is 100% derived and must be
-  safe to `rm -rf` at any moment; `openfoto scan` rebuilds it fully. Never store anything
+- Photos on disk are the only source of truth. `.blinkview/` is 100% derived and must be
+  safe to `rm -rf` at any moment; `blinkview scan` rebuilds it fully. Never store anything
   in the index that cannot be recomputed from the photos themselves.
 - File identity is the BLAKE3 content hash, never the path. Users rename and move folders
   in Finder while the tool is running; that is normal behavior, not an error state.
-- Every mutation writes a journal entry to `.openfoto/journal/` before touching the disk,
-  and `openfoto undo` must restore the exact prior tree.
+- Every mutation writes a journal entry to `.blinkview/journal/` before touching the disk,
+  and `blinkview undo` must restore the exact prior tree.
 
 **Safety rules (each was learned by getting it wrong — see ADR-0003).**
 - Clustering is complete-linkage. Single-linkage chaining is a correctness bug, not a tuning knob.
@@ -38,7 +38,7 @@ Global contract applies (~/.codex/AGENTS.md). Repo specifics below override it.
 - `cargo clippy --workspace --all-targets -- -D warnings`
   **`--all-targets` is not optional.** Without it clippy skips test targets and will
   report a clean workspace while a test fails to compile.
-- `cargo run -p openfoto-cli -- <cmd>` · `cargo run -p openfoto-desktop`
+- `cargo run -p blinkview-cli -- <cmd>` · `cargo run -p blinkview-desktop`
 - `node apps/desktop/tests/grammar.test.mjs` — the command grammar. The frontend has no
   build step, so this evaluates `dist/app.js` with browser globals stubbed rather than
   importing it. **`cargo test` does not run it**; run it after touching the parser.
@@ -60,8 +60,8 @@ different route: the commit runs whatever the check reported. Gate it —
 Each of these cost real time in this project, and every one produced a *confident wrong
 answer* rather than an error. They are listed because they recur.
 
-**1. Running a stale binary.** Happened twice. `cargo build -p openfoto-core` does not
-rebuild `openfoto-cli`; `cargo build --workspace` does not build examples. Both times a
+**1. Running a stale binary.** Happened twice. `cargo build -p blinkview-core` does not
+rebuild `blinkview-cli`; `cargo build --workspace` does not build examples. Both times a
 fix looked like it had failed ("face crops cached: 0", "22 faces found") when the code
 was correct and the binary was old. **Build the exact artefact you are about to run**,
 or `cargo build --workspace --all-targets`.
@@ -95,7 +95,7 @@ that gave 67x without touching the pair count. **Read the hot function before
 optimising the algorithm.**
 
 **6. Shell metacharacters in commit messages.** Backticks inside a double-quoted
-`git commit -m` are command substitution; `` `openfoto thumbs` `` executed and left a
+`git commit -m` are command substitution; `` `blinkview thumbs` `` executed and left a
 hole in the message. **Write multi-paragraph messages to a file and use `-F`.**
 
 **7. Touching a database another process holds.** Deleting `index.sqlite-wal` while the
@@ -193,5 +193,5 @@ by what they do.
 - `replaceChildren` stringifies `null` children into literal "null" text nodes — filter
   arrays before spreading them in (the `el()` helper already skips nulls).
 - The Tauri app embeds `dist/` at compile time; editing frontend files needs
-  `cargo build -p openfoto-desktop` and an app restart — `location.reload()` still
+  `cargo build -p blinkview-desktop` and an app restart — `location.reload()` still
   serves the stale bundle.

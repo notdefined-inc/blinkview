@@ -27,7 +27,7 @@ Two obvious escapes were measured and rejected:
   32.6 ms against 18.5 ms, MobileCLIP 42.4 ms against 32.6 ms. They are small enough
   that graph partitioning and host transfers cost more than they return.
 
-Against Immich's published whole-library figures, openfoto sits in the same league:
+Against Immich's published whole-library figures, blinkview sits in the same league:
 80,000 assets embedded in 194 minutes today, against their 80 minutes for `ViT-B-32` and
 270 minutes for `ViT-B-16-SigLIP-384`. We reach that with a *smaller* model, which is
 the tell: the cost is the pipeline around the model, not the model.

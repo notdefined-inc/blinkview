@@ -23,7 +23,7 @@ derivative here needs an ffmpeg that is known to exist.
 
 ## Design
 
-Two derivatives per video, both in `.openfoto/derived/`, beside the HEIC JPEGs that
+Two derivatives per video, both in `.blinkview/derived/`, beside the HEIC JPEGs that
 already live there. Both are disposable cache and rebuildable (ADR-0001, ADR-0011).
 
 | file | what | budget |
@@ -69,15 +69,15 @@ Rejected: playing the original on hover — that is the bug of ADR-0014 with a n
    uses the cache and starts in under 500 ms.
 7. A video whose preview cannot be generated keeps its poster frame and play badge, and
    never causes the original to be served to an `<img>` (ADR-0014).
-8. Deleting `.openfoto/derived/` loses no user-authored data and everything regenerates.
+8. Deleting `.blinkview/derived/` loses no user-authored data and everything regenerates.
 9. Previews respect `prefers-reduced-motion`: hover does nothing when it is set.
 
 ## Tasks
 
 - [ ] 1. Record codec and container at scan time via ffprobe; migrate the index
-      (touches: crates/openfoto-core/src/scan.rs, index.rs)
+      (touches: crates/blinkview-core/src/scan.rs, index.rs)
 - [ ] 2. `thumbs::preview_clip()` writing `<hash>-preview.mp4` to `derived/`, with the
-      size budget enforced (touches: crates/openfoto-core/src/thumbs.rs)
+      size budget enforced (touches: crates/blinkview-core/src/thumbs.rs)
 - [ ] 3. `?preview=` in `serve_photo`, generated on first request (touches:
       apps/desktop/src-tauri/src/lib.rs)
 - [ ] 4. Hover interaction with the 200 ms delay and the 3-element cap (touches:

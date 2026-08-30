@@ -23,8 +23,8 @@ ordinary.
 The library is any folder of photos in ordinary subfolders. Organization *is* the folder
 layout — there is no tag layer.
 
-`.openfoto/` inside the library root holds `index.sqlite`, `thumbs/`, `journal/` and
-`people.json`. It is **entirely derived**. `rm -rf .openfoto && openfoto scan` must rebuild
+`.blinkview/` inside the library root holds `index.sqlite`, `thumbs/`, `journal/` and
+`people.json`. It is **entirely derived**. `rm -rf .blinkview && blinkview scan` must rebuild
 everything with no loss of user-visible state.
 
 File identity is the **BLAKE3 content hash**, never the path. External moves and renames are

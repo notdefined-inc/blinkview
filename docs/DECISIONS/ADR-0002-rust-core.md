@@ -22,7 +22,7 @@ Toolchain present: rustc 1.93.1, cargo, node 22, pnpm, bun, and Tauri MCP toolin
 
 ## Decision
 
-`openfoto-core` is a Rust library crate. The CLI ships first; the Tauri v2 app later links
+`blinkview-core` is a Rust library crate. The CLI ships first; the Tauri v2 app later links
 the same crate. ONNX inference goes through `ort`, reusing the prototype's model files
 unchanged.
 

@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenFoto — your folders are the photo library</title>
+<title>Blinkview — your folders are the photo library</title>
 <meta name="description" content="A photo manager that reads the folders you already have. No import, no cloud, no account, no subscription. Face recognition and scene search run on your machine.">
-<meta property="og:title" content="OpenFoto">
+<meta property="og:title" content="Blinkview">
 <meta property="og:description" content="Your photos are already organised. They're in folders. Why does no app believe you?">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://notdefined-inc.github.io/openfoto/shots/og.webp">
+<meta property="og:image" content="https://notdefined-inc.github.io/blinkview/shots/og.webp">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://notdefined-inc.github.io/openfoto/shots/og.webp">
+<meta name="twitter:image" content="https://notdefined-inc.github.io/blinkview/shots/og.webp">
 <link rel="icon" href="logo.png">
 <style>
   :root{
@@ -196,7 +196,7 @@
 
 <header class="wrap">
   <img class="mark" src="logo.png" alt="" width="88" height="88">
-  <h1>OpenFoto</h1>
+  <h1>Blinkview</h1>
   <p class="tag">Your photos are already organised. They're in folders.<br><b>Why does no app believe you?</b></p>
 </header>
 
@@ -204,11 +204,11 @@
 <div class="wrap wide">
   <figure class="hero reveal" style="margin:0">
     <img class="shot" src="shots/hero-library.webp" width="2400" height="1334" fetchpriority="high"
-      alt="The OpenFoto window: a sidebar listing two sources, unnamed people, and the folders Duplicates, Trip and Videos, beside a date-grouped grid of 980 travel photographs under the heading Saturday, August 22, 2026.">
+      alt="The Blinkview window: a sidebar listing two sources, unnamed people, and the folders Duplicates, Trip and Videos, beside a date-grouped grid of 980 travel photographs under the heading Saturday, August 22, 2026.">
   </figure>
   <div class="cta">
-    <a class="btn" href="https://github.com/notdefined-inc/openfoto/releases/latest">Download</a>
-    <a class="btn ghost" href="https://github.com/notdefined-inc/openfoto">Source on GitHub</a>
+    <a class="btn" href="https://github.com/notdefined-inc/blinkview/releases/latest">Download</a>
+    <a class="btn ghost" href="https://github.com/notdefined-inc/blinkview">Source on GitHub</a>
   </div>
   <p class="plat">macOS · Windows · Linux — free, and free of charge, permanently</p>
 </div>
@@ -268,16 +268,16 @@
 <section class="wrap" aria-labelledby="turn">
   <div class="prose">
     <h2 id="turn">The folders are the database</h2>
-    <p class="lede">What Obsidian is to Markdown, OpenFoto is to your photo library.</p>
+    <p class="lede">What Obsidian is to Markdown, Blinkview is to your photo library.</p>
   </div>
   <div class="turn reveal" style="margin-top:32px">
     <div>
-      <p>Not a metaphor. There is no library file, no import step, no proprietary container. Point OpenFoto at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.</p>
-      <p>Delete OpenFoto tomorrow and you lose <em>nothing</em>. Your folders sit exactly where they were, named exactly what you named them — plus a small readable <code>openfoto.json</code> beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.</p>
-      <p>Everything else — thumbnails, the index, face embeddings — lives in a <code>.openfoto/</code> folder that is <strong>safe to delete</strong>. Delete it and it rebuilds. That isn't a caveat; it's the promise the whole design is built to keep.</p>
+      <p>Not a metaphor. There is no library file, no import step, no proprietary container. Point Blinkview at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.</p>
+      <p>Delete Blinkview tomorrow and you lose <em>nothing</em>. Your folders sit exactly where they were, named exactly what you named them — plus a small readable <code>blinkview.json</code> beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.</p>
+      <p>Everything else — thumbnails, the index, face embeddings — lives in a <code>.blinkview/</code> folder that is <strong>safe to delete</strong>. Delete it and it rebuilds. That isn't a caveat; it's the promise the whole design is built to keep.</p>
     </div>
     <img class="sidebar-shot" src="shots/folders-sidebar.webp" width="512" height="1412" loading="lazy"
-      alt="The OpenFoto sidebar with the folder tree expanded: Trip contains Greece Day 1, Greece Day 2 and Swiss Day 1, each with its own photo count — the user's own folder names, read rather than imported.">
+      alt="The Blinkview sidebar with the folder tree expanded: Trip contains Greece Day 1, Greece Day 2 and Swiss Day 1, each with its own photo count — the user's own folder names, read rather than imported.">
   </div>
   <div class="prose" style="margin-top:32px">
     <p>The file is human-readable, so here it is — this is the whole database schema:</p>
@@ -347,7 +347,7 @@
     <div class="scene-text">
       <p class="kicker">People</p>
       <p class="claim">It admits when it doesn't know.</p>
-      <p>Detection and recognition run on your machine; nothing is uploaded. Name someone once and OpenFoto files the rest — and when it isn't sure, it says so and leaves the photo alone.</p>
+      <p>Detection and recognition run on your machine; nothing is uploaded. Name someone once and Blinkview files the rest — and when it isn't sure, it says so and leaves the photo alone.</p>
       <p class="limit">A confidently wrong answer is worse than an honest shrug. Review teaches identities; filing photos into per-person folders is still to come.</p>
     </div>
   </div>
@@ -400,7 +400,7 @@
       <p class="kicker">Deleting</p>
       <p class="claim">Even delete is just a move.</p>
       <p>Deleted photos go to a <code>Trash/</code> folder <em>inside</em> the library, not the system bin — so it is journalled and undoable like every other operation. The sidebar keeps the count, and Restore puts them back where they were.</p>
-      <p class="limit">Emptying it hands the files to the system Trash, and that is the one step OpenFoto cannot undo — which is exactly why it is a separate button that asks first.</p>
+      <p class="limit">Emptying it hands the files to the system Trash, and that is the one step Blinkview cannot undo — which is exactly why it is a separate button that asks first.</p>
     </div>
   </div>
 
@@ -418,7 +418,7 @@
   <div class="prose">
     <h2 id="receipt">What you keep</h2>
     <p class="lede">Your library is a folder. Your metadata is a file you can read.</p>
-    <p>Ratings, labels and saved searches live in <code>openfoto.json</code>; names live in <code>openfoto-people.json</code>. They sit at the library root — or in any folder, where the nearest one wins, so copying a folder in Finder carries its ratings with it. Delete the <code>.openfoto/</code> cache and nothing you authored is lost; there is a test that writes a name and a rating, deletes the cache outright, and asserts both survive.</p>
+    <p>Ratings, labels and saved searches live in <code>blinkview.json</code>; names live in <code>blinkview-people.json</code>. They sit at the library root — or in any folder, where the nearest one wins, so copying a folder in Finder carries its ratings with it. Delete the <code>.blinkview/</code> cache and nothing you authored is lost; there is a test that writes a name and a rating, deletes the cache outright, and asserts both survive.</p>
     <p>Even deleting is reversible: photos go to a <code>Trash/</code> folder inside the library, journalled and undoable like every other operation.</p>
   </div>
 </section>
@@ -428,37 +428,37 @@
   <p><strong>No cloud, no account, no sync.</strong><br>There is nowhere to sign in.</p>
   <p><strong>No telemetry.</strong><br>Nothing is measured, collected or sent. There is no analytics code to audit because there is none to write.</p>
   <p><strong>No paid tier.</strong><br>There is no feature behind a wall, because there is no wall.</p>
-  <p><strong>No library format.</strong><br>If OpenFoto vanished tomorrow, your folders wouldn't notice.</p>
+  <p><strong>No library format.</strong><br>If Blinkview vanished tomorrow, your folders wouldn't notice.</p>
 </section>
 
 <section class="wrap" aria-labelledby="take">
   <div class="prose">
     <h2 id="take">Take it</h2>
-    <p>Grab the installer for your platform from <a href="https://github.com/notdefined-inc/openfoto/releases/latest">Releases</a> — macOS (<code>.dmg</code>, Apple Silicon), Windows (<code>.msi</code>), Linux (<code>.AppImage</code> and <code>.deb</code>, glibc 2.38+).</p>
+    <p>Grab the installer for your platform from <a href="https://github.com/notdefined-inc/blinkview/releases/latest">Releases</a> — macOS (<code>.dmg</code>, Apple Silicon), Windows (<code>.msi</code>), Linux (<code>.AppImage</code> and <code>.deb</code>, glibc 2.38+).</p>
     <p>The app is signed, but not notarized, so the first launch needs a nudge: on macOS, right-click → Open; on Windows, <em>More info</em> → <em>Run anyway</em>. An Apple Developer ID costs money that a project with no revenue doesn't have.</p>
     <p class="limit">No Intel Mac build: ONNX Runtime stopped publishing a macOS x64 binary, so an Intel machine would need it compiled from source.</p>
     <p>Face recognition and scene search are optional. They need about 200 MB of models, downloaded on first use, each checked against a pinned SHA-256 before it's installed. Skip it and everything else still works.</p>
     <p>Or start from the command line — everything the app does, the CLI does, and it's the honest way to try this on a library you care about:</p>
 <pre><span class="c"># index a folder; never modifies a photograph</span>
-openfoto scan    -C ~/Photos
+blinkview scan    -C ~/Photos
 
 <span class="c"># thumbnails, faces and scene search, one decode each</span>
-openfoto analyze -C ~/Photos
+blinkview analyze -C ~/Photos
 
 <span class="c"># search by what a photograph shows</span>
-openfoto find    -C ~/Photos "a night sky"
+blinkview find    -C ~/Photos "a night sky"
 
 <span class="c"># find burst duplicates — previews before it moves anything</span>
-openfoto dedupe  -C ~/Photos
+blinkview dedupe  -C ~/Photos
 
 <span class="c"># reverse any of it</span>
-openfoto undo    -C ~/Photos</pre>
+blinkview undo    -C ~/Photos</pre>
   </div>
 </section>
 </main>
 
 <footer class="wrap">
-  <p>Free software under <a href="https://github.com/notdefined-inc/openfoto/blob/main/LICENSE">GPL-3.0-or-later</a>.
+  <p>Free software under <a href="https://github.com/notdefined-inc/blinkview/blob/main/LICENSE">GPL-3.0-or-later</a>.
   Built in Rust with <a href="https://tauri.app">Tauri</a>.<br>
   No trackers, no accounts, no subscription — and nowhere to sign in, permanently.</p>
 </footer>

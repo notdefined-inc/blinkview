@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenFoto</title>
+<title>Blinkview</title>
 <script>
 /* Theme must be on <html> before first paint, or the wrong theme flashes. The
    choice is a UI preference, so it lives in localStorage — never in the vault. */
@@ -17,7 +17,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
     <span class="logowrap" aria-hidden="true">
       <img class="logomark" src="logo.png" alt="" width="26" height="26" decoding="async">
     </span>
-    <span class="wordmark">OpenFoto</span>
+    <span class="wordmark">Blinkview</span>
   </div>
   <div class="tb-mid" data-tauri-drag-region>
     <div class="searchwrap">
@@ -39,7 +39,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
     </div>
   </div>
   <div class="tb-right">
-    <button class="askbtn" id="btn-ask" title="Ask in natural language (⌘K)" aria-label="Ask OpenFoto">
+    <button class="askbtn" id="btn-ask" title="Ask in natural language (⌘K)" aria-label="Ask Blinkview">
       <svg viewBox="0 0 20 20" aria-hidden="true">
         <path d="M10 2.5 11.7 7.3 16.5 9 11.7 10.7 10 15.5 8.3 10.7 3.5 9 8.3 7.3Z" fill="currentColor"/>
         <circle cx="16" cy="15.5" r="1.4" fill="currentColor"/>
@@ -75,7 +75,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
 
 <div class="update-banner" id="update-banner" hidden role="status">
   <span class="update-spark" aria-hidden="true">↑</span>
-  <span><b id="update-title">A new OpenFoto is ready</b><small id="update-note"></small></span>
+  <span><b id="update-title">A new Blinkview is ready</b><small id="update-note"></small></span>
   <button class="btn sm" id="update-download">Download</button>
   <button class="icon-btn" id="update-close" aria-label="Dismiss update notice">✕</button>
 </div>
@@ -154,13 +154,13 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
   </main>
 </div>
 
-<aside class="askpanel" id="askpanel" hidden aria-label="Ask OpenFoto">
+<aside class="askpanel" id="askpanel" hidden aria-label="Ask Blinkview">
   <div class="ask-head">
     <span class="ask-title">
       <svg viewBox="0 0 20 20" aria-hidden="true">
         <path d="M10 2.5 11.7 7.3 16.5 9 11.7 10.7 10 15.5 8.3 10.7 3.5 9 8.3 7.3Z" fill="currentColor"/>
       </svg>
-      Ask OpenFoto
+      Ask Blinkview
     </span>
     <button class="icon-btn" id="ask-close" aria-label="Close">✕</button>
   </div>

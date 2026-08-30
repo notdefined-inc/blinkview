@@ -2,7 +2,7 @@
 Status: Done (shipped 2026-08-30)   Owner: notdefined   Date: 2026-08-30
 
 ## Problem
-A photo library knows where every photograph was taken and openfoto never says so.
+A photo library knows where every photograph was taken and blinkview never says so.
 EXIF GPS is read only as a display string in the info panel; there is no map, no way to
 browse by place, and nothing resolves coordinates into a name a person recognises. And
 the photographs that need it most — scans, screenshots, anything through a messaging
@@ -23,7 +23,7 @@ and moves. A row with NULL coordinates means *checked, has none* — without tha
 map open would re-read every photograph that will never have GPS. Filled by a `locate`
 pass that reports progress and skips what it has already seen; opening the map runs it.
 
-**Place names come from a bundled table.** `crates/openfoto-core/data/places.bin` —
+**Place names come from a bundled table.** `crates/blinkview-core/data/places.bin` —
 170,860 places from GeoNames cities1000, packed to 3.8 MB (interned region and country
 names, coordinates as integer degrees × 10⁴). Reverse lookup is nearest-by-haversine
 over a 1°-cell grid index, so a lookup touches a few dozen candidates rather than

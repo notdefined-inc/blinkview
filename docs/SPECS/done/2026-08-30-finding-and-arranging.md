@@ -33,7 +33,7 @@ Rejected: making search always library-wide. Filtering the folder you are lookin
 is the common case and the reason the field is ANDed with it; the fix is to say what
 is being hidden, not to stop hiding it.
 
-**Per-folder view** lives in that folder's own `openfoto.json`, beside the ratings of
+**Per-folder view** lives in that folder's own `blinkview.json`, beside the ratings of
 the photographs it holds (ADR-0010). A folder describing how it is arranged is the same
 kind of fact as a folder describing what is in it, and it travels with the folder when
 it is copied in Finder. New optional field, absent unless set:
@@ -59,7 +59,7 @@ drag never scrambles the rest.
 4. With nothing hidden by the current view, no chip appears.
 5. A folder with no `view` sorts newest-first, as today.
 6. Changing the sort while a folder is selected writes `view.sort` to that folder's
-   `openfoto.json`, and reopening the folder — or relaunching — restores it.
+   `blinkview.json`, and reopening the folder — or relaunching — restores it.
 7. Two folders can hold different sorts at once, and neither inherits the other's.
 8. Dragging a cell onto another position reorders it, persists the order, and survives
    a relaunch; the sort control shows `Custom`.
@@ -70,7 +70,7 @@ drag never scrambles the rest.
 
 ## Tasks
 - [x] 1. `UserData.view` + `FolderView` in core, exact-folder read/write helpers, tests
-      (touches: crates/openfoto-core/src/userdata.rs)
+      (touches: crates/blinkview-core/src/userdata.rs)
 - [x] 2. `folder_view` / `set_folder_view` commands (touches: apps/desktop/src-tauri/src/lib.rs)
 - [x] 3. Find modal: markup, styles, matching, keyboard (touches: apps/desktop/dist/*)
 - [x] 4. Per-folder sort: load on folder select, save on change (touches: apps/desktop/dist/app.js)
@@ -84,7 +84,7 @@ Driven in the running app against a seven-photograph fixture (root + `Day1`):
   folder and the chip *"1 elsewhere — search all of lib"*. Clicking it gave
   `lib · 1 photos` holding `beach.jpg`, and the chip went away because nothing was
   hidden any more.
-- Setting Day1 to Name wrote `{"view":{"sort":"name"}}` to `Day1/openfoto.json` and
+- Setting Day1 to Name wrote `{"view":{"sort":"name"}}` to `Day1/blinkview.json` and
   left the root with **no file at all** — no inheritance, no litter. Leaving Day1 gave
   Newest; re-entering restored Name.
 - Dragging `DSC_0001.jpg` onto the right half of `IMG_9999.jpg` produced

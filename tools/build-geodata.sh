@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild the bundled offline place database and world outlines.
 #
-# openfoto resolves coordinates to a place name without a network, so both datasets
+# blinkview resolves coordinates to a place name without a network, so both datasets
 # ship inside the binary. This script is the only way they are produced — run it to
 # refresh them, and commit what it writes.
 #
@@ -10,7 +10,7 @@
 #   Natural Earth        public domain (CC0)  https://www.naturalearthdata.com/
 #
 # Output:
-#   crates/openfoto-core/data/places.bin   ~3.8 MB, 170k places, packed (see geo.rs)
+#   crates/blinkview-core/data/places.bin   ~3.8 MB, 170k places, packed (see geo.rs)
 #   apps/desktop/dist/world110.json        ~150 KB, coarse outlines for the world view
 #   apps/desktop/dist/world50.json         ~1.4 MB, finer outlines once zoomed in
 set -euo pipefail
@@ -33,6 +33,6 @@ echo "==> packing"
 WORK="$work" ROOT="$root" python3 "$root/tools/build-geodata.py"
 
 echo "==> done"
-ls -l "$root/crates/openfoto-core/data/places.bin" \
+ls -l "$root/crates/blinkview-core/data/places.bin" \
       "$root/apps/desktop/dist/world110.json" \
       "$root/apps/desktop/dist/world50.json"

@@ -24,7 +24,7 @@ Transcode with `sips`, and cache the result.
 
 Thumbnails convert to a temporary file, decode, and discard it — the thumbnail cache is
 already the durable artefact. Full-size viewing writes a JPEG to
-`.openfoto/derived/<hash>.jpg`, produced on first view rather than by a pre-pass, so
+`.blinkview/derived/<hash>.jpg`, produced on first view rather than by a pre-pass, so
 opening a HEIC library costs nothing until a photo is actually opened.
 
 **`sips` does not bake orientation into the pixels — it carries the EXIF tag across.**
@@ -38,7 +38,7 @@ shipped rotated thumbnails.
 
 Good: iPhone libraries work with no install step, no bundled decoder, and no patent
 surface of our own. The conversion is a process spawn, but it happens once per image
-and both caches live in the disposable vault (ADR-0001), so deleting `.openfoto/`
+and both caches live in the disposable vault (ADR-0001), so deleting `.blinkview/`
 still costs nothing but recomputation.
 
 Costly: **this is the first macOS-only dependency in the project.** Everything else is
