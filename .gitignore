@@ -6,3 +6,6 @@
 # A library cache, if someone runs the CLI from the repo root — easy to do, since
 # --library defaults to the current directory. Disposable by design; never committed.
 .openfoto/
+
+# Built by tools/build-ffmpeg.sh from pinned sources; not committed (ADR-0014).
+apps/desktop/src-tauri/binaries/

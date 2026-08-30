@@ -1,0 +1,29 @@
+# Pinned sources for the bundled ffmpeg sidecar. See ADR-0014 and
+# docs/SPECS/active/2026-08-30-ffmpeg-sidecar.md.
+#
+# Built rather than downloaded because no verifiable prebuilt arm64 macOS binary exists:
+# BtbN ships no macOS build at all, evermeet.cx is x86_64 only, and osxexperts.net
+# publishes two different SHA-256 values for the file it serves, neither matching it.
+# A binary that is code-signed into our bundle has to be one we can account for.
+#
+# Checksums were taken from a download verified to be byte-identical across two
+# independent fetches. ffmpeg.org publishes a GPG signature but no checksum sidecar;
+# build-ffmpeg.sh verifies that signature too when gpg is available.
+
+FFMPEG_VERSION=9.0.1
+FFMPEG_URL=https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz
+FFMPEG_SHA256=cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635
+FFMPEG_SIG=https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz.asc
+
+# The only external library. Everything in criterion 7 decodes natively; x264 is here
+# solely to *encode* H.264 for hover previews and the playback transcode.
+# Pinned to a commit: `stable` is a branch and moves.
+X264_COMMIT=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+X264_URL=https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2
+X264_SHA256=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
+
+# Licence position, recorded so it is auditable rather than assumed:
+# ffmpeg configured --enable-gpl with libx264 produces a GPLv2-or-later binary, which is
+# compatible with this project's GPL-3.0-or-later. No --enable-nonfree: that would make
+# the result undistributable.
+LICENSE=GPL-2.0-or-later

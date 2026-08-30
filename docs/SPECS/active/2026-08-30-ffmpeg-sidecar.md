@@ -66,9 +66,21 @@ something reproducible from a pinned URL.
    a non-zero exit and is not written to `binaries/`.
 5. The CLI with no `OPENFOTO_FFMPEG` set behaves exactly as it does today.
 6. Each installer contains exactly one ffmpeg, for its own target triple.
-7. The bundled binary decodes H.264, HEVC, VP9 and AV1, and encodes H.264 and AAC.
-   Verified by `-codecs` in a test, not by assertion.
-8. The macOS `.dmg` stays under 60 MB.
+7. The bundled binary handles the formats a phone, a camera and a download actually
+   produce. Verified by asserting each name appears in `-demuxers`/`-decoders`/
+   `-encoders`, not by assertion in prose:
+   - **containers**: mov/mp4/m4v, matroska/webm, avi, mpegts, flv, 3gp, asf, mpeg-ps, ogg
+   - **video decode**: h264, hevc, vp8, vp9, av1, mpeg2video, mpeg4, mjpeg, prores, vc1,
+     theora, dvvideo, wmv1/2/3
+   - **audio decode**: aac, mp3, opus, vorbis, flac, ac3, eac3, pcm_*, wmav2
+   - **encode**: libx264 and aac (for previews and the playback transcode of
+     `2026-08-30-video-previews.md`)
+   Only libx264 is an external library; every decoder above is native to ffmpeg, so the
+   build has exactly one dependency beyond ffmpeg itself.
+8. The bundled binary is under 40 MB per platform, and the macOS `.dmg` under 70 MB.
+   Broad format coverage and a small binary pull against each other; these numbers are
+   provisional and get re-set to the measured size plus headroom once task 1 has built
+   once. A build that misses them is reported, not quietly accepted.
 9. `codesign --verify --deep --strict` passes on the bundled `.app` — a sidecar is a
    Mach-O inside the bundle and is signed with it (ADR-0014, and the v0.1.0 signing bug).
 
@@ -76,8 +88,8 @@ something reproducible from a pinned URL.
 
 - [x] 2. `ffmpeg_bin()` honours `OPENFOTO_FFMPEG` first; unit tests for criteria 2 and 3
       (touches: crates/openfoto-core/src/thumbs.rs) — done, three tests
-- [ ] 1. `tools/ffmpeg.lock` + `tools/build-ffmpeg.sh`: pinned source tarball, checksum,
-      minimal configure per triple, CI cache keyed on the lock (touches: tools/)
+- [ ] 1. `tools/ffmpeg.lock` + `tools/build-ffmpeg.sh`: pinned sources, checksums, the
+      configure flags of criterion 7, CI cache keyed on the lock (touches: tools/)
 - [ ] 3. `externalBin` config; app exports `OPENFOTO_FFMPEG` at startup from the resolved
       sidecar path (touches: apps/desktop/src-tauri/)
 - [ ] 4. Release workflow runs the fetch script before `tauri build`; verify criteria 6,

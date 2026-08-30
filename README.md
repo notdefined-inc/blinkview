@@ -91,12 +91,15 @@ You need [Rust](https://rustup.rs) 1.88+ and [Node](https://nodejs.org) (for the
 git clone https://github.com/notdefined-inc/openfoto
 cd openfoto
 
+./tools/build-ffmpeg.sh                      # once: the ffmpeg the app bundles
 cargo run -p openfoto-desktop --release      # the app
 cargo run -p openfoto-cli -- --help          # the command line
 
 cargo test --workspace                       # 124 tests
 node apps/desktop/tests/grammar.test.mjs     # the command grammar
 ```
+
+The desktop app bundles ffmpeg (ADR-0014), so `tools/build-ffmpeg.sh` has to run once before it will build — Tauri treats a declared sidecar as required. It compiles ffmpeg from pinned, checksummed sources and needs `pkg-config` and a C toolchain, plus `nasm` on x86_64. It caches, so later builds skip it. The CLI does not need any of this and uses whatever ffmpeg is on your `PATH`, if any.
 
 On Linux you'll need the usual WebKitGTK development packages; Tauri's [prerequisites page](https://tauri.app/start/prerequisites/) lists them per distribution.
 

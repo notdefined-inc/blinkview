@@ -16,9 +16,15 @@ code wins and the docs get fixed.
 ## Running it
 
 ```bash
+./tools/build-ffmpeg.sh                  # once: builds the bundled ffmpeg sidecar
 cargo run -p openfoto-desktop            # the app, with the UI-verification bridge
 cargo run -p openfoto-cli -- --help      # the command line
 ```
+
+The sidecar is declared in `tauri.conf.json` as an `externalBin`, which Tauri treats as
+required at build time, so the desktop app will not compile until that script has run
+once. It needs `pkg-config` and a C toolchain (`nasm` too on x86_64) and tells you which
+are missing rather than letting ffmpeg's configure fail obscurely.
 
 Analysis in a debug build is roughly a hundred times slower than release — our own
 pixel loops are unoptimised there. Use `--release` before concluding anything is slow.

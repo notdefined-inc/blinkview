@@ -1863,6 +1863,40 @@ async fn undo(state: tauri::State<'_, AppState>, path: String, id: Option<String
 /// effectively unrestricted here, since a source can be any folder the user picks.
 /// Registering our own scheme makes the boundary explicit and auditable: a request is
 /// served only if it resolves inside a folder the user has actually added.
+/// Point `openfoto-core` at the ffmpeg bundled beside this executable.
+///
+/// Tauri's `externalBin` places `ffmpeg-<target-triple>` next to the binary — inside
+/// `Contents/MacOS` on macOS — and strips the triple at install time, so at runtime it
+/// is simply `ffmpeg`. Core cannot ask Tauri where that is without depending on Tauri,
+/// and it is also used by the CLI, which has no bundle; an environment variable is the
+/// whole of the coupling (ADR-0014).
+///
+/// Nothing here is fatal. A build without the sidecar falls back to PATH exactly as
+/// before, which is what a `cargo run` during development does.
+fn export_bundled_ffmpeg(app: &tauri::App) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(dir) = exe.parent() else { return };
+    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let beside = dir.join(name);
+    let candidate = if beside.is_file() {
+        beside
+    } else {
+        // Development: `cargo run` leaves the sidecar where the build script put it.
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        let triple = src.join(format!("{name}-{}", std::env::consts::ARCH));
+        let plain = src.join(name);
+        if plain.is_file() {
+            plain
+        } else if triple.is_file() {
+            triple
+        } else {
+            return;
+        }
+    };
+    let _ = app;
+    unsafe { std::env::set_var(openfoto_core::thumbs::FFMPEG_ENV, &candidate) };
+}
+
 fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
     let deny = |code: u16| {
         http::Response::builder()
@@ -2091,6 +2125,7 @@ pub fn run() {
         // they existed. Served on a pool instead, the grid scrolls at full speed while
         // the work happens behind it.
         .setup(|app| {
+            export_bundled_ffmpeg(app);
             // Kept so a background scan can report progress against its own source.
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(mut slot) = state.app.lock() {
