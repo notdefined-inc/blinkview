@@ -1702,15 +1702,21 @@ async function addSource() {
   if (!picked) return;
   // The folder appears at once and indexes behind itself. Waiting for the first scan
   // of a phone backup before even showing the row is what made this feel like a hang.
-  const info = await invoke("add_source", { path: picked });
-  S.sources = [...S.sources.filter(s => s.path !== picked), info];
-  S.busy[picked] = { op: "scan", done: 0, total: 0 };
-  renderSidebar();
-  toast(`${info.name} added`, "ok");
-  // Go to what was just added. Reads no longer wait on the scan, so this shows the
-  // folder filling in rather than blocking on it.
-  await selectSource(picked);
-  refreshSources().then(() => autodetect(picked));
+  try {
+    const info = await invoke("add_source", { path: picked });
+    S.sources = [...S.sources.filter(s => s.path !== picked), info];
+    S.busy[picked] = { op: "scan", done: 0, total: 0 };
+    renderSidebar();
+    toast(`${info.name} added`, "ok");
+    // Go to what was just added. Reads no longer wait on the scan, so this shows the
+    // folder filling in rather than blocking on it.
+    await selectSource(picked);
+    refreshSources().then(() => autodetect(picked));
+  } catch (e) {
+    // A refusal — already in the library, nested inside a source — is an answer,
+    // not a crash; the backend worded it for the user.
+    toast(String(e), "error");
+  }
 }
 
 /* Pick up analysis that a previous session left unfinished.

@@ -200,6 +200,16 @@ and returns without opening the library, because the first scan of a phone backu
 minutes and waiting for it before even showing the folder is what made adding one feel
 like a hang.
 
+A folder is refused if it overlaps a source you already have — in either direction.
+Every source is an independent library with its own `.openfoto/`, so a subfolder added
+as its own source would be indexed twice, analysed twice, and removing either copy
+could delete `openfoto.json` metadata the other still reads; adding the parent of an
+existing source has the same problems in reverse. Re-adding a folder that is already a
+source is refused too, so the window says "already in your library" instead of
+pretending to add it. Paths are compared canonicalized, so the same folder through a
+symlink cannot slip through as two sources. Refusals appear as an error toast; the
+drag-and-drop path reports them the same way.
+
 Scanning reports real progress. It walks twice — once reading only directory entries to
 learn the total, then again to do the work — because names are cheap next to hashing
 contents, and without a total there is only a spinner, which says nothing about whether
@@ -567,6 +577,13 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-30 Adding a folder that overlaps a source you already have is refused with an
+  explanation instead of silently double-indexing the photographs. Re-adding a folder,
+  adding a subfolder of a source, and adding the parent of a source all fail with a
+  toast saying why; paths are compared canonicalized so the same folder through a
+  symlink counts as one folder. Previously a duplicate add was a silent no-op that
+  still toasted "added", and a nested add quietly created a second library over
+  photographs another library was already indexing and journalling.
 - 2026-08-30 Scrolling got its cache back. WKWebView does not reliably cache `photo://`
   responses and grid cells are rebuilt on re-entry, so every scroll-back re-fetched each
   thumbnail — the flicker, and the wait. The scheme handler now holds a 64 MiB

@@ -521,6 +521,52 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
     Ok(out)
 }
 
+/// Why `candidate` may not become a source, or `None` when it may.
+///
+/// Every source is an independent library with its own `.openfoto/`, so a folder that
+/// overlaps an existing source would be indexed twice, analysed twice, and removing
+/// either copy could delete `openfoto.json` metadata the other still reads. Both
+/// directions are refused, not warned about; the way out is one step (remove the
+/// nested source first). Paths are canonicalized before comparing — symlinks and case
+/// differences resolve to the same folder, and two sources reaching one vault is the
+/// one outcome that could corrupt an index, since the open gate is keyed by the path
+/// string. A folder that does not exist cannot be canonicalized and falls back to its
+/// literal path; refusing it here is not needed because `list_sources` already shows
+/// it as missing.
+fn source_conflict(candidate: &std::path::Path, sources: &[String]) -> Option<String> {
+    let canon = candidate.canonicalize().unwrap_or_else(|_| candidate.to_path_buf());
+    let name = |p: &std::path::Path| {
+        p.file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.display().to_string())
+    };
+    for s in sources {
+        let existing = std::path::Path::new(s);
+        let other = existing.canonicalize().unwrap_or_else(|_| existing.to_path_buf());
+        if other == canon {
+            return Some(format!("{} is already in your library.", name(&canon)));
+        }
+        // `starts_with` compares components, so `/Pics2` is not inside `/Pics`.
+        if canon.starts_with(&other) {
+            return Some(format!(
+                "{} is inside your source {} — those photographs are already in the library.",
+                name(&canon),
+                name(&other)
+            ));
+        }
+        if other.starts_with(&canon) {
+            return Some(format!(
+                "{} already contains your source {}. Remove {} from the library first if you want {} on its own.",
+                name(&canon),
+                name(&other),
+                name(&other),
+                name(&canon)
+            ));
+        }
+    }
+    None
+}
+
 #[tauri::command]
 /// Register a folder and return at once.
 ///
@@ -538,11 +584,14 @@ async fn add_source(
     if let Ok(mut c) = state.cancelled.lock() {
         c.remove(&path);
     }
-    let mut list = load_sources(&app);
-    if !list.contains(&path) {
-        list.push(path.clone());
-        save_sources(&app, &list);
+    let list = load_sources(&app);
+    // Overlaps are refused here, at the only door a folder can enter through.
+    if let Some(why) = source_conflict(std::path::Path::new(&path), &list) {
+        return Err(why);
     }
+    let mut list = list;
+    list.push(path.clone());
+    save_sources(&app, &list);
     let name = std::path::Path::new(&path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -2444,6 +2493,56 @@ mod tests {
         c.put(p, vec![0; 60]);
         c.put(p, vec![0; 60]); // replace, not accumulate
         assert_eq!(c.bytes, 60, "the old bytes must be released");
+    }
+
+    #[test]
+    fn a_source_cannot_be_added_twice_or_nested() {
+        let dir = std::env::temp_dir().join(format!("openfoto-conflict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let parent = dir.join("Backup");
+        let child = parent.join("day1");
+        std::fs::create_dir_all(&child).unwrap();
+        let sources = vec![parent.display().to_string()];
+
+        // Exact re-add: an answer, not a silent no-op.
+        let dup = source_conflict(&parent, &sources).unwrap();
+        assert!(dup.contains("already in your library"), "{dup}");
+        // A subfolder of a source would become a second library over the same photos.
+        let inside = source_conflict(&child, &sources).unwrap();
+        assert!(inside.contains("inside your source"), "{inside}");
+        // …and the other direction: adding the parent over an existing source.
+        let around = source_conflict(&parent, &[child.display().to_string()]).unwrap();
+        assert!(around.contains("already contains your source"), "{around}");
+
+        // Unrelated folders are fine, and a name-prefixed sibling is not "inside":
+        // /Pics2 does not live in /Pics.
+        let other = dir.join("Elsewhere");
+        let sibling = dir.join("Backup2");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+        assert_eq!(source_conflict(&other, &sources), None);
+        assert_eq!(source_conflict(&sibling, &sources), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The dangerous case the string compare could not see: two paths, one folder.
+    /// Two libraries over one vault would scan the same SQLite concurrently, because
+    /// the open gate is keyed by the path string.
+    #[test]
+    fn the_same_folder_through_a_symlink_is_still_a_duplicate() {
+        let dir =
+            std::env::temp_dir().join(format!("openfoto-conflict-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let real = dir.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = dir.join("link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(&real, &link).unwrap();
+        let msg = source_conflict(&link, &[real.display().to_string()]).unwrap();
+        assert!(msg.contains("already in your library"), "{msg}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
