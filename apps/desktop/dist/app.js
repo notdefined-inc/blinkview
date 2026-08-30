@@ -1943,6 +1943,18 @@ async function selectSource(path) {
   // up meant the breadcrumb named one folder while the grid showed another.
   S.photos = []; S.view = []; S.sel.clear();
   S.resetScroll = true;
+  // The map is a library view, not a separate library. Leave it open across a source
+  // switch, but take the old points away now; a stale country should never survive
+  // long enough to be mistaken for the new library.
+  if (!$("#mapview").hidden) {
+    MAP.request = null;
+    MAP.points = [];
+    MAP.clusters = [];
+    MAP.bucketZoom = null;
+    $("#mapcount").textContent = "Loading locations…";
+    $("#mapwhere").textContent = "";
+    scheduleMap();
+  }
   refreshSemanticStatus();
   renderSidebar();
   syncToastScope();
@@ -1952,6 +1964,9 @@ async function selectSource(path) {
   await loadFolderView();
   await busy("Loading library…", loadPhotos, path);
   refreshPeople();
+  // The map is a view onto the current library, so it reloads with it rather than
+  // waiting to be closed and reopened.
+  if (!$("#mapview").hidden) loadMapData();
   // Thumbnails are produced on demand by the photo:// handler as cells scroll into
   // view, so nothing blocks the first paint. A background pass backfills the rest so
   // later scrolling is instant, but it is an optimisation, not a prerequisite.
@@ -1965,6 +1980,38 @@ async function selectSource(path) {
   // `source-ready` only fires when a library is opened for writing, which reading its
   // counts does not do.
   resumeUnfinished(path);
+}
+
+/** Fetch the located photographs for the current source. `request` discards a response
+    from a source the user has already left: map loads can take longer than a click. */
+async function loadMapData() {
+  const source = S.source;
+  if (!source) return;
+  const request = { source };
+  MAP.request = request;
+  await loadRings(110);
+  loadRings(50);                                  // the finer level arrives behind us
+  // Reading GPS is a header parse, and the answer is cached against the content hash,
+  // so this is only slow the first time.
+  const found = await busy("Reading where photographs were taken…",
+    () => invoke("locate_photos", { path: source }), source);
+  const places = await invoke("photo_places", { path: source });
+  if (MAP.request !== request || S.source !== source) return;
+  MAP.points = places.map(p => {
+    const [wx, wy] = project(p.lon, p.lat);
+    return { ...p, wx, wy };
+  });
+  MAP.bucketZoom = null;
+  fitMap();
+  clusterPoints();
+  const n = MAP.points.length;
+  $("#mapcount").textContent = n ? `${n} located` : "None located yet";
+  $("#mapwhere").textContent = n
+    ? `${MAP.clusters.length} place${MAP.clusters.length === 1 ? "" : "s"}`
+    : (found.checked
+        ? "No photograph here carries coordinates — select some and choose Where was this?"
+        : "");
+  scheduleMap();
 }
 async function selectFolder(f) {
   S.folder = (S.folder === f ? null : f);
@@ -3489,28 +3536,7 @@ async function openMap() {
   $("#filters").dataset.wasShown = String(!$("#filters").hidden);
   $("#filters").hidden = true;
   $("#btn-map").setAttribute("aria-pressed", "true");
-  await loadRings(110);
-  loadRings(50);                                  // the finer level arrives behind us
-  // Reading GPS is a header parse, and the answer is cached against the content hash,
-  // so this is only slow the first time.
-  const found = await busy("Reading where photographs were taken…",
-    () => invoke("locate_photos", { path: S.source }), S.source);
-  const places = await invoke("photo_places", { path: S.source });
-  MAP.points = places.map(p => {
-    const [wx, wy] = project(p.lon, p.lat);
-    return { ...p, wx, wy };
-  });
-  MAP.bucketZoom = null;
-  fitMap();
-  clusterPoints();
-  const n = MAP.points.length;
-  $("#mapcount").textContent = n ? `${n} located` : "None located yet";
-  $("#mapwhere").textContent = n
-    ? `${MAP.clusters.length} place${MAP.clusters.length === 1 ? "" : "s"}`
-    : (found.checked
-        ? "No photograph here carries coordinates — select some and choose Where was this?"
-        : "");
-  scheduleMap();
+  await loadMapData();
 }
 
 function closeMap() {

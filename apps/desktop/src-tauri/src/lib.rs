@@ -80,6 +80,18 @@ static VIDEO_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock:
         .expect("video pool")
 });
 
+/// The version users and releases see, from `tauri.conf.json`. The workspace Cargo
+/// version is an internal `0.0.1`, so using it made every release look newer.
+static APP_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let config = serde_json::from_str::<serde_json::Value>(include_str!("../tauri.conf.json"))
+        .unwrap_or(serde_json::Value::Null);
+    config
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("0.0.0")
+        .to_owned()
+});
+
 #[derive(Default)]
 pub struct AppState {
     /// One lock *per library*, not one lock over all of them.
@@ -2480,6 +2492,12 @@ fn release_url_is_safe(url: &str) -> bool {
         })
 }
 
+/// `v0.1.0` and `0.1.0` name the same release; GitHub tags carry the `v`.
+fn parse_release_tag(tag: &str) -> R<semver::Version> {
+    semver::Version::parse(tag.trim().trim_start_matches('v'))
+        .map_err(|_| "GitHub returned an invalid release version".to_string())
+}
+
 #[tauri::command]
 async fn check_for_updates() -> R<UpdateInfo> {
     let agent = ureq::Agent::config_builder()
@@ -2490,21 +2508,19 @@ async fn check_for_updates() -> R<UpdateInfo> {
         .get("https://api.github.com/repos/notdefined-inc/openfoto/releases/latest")
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", concat!("OpenFoto/", env!("CARGO_PKG_VERSION")))
+        .header("User-Agent", format!("OpenFoto/{}", *APP_VERSION))
         .call()
         .map_err(err)?;
     let release: GithubRelease = serde_json::from_reader(response.body_mut().as_reader()).map_err(err)?;
     if release.draft || release.prerelease || !release_url_is_safe(&release.html_url) {
         return Err("GitHub returned a release OpenFoto will not offer".into());
     }
-    let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(err)?;
-    let latest_text = release.tag_name.trim().trim_start_matches('v');
-    let latest = semver::Version::parse(latest_text)
-        .map_err(|_| "GitHub returned an invalid release version".to_string())?;
+    let current = semver::Version::parse(&APP_VERSION).map_err(err)?;
+    let latest = parse_release_tag(&release.tag_name)?;
     Ok(UpdateInfo {
+        available: latest > current,
         current: current.to_string(),
         latest: latest.to_string(),
-        available: latest > current,
         url: release.html_url,
     })
 }
@@ -3620,5 +3636,55 @@ mod tests {
         assert!(!release_url_is_safe(
             "https://github.com/notdefined-inc/openfoto/releases/tag/v0.1.0?download=1"
         ));
+    }
+
+    /// Switching library must reload an open map, not only blank it. The first attempt
+    /// cleared the points and left the map reading "Loading locations…" for good.
+    #[test]
+    fn source_switch_reloads_an_open_map() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../dist/app.js"))
+            .unwrap();
+        let body = src
+            .split_once("async function selectSource(")
+            .expect("selectSource")
+            .1
+            .split_once("\nasync function loadMapData(")
+            .expect("loadMapData follows selectSource")
+            .0;
+        assert!(
+            body.contains("MAP.points = [];"),
+            "selectSource must drop the previous library's points"
+        );
+        assert!(
+            body.contains("if (!$(\"#mapview\").hidden) loadMapData();"),
+            "selectSource must reload the map for the new library"
+        );
+        // A slow response from a library the user has already left must be discarded;
+        // comparing `S.source` alone cannot catch a switch away and back again.
+        assert!(src.contains("if (MAP.request !== request || S.source !== source) return;"));
+    }
+
+    /// The installed app compares itself against GitHub using the version in
+    /// `tauri.conf.json`, not the workspace `Cargo.toml`. Comparing against the
+    /// workspace version made the latest release look newer than itself.
+    #[test]
+    fn update_check_uses_the_release_version_not_the_workspace_version() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(&*APP_VERSION, conf["version"].as_str().unwrap());
+        assert_ne!(
+            &*APP_VERSION,
+            env!("CARGO_PKG_VERSION"),
+            "these have drifted together — the regression this guards is no longer visible"
+        );
+        // The bug in the user's hands: 0.1.0 installed, v0.1.0 published, banner shown.
+        let current = semver::Version::parse(&APP_VERSION).unwrap();
+        let published = format!("v{}", *APP_VERSION);
+        assert!(
+            parse_release_tag(&published).unwrap() <= current,
+            "an app must not offer itself an update"
+        );
+        assert!(parse_release_tag("v0.2.0").unwrap() > current);
+        assert!(parse_release_tag("nightly").is_err());
     }
 }

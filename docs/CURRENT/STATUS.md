@@ -47,6 +47,15 @@ leave the volume, and `~/.Trash` is on the boot disk, so a library on an externa
 failed with EXDEV for every file and reported moving nothing at all. It falls back to
 copy-then-remove, which ends in the same place.
 
+The map follows the library. Switching source with the map open used to leave the
+previous library's pins on screen; it now drops them and reloads. A response from a
+library the user has already left is discarded by a per-request token rather than by
+comparing the current source, which cannot catch a switch away and straight back.
+
+The update banner compares against the version in `tauri.conf.json`, not the workspace
+`Cargo.toml`. The workspace carries an internal `0.0.1`, so every published release
+looked newer than the installed app and the banner never went away.
+
 Videos are indexed, get poster frames via ffmpeg when it is installed, and play in the
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
