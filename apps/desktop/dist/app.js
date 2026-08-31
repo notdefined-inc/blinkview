@@ -97,6 +97,13 @@ const TRASH = "Trash";
 const RAW_EXT = ["cr2", "cr3", "dng", "nef", "arw", "raf"];
 const isRaw = path => RAW_EXT.includes(String(path).split(".").pop().toLowerCase());
 
+/* Formats the webview cannot decode itself — kept in step with
+   `imageio::needs_conversion`. Zooming into one of these asks the backend's `?full=`
+   route, which transcodes via `sips`, rather than the plain file the webview would
+   choke on. */
+const CONVERT_EXT = [...RAW_EXT, "heic", "heif"];
+const needsConversion = path => CONVERT_EXT.includes(String(path).split(".").pop().toLowerCase());
+
 /* A folder contains everything beneath it (ADR-0009). Compared segment-wise, so
    `Trip2` is not read as living inside `Trip` — the same rule as `in_folder` in the
    backend, and the two must agree or the grid and the counts disagree. */
@@ -1362,10 +1369,14 @@ function openViewer(list, index) {
    if the viewer is still on that photograph. Holding an arrow key then costs a cached
    thumbnail per frame instead of a twelve-megapixel original. */
 let lbLoadSeq = 0;
+// Whether the true original has been requested for the photograph currently showing —
+// reset per photograph in showFull, checked (and set) in zoomAt.
+let lbFullResAsked = false;
 
 function showFull(p) {
   const img = $("#lb-img");
   const seq = ++lbLoadSeq;
+  lbFullResAsked = false;
   const full = photoUrl(p.path) + "?preview=" + p.hash;
   const thumb = photoUrl(p.path) + "?t=" + p.hash;
 
@@ -1385,6 +1396,22 @@ function showFull(p) {
     img.classList.remove("provisional");
   };
   hi.src = full;
+}
+
+/* The lightbox steps through a 2000px preview so an arrow key never waits on a full
+   decode (see showFull) — but a modern camera's long edge is usually well past 2000px,
+   so that preview visibly softens under any real zoom. The moment zoom passes 1x, ask
+   for the true original once and swap it in when it arrives; #lb-img is bounded by
+   max-width/max-height (app.css), so a higher-resolution bitmap lands in the same CSS
+   box with no layout jump. */
+function loadFullRes(p) {
+  const seq = lbLoadSeq;
+  const img = $("#lb-img");
+  const url = needsConversion(p.path) ? photoUrl(p.path) + "?full=" + p.hash : photoUrl(p.path);
+  const hi = new Image();
+  hi.decoding = "async";
+  hi.onload = () => { if (seq === lbLoadSeq) img.src = url; };
+  hi.src = url;
 }
 
 /** Warm the neighbours, so the next arrow press is already decoded. */
@@ -1576,6 +1603,11 @@ function zoomAt(factor, clientX, clientY) {
   const before = S.zoom;
   S.zoom = Math.max(1, Math.min(MAX_ZOOM, S.zoom * factor));
   if (S.zoom === before) return;
+  if (S.zoom > 1 && !lbFullResAsked) {
+    lbFullResAsked = true;
+    const p = S.lbList[S.lbIndex];
+    if (p && p.kind !== "video") loadFullRes(p);
+  }
   const r = img.getBoundingClientRect();
   const cx = clientX - (r.left + r.width / 2);
   const cy = clientY - (r.top + r.height / 2);

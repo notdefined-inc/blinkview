@@ -727,8 +727,6 @@ face alone, which is the intended bias. Reproduce with
   cause of sluggish scrolling while analysis runs. Video poster renders were moved to
   their own two-thread pool (2026-08-30) and no longer add to the competition; analysis
   workers vs image decodes does. Not yet measured.
-- Lightbox zoom is transform-based, so at very high zoom the browser upscales the
-  already-decoded bitmap rather than re-decoding at native resolution.
 - `scenery` is not implemented — spec task 11.
 - `faces` cannot yet *move* photos into per-person folders; review teaches identities
   but filing them is still to come.
@@ -762,8 +760,21 @@ face alone, which is the intended bias. Reproduce with
   rendered through `sips` at full sensor resolution (6000x4000 for both samples) instead
   of stretching the small embedded one, falling back to that small preview when `sips`
   is unavailable. Verified with a regression test exercising the exact shortcut
-  condition; full sensor-resolution rendering against real ARW/RAF files still wants a
-  manual check on hardware, since no RAW fixtures are checked into the repo.
+  condition, and live against the six real RAW samples in `rawlib` (CR2, CR3, DNG, NEF,
+  ARW, RAF) — each now opens in the lightbox instead of a broken image.
+- 2026-08-31 Zooming past 1x in the lightbox now loads the true original instead of
+  stretching the 2000px preview: the preview kept stepping between photos fast (no
+  12–48MP decode per arrow press), but zoom applied a CSS `scale()` to that same capped
+  bitmap with nothing re-decoded at native resolution, so any real magnification looked
+  soft — most cameras' long edge is well past 2000px. The moment `zoomAt` crosses 1x it
+  asks once for the untouched original (`photo://<path>` for anything the webview can
+  decode natively) or the `?full=` route already built for HEIC/RAW (`sips` at full
+  sensor resolution) and swaps it in when it arrives; `#lb-img` is bounded by
+  max-width/max-height, so the swap lands in the same CSS box with no layout jump.
+  Verified live: a 4000x1848 JPEG went from a 2000x924 preview to its true 1848x4000 on
+  zoom, and `sample.cr3`/`sample.arw` in `rawlib` went from the 2000px derived preview to
+  the full 6000x4000 `sips` render, all with no console errors. Stepping to the next
+  photo still resets to the fast preview.
 - 2026-08-31 Peeking and knowing a folder's size before adding it. A folder dropped on
   the window — or a photograph opened from Finder — opens a **read-only peek**: the
   files directly inside it, ordered by filename, with no marker, no watcher, no
