@@ -112,6 +112,7 @@ macro_rules! bridge {
         $( #app: [$($aname:ident ( $($aarg:ident : $aty:ty),* $(,)? )),* $(,)?])*
         $( #state: [$($sname:ident ( $($sarg:ident : $sty:ty),* $(,)? )),* $(,)?])*
         $( #plain: [$($pname:ident ( $($parg:ident : $pty:ty),* $(,)? )),* $(,)?])*
+        $( #dev: [$($dname:ident ( $($darg:ident : $dty:ty),* $(,)? )),* $(,)?])*
         $( #sync: [$($yname:ident ()),* $(,)?])*
         $(,)?
     ) => {
@@ -163,6 +164,21 @@ macro_rules! bridge {
                         Box::pin(async move {
                             let _ = remote_args(&v);
                             crate::$yname(app.state::<crate::AppState>()).into_out()
+                        })
+                    }));
+                )*
+            )*
+            // Dev-only commands are compiled out of a release build (#[cfg(debug_assertions)]
+            // in lib.rs), so their adapters must be too — hence this section exists.
+            #[cfg(debug_assertions)]
+            $(
+                $(
+                    add(stringify!($dname), Arc::new(move |_app: tauri::AppHandle, v: serde_json::Value| -> BridgeFut {
+                        Box::pin(async move {
+                            let args = remote_args(&v)?;
+                            $( let $darg: $dty = remote_arg(args, stringify!($darg))?; )*
+                            let out = crate::$dname($($darg),*).await?;
+                            serde_json::to_value(out).map_err(err)
                         })
                     }));
                 )*
@@ -248,6 +264,8 @@ bridge! {
         models_status(),
         check_for_updates(),
         open_update(url: String),
+    ]
+    #dev: [
         bench_payload(n: usize),
     ]
     #sync: [
