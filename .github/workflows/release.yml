@@ -76,6 +76,7 @@ jobs:
             diffutils
             tar
             xz
+            git
 
       - uses: dtolnay/rust-toolchain@stable
         with:
