@@ -16,10 +16,11 @@ use blinkview_core::{
     journal::Journal,
     analyze, plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
 };
+mod remote;
 mod watch;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use chrono::{Datelike, NaiveDateTime, Utc};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,7 +44,7 @@ fn emitter<'a>(
     source: &'a str,
 ) -> impl Fn(usize, usize) + Sync + 'a {
     move |done, total| {
-        let _ = app.emit("progress", ProgressEvent { op, done, total, source });
+        remote::emit_all(app, "progress", &ProgressEvent { op, done, total, source });
     }
 }
 
@@ -133,6 +134,9 @@ pub struct AppState {
     /// the search. Built on first use, not at startup — a library nobody searches
     /// should not pay for it.
     text_encoder: Mutex<Option<semantic::TextEncoder>>,
+    /// The remote bridge (ADR-0021) while it runs: its listener, token and clients.
+    /// `None` means nothing is listening — the off state, and the default.
+    remote: Mutex<Option<std::sync::Arc<remote::RemoteShared>>>,
 }
 
 // ---------------------------------------------------------------- sources
@@ -336,7 +340,7 @@ fn start_watching(app: &tauri::AppHandle, state: &AppState, root: &str) {
         match changed {
             Ok(0) => {}
             Ok(n) => {
-                let _ = app.emit("library-changed", (root_owned.clone(), n));
+                remote::emit_all(&app, "library-changed", &(root_owned.clone(), n));
             }
             Err(e) => eprintln!("[blinkview] rescan after a change failed: {e}"),
         }
@@ -405,7 +409,7 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
         eprintln!("[blinkview] scan on open failed for {root}: {e}");
     }
     if let Some(app) = &handle {
-        let _ = app.emit("source-ready", root.to_string());
+        remote::emit_all(app, "source-ready", &root.to_string());
     }
 
     let mut libs = state.libs.lock().map_err(err)?;
@@ -1214,7 +1218,7 @@ fn same_source(a: &str, b: &str) -> bool {
 /// but never the default: the cache costs only a rescan, while the ratings and names
 /// go for good.
 #[tauri::command]
-fn remove_source(
+async fn remove_source(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     path: String,
@@ -2071,9 +2075,9 @@ async fn models_status() -> R<Vec<ModelStatus>> {
 /// Download any missing models. Face detection cannot run without them, so the app
 /// offers this rather than leaving the user to read a README.
 #[tauri::command]
-async fn models_fetch(app: tauri::AppHandle) -> R<String> {
+async fn models_fetch(app: tauri::AppHandle, _state: tauri::State<'_, AppState>) -> R<String> {
     let sink = |name: &str, done: usize, total: usize| {
-        let _ = app.emit("progress", ProgressEvent { op: "models", done, total, source: "" });
+        remote::emit_all(&app, "progress", &ProgressEvent { op: "models", done, total, source: "" });
         let _ = name;
     };
     let got = model_fetch::fetch_missing(&sink).map_err(err)?;
@@ -3351,6 +3355,9 @@ async fn undo(state: tauri::State<'_, AppState>, path: String, id: Option<String
 /// served only if it resolves inside a folder the user has actually added.
 /// Point `blinkview-core` at the ffmpeg bundled beside this executable.
 ///
+/// Also called, over HTTP, by the remote bridge (ADR-0021) — same function, so the
+/// boundary cannot drift between the window and a paired device.
+///
 /// Tauri's `externalBin` places `ffmpeg-<target-triple>` next to the binary — inside
 /// `Contents/MacOS` on macOS — and strips the triple at install time, so at runtime it
 /// is simply `ffmpeg`. Core cannot ask Tauri where that is without depending on Tauri,
@@ -3538,7 +3545,7 @@ fn video_thumb_miss(
     hash.is_some() && thumb.is_some_and(|path| !path.exists())
 }
 
-fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
+pub(crate) fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
     let deny = |code: u16| {
         http::Response::builder()
             .status(code)
@@ -3749,7 +3756,7 @@ fn ok_response(bytes: Vec<u8>, path: &std::path::Path) -> http::Response<Vec<u8>
         .unwrap()
 }
 
-fn percent_decode(s: &str) -> Result<String, ()> {
+pub(crate) fn percent_decode(s: &str) -> Result<String, ()> {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -3783,7 +3790,7 @@ fn queue_open_urls(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
         }
     }
     for path in paths {
-        let _ = app.emit("open-path", path);
+        remote::emit_all(app, "open-path", &path);
     }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -3810,6 +3817,7 @@ pub fn run() {
                     *slot = Some(app.handle().clone());
                 }
             }
+            remote::autostart_if_asked(app.handle());
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("photo", |ctx, request, responder| {
@@ -3853,7 +3861,8 @@ pub fn run() {
             folder_view, set_folder_view,
             plan_move, apply_move, duplicate_review, apply_duplicate_review,
             share_photos, start_file_drag, check_for_updates, open_update,
-            forget_person, analyze_all, source_data, pending_work, analyze_resume
+            forget_person, analyze_all, source_data, pending_work, analyze_resume,
+            remote::remote_start, remote::remote_stop, remote::remote_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building blinkview")

@@ -44,9 +44,18 @@ function hydrate(list) {
 
 const photoUrl = p => {
   const abs = p.startsWith("/") ? p : `${S.source}/${p}`;
+  // Over the remote bridge (ADR-0021) pixels arrive under /photo, one encoded
+  // segment per path segment, so every caller's "?t=/?preview=/?full=" append
+  // still lands in the query string.
+  if (window.__BLINKVIEW_REMOTE__) return "/photo" + abs.split("/").map(encodeURIComponent).join("/");
   return "photo://localhost" + encodeURIComponent(abs).replace(/%2F/g, "/");
 };
 const dialog = window.__TAURI__.dialog;
+
+/* Remote mode (ADR-0021): the whole app runs in a paired phone's browser through the
+   bridge, but the services that hand files to macOS cannot follow. One flag, one
+   guard per native touchpoint. */
+const REMOTE = Boolean(window.__BLINKVIEW_REMOTE__);
 
 const S = {
   sources: [],
@@ -666,7 +675,7 @@ function cellFor(p, w, h) {
         e.dataTransfer.effectAllowed = "copy";
         e.dataTransfer.setData("text/plain", p.name);
         const hashes = S.sel.has(p.hash) ? [...S.sel] : [p.hash];
-        invoke("start_file_drag", { path: S.source, hashes }).catch(error => toast(String(error), "error"));
+        if (!REMOTE) invoke("start_file_drag", { path: S.source, hashes }).catch(error => toast(String(error), "error"));
         return;
       }
       dragHash = p.hash;
@@ -934,6 +943,7 @@ async function setDateTimePrompt(hashes = [...S.sel]) {
 
 async function shareHashes(hashes) {
   if (!hashes?.length) return;
+  if (REMOTE) { toast("Sharing needs the desktop app", "error"); return; }
   try { await invoke("share_photos", { path: S.source, hashes }); }
   catch (e) { toast(String(e), "error"); }
 }
@@ -950,7 +960,7 @@ function showCtx(x, y) {
   const items = [];
   if (one) items.push(item("Open", "↩", () => openLightbox(one)));
   if (S.peek) {
-    items.push(item(`Share ${n}…`, "", () => shareHashes([...S.sel])));
+    if (!REMOTE) items.push(item(`Share ${n}…`, "", () => shareHashes([...S.sel])));
     items.push(el("hr"));
     items.push(el("button", {
       class: "readonly", role: "menuitem", disabled: true,
@@ -967,7 +977,7 @@ function showCtx(x, y) {
   items.push(item(`Colour ${n}\u2026`, "", colourSelectedPrompt));
   items.push(item(`Set Date & Time for ${n}\u2026`, "", () => setDateTimePrompt([...S.sel])));
   items.push(item(`Where was this?\u2026`, "", placePrompt));
-  items.push(item(`Share ${n}\u2026`, "", () => shareHashes([...S.sel])));
+  if (!REMOTE) items.push(item(`Share ${n}\u2026`, "", () => shareHashes([...S.sel])));
   items.push(item(`Strip metadata from ${n}\u2026`, "", stripSelectedPrompt));
   items.push(el("hr"));
   if (S.folder === TRASH) items.push(item(`Restore ${n}`, "", restoreSelected));
@@ -2416,6 +2426,7 @@ function namePrompt(id) {
 }
 
 async function addSource() {
+  if (REMOTE) { toast("Adding folders needs the desktop app", "error"); return; }
   const picked = await dialog.open({ directory: true, multiple: false, title: "Add a photo folder" });
   if (!picked) return;
   const survey = await surveyBeforeAdd(picked);
@@ -4085,6 +4096,69 @@ async function placePrompt() {
   await refreshSources(); await loadPhotos();
 }
 
+/* ---------------- remote control (ADR-0021) ----------------
+   The window shows a QR; a phone that scans it loads this same app through the
+   bridge and drives the same libraries. The dialog live-updates its connected list
+   off the `remote-clients` event, which the bridge emits to the window and to every
+   paired device alike. */
+
+async function remoteDialog() {
+  let st;
+  try { st = await invoke("remote_status"); }
+  catch (e) { toast(String(e), "error"); return; }
+
+  let d;
+  const body = el("div", { class: "remote-body" });
+  const clientsLine = el("p", { class: "asktext", style: "color:var(--muted)" });
+  const paint = s => {
+    const kids = [el("p", { class: "asktext" },
+      "Scan this with your phone's camera — it opens your library in the browser. Phone and Mac must share the same Wi-Fi.")];
+    if (s.enabled) {
+      const qr = el("div", { class: "remote-qr" });
+      qr.innerHTML = s.qr || "";
+      kids.push(qr);
+      kids.push(el("p", { class: "asktext remote-url", style: "user-select:all" }, s.url));
+      if (s.disabled) kids.push(el("p", { class: "asktext" },
+        "Pairing locked after repeated wrong tokens. Disconnect, then turn it on again."));
+    }
+    kids.push(clientsLine);
+    kids.push(el("div", { class: "askrow" },
+      el("button", { class: "btn ghost", onclick: () => d.done(null) }, s.enabled ? "Close" : "Cancel"),
+      s.enabled
+        ? el("button", {
+            class: "btn solid-danger",
+            onclick: async () => {
+              try { await invoke("remote_stop"); paint(await invoke("remote_status")); }
+              catch (e) { toast(String(e), "error"); }
+            }
+          }, "Disconnect")
+        : el("button", {
+            class: "btn",
+            onclick: async () => {
+              try { paint(await invoke("remote_start")); }
+              catch (e) { toast(String(e), "error"); }
+            }
+          }, "Turn on")));
+    body.replaceChildren(...kids);
+    clientsLine.textContent = s.enabled
+      ? (s.clients.length ? `Connected: ${s.clients.join(" · ")}` : "No device connected yet.")
+      : "Nothing is listening until you turn this on.";
+  };
+
+  d = dialogFrame("Control from your phone", [body]);
+  d.attach(v => { unlisten(); resolve(v); });
+  let resolve;
+  const done = new Promise(r => { resolve = r; });
+  const unlistenP = listen("remote-clients", () => {
+    invoke("remote_status").then(paint).catch(() => { /* window is closing anyway */ });
+  });
+  const unlisten = () => { unlistenP.then(f => f()).catch(() => {}); };
+  paint(st);
+  document.addEventListener("keydown", d.onKey, true);
+  document.body.append(d.box);
+  return done;
+}
+
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
 $("#peek-close").onclick = closePeek;
@@ -4108,6 +4182,16 @@ $("#btn-theme").onclick = () => {
   try { localStorage.setItem("of-theme", next); } catch (e) { /* private mode: fine to forget */ }
 };
 $("#btn-review").onclick = openReview;
+$("#btn-remote").onclick = () => { remoteDialog(); };
+
+/* The bridge serves this same file to the phone, where the button that summons the
+   QR would be a button that makes the phone a phone. Native-only affordances go too. */
+if (REMOTE) {
+  for (const id of ["#btn-remote", "#btn-add", "#sel-share", "#dup-share"]) {
+    const b = $(id);
+    if (b) b.hidden = true;
+  }
+}
 $("#sheet-close").onclick = () => ($("#sheet").hidden = true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") $("#sheet").hidden = true; };
 $("#lb-close").onclick = closeLightbox;

@@ -1,6 +1,6 @@
 # Remote control — browse and drive the app from a paired device
 
-Status: Agreed   Owner: somesh   Date: 2026-08-31
+Status: Done (shipped 2026-08-31)   Owner: somesh   Date: 2026-08-31
 
 ## Problem
 
@@ -125,3 +125,25 @@ in text, connected-device name, Disconnect. The server dies with the toggle.
 - [ ] 7. QR glass dialog, connections list, Disconnect (touches: dist, src-tauri)
 - [ ] 8. Security and parity tests: 403s, lockout, boundary parity, journal-on-remote-move (touches: src-tauri, core tests)
 - [ ] 9. STATUS/ARCHITECTURE/ROADMAP updates; spec → Agreed before task 2 starts (touches: docs)
+
+## Shipped (2026-08-31)
+
+All eleven criteria verified except the visual QR scan itself. The dispatch registry
+(`bridge!` in `src-tauri/src/remote.rs`) names every command with its exact parameters
+so adapters cannot drift from signatures; the parity test scans the shipped `app.js`
+and `generate_handler!` and caught two real omissions during development (`photos`,
+`remove_source`). Live verification over a real socket, with the pairing token, from a
+separate process: every route 403s without the cookie; pairing plants an HttpOnly
+cookie via 303; the shim loads ahead of `app.js`; `list_sources`/`photos`/`rescan`/
+`pending_work` round-trip; a rating written over the socket landed in `blinkview.json`
+on disk; `plan_move` → `apply_move` → ⌘Z-style `undo` restored the tree with a journal
+id ("Reversed 2 changes"); thumbnails and the 2000px preview served as real JPEGs;
+`Range` returned 206 with `Content-Range` (video seeking); paths outside every source
+and traversal paths were refused; the tenth wrong pair token locked pairing (423) while
+the paired cookie kept working. Scan progress and `source-ready` events streamed to the
+connected client live.
+
+Addition during implementation: `BLINKVIEW_REMOTE_START=1` starts the bridge at launch
+(read once from the environment, never persisted) for scripted checks; the toggle
+remains the primary path. The phone-side visual pass — scanning the QR and scrolling
+the grid in a real phone browser — is the one criterion left for hands-on confirmation.

@@ -27,6 +27,16 @@ rayon = { workspace = true }
 semver = "1"
 ureq = { workspace = true }
 
+# The remote bridge (ADR-0021): an HTTP+WebSocket server the phone's browser talks to.
+# axum sits on the tokio runtime Tauri already runs, so this adds no second runtime.
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt", "net", "macros", "time", "sync"] }
+futures-util = "0.3"
+# 128-bit pairing tokens and nothing else.
+getrandom = "0.3"
+# The pairing QR, rendered to an SVG string with no image dependency.
+qrcodegen = "1.8"
+
 # UI-verification bridge. cargo cannot select dependencies on cfg(debug_assertions),
 # so this is a real feature, on by default for development and dropped from a release
 # build with --no-default-features. Not macOS-only: `build.rs` installs its capability

@@ -2,6 +2,25 @@
 
 _Last updated: 2026-08-31 · shipping version 0.1.4_
 
+## Remote control (new)
+
+**Control from your phone.** The titlebar's QR button starts the remote bridge
+(ADR-0021, spec docs/SPECS/done/2026-08-31-remote-control.md): a QR code the phone's
+camera opens, loading the *same* frontend in the phone's browser over an axum
+HTTP+WebSocket server inside the app. A fresh 128-bit token gates every route; ten
+wrong pair attempts lock pairing until the bridge is toggled again; Disconnect stops
+the listener outright. The phone gets full control — browse, search (semantic too),
+lightbox, video seeking (Range), and every writing action through the same Plan →
+preview → journal discipline, so a move made on the phone is ⌘Z-undoable on the
+desktop. Dispatch is one registry shared with the Tauri window (the `bridge!` macro in
+`src-tauri/src/remote.rs` names each command with its exact parameters), and a test
+scans the shipped `app.js` + `generate_handler!` to enforce parity, so future features
+reach the phone with no bridge change unless they lean on a macOS-native service
+(share, drag-out, folder pickers — the sanctioned exemptions, gated in the frontend on
+`__BLINKVIEW_REMOTE__`). `BLINKVIEW_REMOTE_START=1` in the environment starts the
+bridge at launch for scripted checks. The channel is plaintext on the LAN for now —
+the accepted v1 risk, to be closed by the E2E-encryption spec before the relay spec.
+
 ## Current work — desktop app
 
 `apps/desktop` runs. It is a viewer before it is a library: double-clicking a
@@ -702,6 +721,11 @@ face alone, which is the intended bias. Reproduce with
 `cargo run --release --example eval_faces -- <library> <seeds>`.
 
 ## Known issues
+- An exFAT volume that has gone to sleep (or been disconnected while its mountpoint
+  lingers) stalls `list_sources` for the whole window: `describe` over that source
+  blocks on volume IO, and every sidebar refresh waits behind it. Surfaced while
+  verifying the remote bridge — the phone sees exactly what the window sees — but
+  pre-existing and desktop-side. A per-source IO timeout is the shape of the fix.
 - Nothing tells a new user the models exist until they reach a feature that needs them.
   `models_fetch` is offered from the People pane (`app.js:1852`) and the scene-search
   empty state (`app.js:3221`), but there is no first-run notice and no settings entry to

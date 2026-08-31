@@ -128,6 +128,28 @@ The same handler produces thumbnails and HEIC
 transcodes on demand, which is what lets a large library paint immediately — the
 virtualised grid only ever requests the few dozen images actually on screen.
 
+## Serving the UI to a paired device
+
+Since ADR-0021 the window's bridge (`src-tauri/src/remote.rs`) is the third peer over
+one engine. An explicit toggle (or `BLINKVIEW_REMOTE_START=1` in the environment)
+starts an axum HTTP+WebSocket server on an ephemeral port; the QR it shows encodes
+`http://<lan-ip>:<port>/p/<token>` with a fresh 128-bit token. Every route — static
+frontend, `/photo`, `/ws` — requires the session cookie that route plants; ten wrong
+pair attempts lock pairing until the bridge is toggled again.
+
+The phone's browser loads the *same* `dist/` frontend, with a shim (`remote.js`)
+injected ahead of `app.js` that redefines `window.__TAURI__`: `invoke` becomes a
+WebSocket round-trip, `listen` a subscription, and the pixel routes map onto the same
+`serve_photo` (encoded path passed through untouched — the scheme handler owns
+decoding and the boundary). Dispatch is a registry macro that names each command with
+its exact parameters and calls the real command function, so an adapter cannot drift
+from a signature, and a test compares the registry against what `app.js` invokes and
+what `generate_handler!` registers — the parity rule. Events reach the device because
+every `app.emit` is funnelled through `remote::emit_all`, which also broadcasts a
+frame to a channel each connection subscribes to; new event channels push with no
+bridge change. Native services (share, drag-out, folder pickers) are the one
+sanctioned divergence and are gated on `__BLINKVIEW_REMOTE__` in the frontend.
+
 Because WKWebView cannot be relied on to cache custom-scheme responses, and grid cells
 are destroyed offscreen and rebuilt on re-entry, the handler keeps its own 64 MiB
 byte-budgeted LRU over the small derived files (thumbnails, previews): a cache hit never
