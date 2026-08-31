@@ -1403,14 +1403,34 @@ function showFull(p) {
    so that preview visibly softens under any real zoom. The moment zoom passes 1x, ask
    for the true original once and swap it in when it arrives; #lb-img is bounded by
    max-width/max-height (app.css), so a higher-resolution bitmap lands in the same CSS
-   box with no layout jump. */
+   box with no layout jump.
+
+   RAW/HEIC go through the `?full=` route, which runs `sips` — measured close to a
+   second on a real RAW sample, not instant — so this also flags lbFullResLoading,
+   which the zoom label reads: a 0.4px blur (below) is lost against an already-upscaled
+   zoomed image, and a wait that long with no visible change reads as broken rather
+   than as loading. */
+let lbFullResLoading = false;
+
 function loadFullRes(p) {
   const seq = lbLoadSeq;
   const img = $("#lb-img");
   const url = needsConversion(p.path) ? photoUrl(p.path) + "?full=" + p.hash : photoUrl(p.path);
+  img.classList.add("provisional");
+  lbFullResLoading = true;
+  applyZoom();
+  const done = () => {
+    img.classList.remove("provisional");
+    if (seq !== lbLoadSeq) return;
+    lbFullResLoading = false;
+    applyZoom();
+  };
   const hi = new Image();
   hi.decoding = "async";
-  hi.onload = () => { if (seq === lbLoadSeq) img.src = url; };
+  hi.onload = () => { done(); if (seq === lbLoadSeq) img.src = url; };
+  // The one-shot request failed (e.g. sips choked) — let the next zoom past 1x try
+  // again instead of leaving this photograph stuck on the capped preview.
+  hi.onerror = () => { done(); if (seq === lbLoadSeq) lbFullResAsked = false; };
   hi.src = url;
 }
 
@@ -1593,7 +1613,13 @@ function applyZoom() {
   img.style.cursor = S.zoom > 1 ? "grab" : "";
   const lb = $("#lightbox");
   lb.dataset.zoomed = S.zoom > 1 ? "1" : "0";
-  $("#lb-zoom").textContent = S.zoom > 1 ? `${Math.round(S.zoom * 100)}%` : "";
+  // The provisional blur loadFullRes applies is barely visible on an already-upscaled
+  // zoomed image, and RAW/HEIC's sips conversion can run close to a second — long
+  // enough that "nothing visibly changed" reads as broken rather than as loading. Say
+  // so in the one place that isn't sitting under the zoomed bitmap itself.
+  $("#lb-zoom").textContent = S.zoom > 1
+    ? `${Math.round(S.zoom * 100)}%${lbFullResLoading ? " · loading full quality…" : ""}`
+    : "";
 }
 
 /* Zoom about the pointer, so the point under the cursor stays put. */
