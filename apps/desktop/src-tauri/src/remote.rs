@@ -48,7 +48,8 @@ pub fn emit_all<T: Serialize>(app: &tauri::AppHandle, event: &str, payload: &T) 
 /// serialised result (or message) out.
 pub type BridgeFut =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>>;
-pub type BridgeHandler = Arc<dyn Fn(tauri::AppHandle, serde_json::Value) -> BridgeFut + Send + Sync>;
+pub type BridgeHandler =
+    Arc<dyn Fn(tauri::AppHandle, serde_json::Value) -> BridgeFut + Send + Sync>;
 
 /// Commands with no browser equivalent (ADR-0021): they exist to hand files to macOS
 /// and cannot be dispatched to a phone. The parity test exempts exactly this list and
@@ -83,7 +84,9 @@ impl<T: Serialize> IntoBridgeOut for Result<T, String> {
 pub const WINDOW_ONLY: &[&str] = &["remote_start", "remote_stop", "remote_status"];
 
 /// The arguments object of one request, or `None` when the caller sent none.
-fn remote_args(v: &serde_json::Value) -> Result<Option<&serde_json::Map<String, serde_json::Value>>, String> {
+fn remote_args(
+    v: &serde_json::Value,
+) -> Result<Option<&serde_json::Map<String, serde_json::Value>>, String> {
     match v {
         serde_json::Value::Null => Ok(None),
         v => Ok(Some(v.as_object().ok_or("arguments must be an object")?)),
@@ -96,7 +99,10 @@ fn remote_arg<T: serde::de::DeserializeOwned>(
     args: Option<&serde_json::Map<String, serde_json::Value>>,
     name: &str,
 ) -> Result<T, String> {
-    let raw = args.and_then(|m| m.get(name)).cloned().unwrap_or(serde_json::Value::Null);
+    let raw = args
+        .and_then(|m| m.get(name))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     serde_json::from_value(raw).map_err(|e| format!("argument {name}: {e}"))
 }
 
@@ -410,7 +416,13 @@ const REMOTE_JS: &str = include_str!("remote.js");
 
 macro_rules! dist_file {
     ($name:literal, $mime:literal) => {
-        ($name, ($mime, include_bytes!(concat!("../../dist/", $name)).as_slice()))
+        (
+            $name,
+            (
+                $mime,
+                include_bytes!(concat!("../../dist/", $name)).as_slice(),
+            ),
+        )
     };
 }
 
@@ -449,7 +461,11 @@ fn inject_shim(html: &str) -> String {
 /// The page for one request. `mobile` selects the mobile view layer; the caller
 /// decides from the query (?m=1 today, the UA flip landing with the mobile shell).
 fn index_page_for(mobile: bool) -> std::borrow::Cow<'static, str> {
-    let (file, fallback) = if mobile { ("mobile.html", MOBILE_HTML) } else { ("index.html", INDEX_HTML) };
+    let (file, fallback) = if mobile {
+        ("mobile.html", MOBILE_HTML)
+    } else {
+        ("index.html", INDEX_HTML)
+    };
     match dist_from_disk(file) {
         Some((_, bytes)) => std::borrow::Cow::Owned(inject_shim(&String::from_utf8_lossy(&bytes))),
         None => std::borrow::Cow::Owned(inject_shim(fallback)),
@@ -479,9 +495,9 @@ fn dist_from_disk(name: &str) -> Option<(String, Vec<u8>)> {
     Some((mime.to_owned(), bytes))
 }
 
-use axum::extract::{Request, State};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{Request, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
@@ -534,8 +550,10 @@ async fn pair(
     }
     let cookie = format!("bvr={}; HttpOnly; Path=/; SameSite=Lax", bs.shared.token);
     let mut res = StatusCode::SEE_OTHER.into_response();
-    res.headers_mut().insert(header::SET_COOKIE, cookie.parse().expect("cookie header"));
-    res.headers_mut().insert(header::LOCATION, "/".parse().expect("location header"));
+    res.headers_mut()
+        .insert(header::SET_COOKIE, cookie.parse().expect("cookie header"));
+    res.headers_mut()
+        .insert(header::LOCATION, "/".parse().expect("location header"));
     res
 }
 
@@ -572,7 +590,11 @@ async fn remote_js(State(bs): State<BridgeState>, headers: HeaderMap) -> Respons
     if !authed(&headers, &bs.shared.token) {
         return forbid("Not paired.");
     }
-    ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], REMOTE_JS).into_response()
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        REMOTE_JS,
+    )
+        .into_response()
 }
 
 async fn static_file(State(bs): State<BridgeState>, headers: HeaderMap, req: Request) -> Response {
@@ -694,8 +716,12 @@ async fn connected(bs: BridgeState, sock: WebSocket, ua: String) {
 
     while let Some(Ok(msg)) = stream.next().await {
         let Message::Text(txt) = msg else { continue };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) else { continue };
-        let Some(id) = v.get("id").and_then(|x| x.as_u64()) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) else {
+            continue;
+        };
+        let Some(id) = v.get("id").and_then(|x| x.as_u64()) else {
+            continue;
+        };
         let Some(cmd) = v.get("cmd").and_then(|x| x.as_str()).map(str::to_owned) else {
             let _ = out_tx
                 .send(Message::text(
@@ -740,7 +766,9 @@ async fn connected(bs: BridgeState, sock: WebSocket, ua: String) {
 
 /// A port on every interface; the phone reaches it through the LAN address in the QR.
 async fn listen() -> Result<(tokio::net::TcpListener, u16), String> {
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", 0)).await.map_err(err)?;
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", 0))
+        .await
+        .map_err(err)?;
     let port = listener.local_addr().map_err(err)?.port();
     Ok((listener, port))
 }
@@ -777,10 +805,17 @@ pub async fn remote_start(
         off,
         join: Mutex::new(None),
     });
-    let router = router(BridgeState { app: app.clone(), shared: shared.clone() });
+    let router = router(BridgeState {
+        app: app.clone(),
+        shared: shared.clone(),
+    });
     let join = tauri::async_runtime::spawn(async move {
-        let shutdown = async move { let _ = off_rx.wait_for(|v| *v).await; };
-        let _ = axum::serve(listener, router).with_graceful_shutdown(shutdown).await;
+        let shutdown = async move {
+            let _ = off_rx.wait_for(|v| *v).await;
+        };
+        let _ = axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown)
+            .await;
     });
     *shared.join.lock().unwrap_or_else(|p| p.into_inner()) = Some(join);
     *state.remote.lock().unwrap_or_else(|p| p.into_inner()) = Some(shared.clone());
@@ -805,7 +840,12 @@ pub fn autostart_if_asked(app: &tauri::AppHandle) {
 /// Turn the bridge off: stop listening, drop the token, drop the connections.
 #[tauri::command]
 pub async fn remote_stop(state: tauri::State<'_, crate::AppState>) -> CmdResult<()> {
-    if let Some(s) = state.remote.lock().unwrap_or_else(|p| p.into_inner()).take() {
+    if let Some(s) = state
+        .remote
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+    {
         s.stop();
     }
     Ok(())
@@ -877,7 +917,9 @@ mod tests {
         // The list can carry `#[cfg(...)]` attributes, whose own `]` would otherwise
         // be mistaken for the end of the command list. Strip them first.
         while let Some(i) = list.find("#[") {
-            let Some(close) = list[i..].find(']') else { break };
+            let Some(close) = list[i..].find(']') else {
+                break;
+            };
             list.replace_range(i..i + close + 1, "");
         }
         let end = list.find(']').expect("generate_handler list closes");
@@ -904,8 +946,7 @@ mod tests {
             .chain(WINDOW_ONLY.iter())
             .copied()
             .collect();
-        let handlers: std::collections::HashSet<String> =
-            handler_commands().into_iter().collect();
+        let handlers: std::collections::HashSet<String> = handler_commands().into_iter().collect();
 
         for cmd in mobile_commands() {
             assert!(
@@ -979,14 +1020,20 @@ mod tests {
     #[test]
     fn phones_get_mobile_and_explicit_view_flags_win() {
         let mut phone = HeaderMap::new();
-        phone.insert(header::USER_AGENT, "Mozilla/5.0 (iPhone) Mobile/15E148".parse().unwrap());
+        phone.insert(
+            header::USER_AGENT,
+            "Mozilla/5.0 (iPhone) Mobile/15E148".parse().unwrap(),
+        );
         assert!(wants_mobile(&phone, None));
         assert!(!wants_mobile(&phone, Some("full=1")));
 
         let desktop = HeaderMap::new();
         assert!(!wants_mobile(&desktop, None));
         assert!(wants_mobile(&desktop, Some("m=1")));
-        assert!(!wants_mobile(&phone, Some("m=1&full=1")), "full view wins when both flags are present");
+        assert!(
+            !wants_mobile(&phone, Some("m=1&full=1")),
+            "full view wins when both flags are present"
+        );
 
         let page = index_page_for(true);
         let shim = page.find("remote.js").expect("shim injected");

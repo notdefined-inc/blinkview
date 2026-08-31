@@ -43,8 +43,8 @@ pub const SURVEY_LIMIT: usize = 200_000;
 /// converter. Indexing a format we cannot read only produces a file that fails once and
 /// is then recorded as unreadable.
 pub const PHOTO_EXT: &[&str] = &[
-    "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff", "bmp", "ico",
-    "tga", "qoi", "pbm", "pgm", "ppm", "pnm", "hdr", "dds",
+    "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff", "bmp", "ico", "tga", "qoi",
+    "pbm", "pgm", "ppm", "pnm", "hdr", "dds",
 ];
 
 /// Every extension a photograph can have, camera RAW included. RAW is indexed from the
@@ -265,7 +265,10 @@ pub fn survey_folder_cancellable(
         anyhow::bail!("not a directory: {}", root.display());
     }
 
-    let mut survey = Survey { below: Some(0), ..Default::default() };
+    let mut survey = Survey {
+        below: Some(0),
+        ..Default::default()
+    };
     let mut excluded = BTreeSet::new();
     let mut entries_seen = 0usize;
     let mut stack = vec![(root.to_path_buf(), 0usize)];
@@ -302,7 +305,10 @@ pub fn survey_folder_cancellable(
                 } else {
                     stack.push((entry.path(), depth + 1));
                 }
-            } else if ty.is_file() && !fsops::is_sidecar(&entry.path()) && kind_of(&entry.path()).is_some() {
+            } else if ty.is_file()
+                && !fsops::is_sidecar(&entry.path())
+                && kind_of(&entry.path()).is_some()
+            {
                 if depth == 0 {
                     survey.here += 1;
                 } else if let Some(below) = survey.below.as_mut() {

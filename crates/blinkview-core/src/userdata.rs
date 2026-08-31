@@ -243,14 +243,22 @@ impl UserDataSet {
         let mut by_folder = BTreeMap::new();
         by_folder.insert(String::new(), UserData::load(root)?);
         collect(root, root, &mut by_folder)?;
-        Ok(Self { by_folder, dirty: Default::default() })
+        Ok(Self {
+            by_folder,
+            dirty: Default::default(),
+        })
     }
 
     /// Resolved metadata for a photograph, given the folder it lives in.
     pub fn get(&self, hash: &str, folder: &str) -> PhotoMeta {
         let mut here = std::iter::once(folder.to_string()).chain(ancestors(folder));
-        here.find_map(|f| self.by_folder.get(&f).and_then(|u| u.photos.get(hash)).cloned())
-            .unwrap_or_default()
+        here.find_map(|f| {
+            self.by_folder
+                .get(&f)
+                .and_then(|u| u.photos.get(hash))
+                .cloned()
+        })
+        .unwrap_or_default()
     }
 
     /// Change a photograph's metadata, writing into the folder that contains it.
@@ -322,8 +330,14 @@ impl UserDataSet {
     /// Write back only the folders that changed.
     pub fn save(&mut self, root: &Path) -> Result<()> {
         for folder in std::mem::take(&mut self.dirty) {
-            let Some(u) = self.by_folder.get(&folder) else { continue };
-            let dir = if folder.is_empty() { root.to_path_buf() } else { root.join(&folder) };
+            let Some(u) = self.by_folder.get(&folder) else {
+                continue;
+            };
+            let dir = if folder.is_empty() {
+                root.to_path_buf()
+            } else {
+                root.join(&folder)
+            };
             let path = dir.join(FILE);
             if u.photos.is_empty() && u.searches.is_empty() && u.view.is_none() {
                 // An empty file is litter in a folder people browse in Finder.
@@ -357,7 +371,10 @@ impl UserDataSet {
 
     /// The library's saved searches, which live only in the root file.
     pub fn searches(&self) -> &[SavedSearch] {
-        self.by_folder.get("").map(|u| u.searches.as_slice()).unwrap_or(&[])
+        self.by_folder
+            .get("")
+            .map(|u| u.searches.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Add or replace a saved search by name.
@@ -365,7 +382,10 @@ impl UserDataSet {
         let u = self.by_folder.entry(String::new()).or_default();
         u.searches.retain(|s| s.name != name);
         if !query.trim().is_empty() {
-            u.searches.push(SavedSearch { name: name.to_string(), query: query.trim().to_string() });
+            u.searches.push(SavedSearch {
+                name: name.to_string(),
+                query: query.trim().to_string(),
+            });
             u.searches.sort_by(|a, b| a.name.cmp(&b.name));
         }
         self.dirty.insert(String::new());
@@ -403,7 +423,9 @@ impl UserDataSet {
 
 /// Walk for `blinkview.json`, skipping the cache and anything hidden.
 fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, UserData>) -> Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
     for e in entries.flatten() {
         let path = e.path();
         let name = e.file_name();
@@ -472,8 +494,11 @@ mod tests {
     #[test]
     fn is_stored_outside_the_disposable_cache() {
         let p = UserData::path(Path::new("/lib"));
-        assert!(!p.to_string_lossy().contains(".blinkview"),
-            "user-authored data must survive deleting the cache: {}", p.display());
+        assert!(
+            !p.to_string_lossy().contains(".blinkview"),
+            "user-authored data must survive deleting the cache: {}",
+            p.display()
+        );
         assert_eq!(p, Path::new("/lib/blinkview.json"));
     }
 
@@ -482,8 +507,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("of-legacy-{}", std::process::id()));
         let vault = dir.join(".blinkview");
         std::fs::create_dir_all(&vault).unwrap();
-        std::fs::write(vault.join("user.json"),
-            br#"{"photos":{"h":{"rating":3}}}"#).unwrap();
+        std::fs::write(vault.join("user.json"), br#"{"photos":{"h":{"rating":3}}}"#).unwrap();
 
         // An upgrade must not lose ratings written before the move.
         let u = UserData::load(&dir).unwrap();
@@ -492,7 +516,10 @@ mod tests {
         // Saving relocates it and clears the stale copy.
         u.save(&dir).unwrap();
         assert!(dir.join("blinkview.json").exists());
-        assert!(!vault.join("user.json").exists(), "the stale copy should be removed");
+        assert!(
+            !vault.join("user.json").exists(),
+            "the stale copy should be removed"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -516,8 +543,8 @@ mod tests {
     struct Tmp(std::path::PathBuf);
     impl Tmp {
         fn new(name: &str) -> Self {
-            let d = std::env::temp_dir()
-                .join(format!("blinkview-ud-{}-{name}", std::process::id()));
+            let d =
+                std::env::temp_dir().join(format!("blinkview-ud-{}-{name}", std::process::id()));
             let _ = std::fs::remove_dir_all(&d);
             std::fs::create_dir_all(&d).unwrap();
             Self(d)
@@ -558,7 +585,10 @@ mod tests {
         set.edit("h", "Trip/Greece Day3", |u| u.set_rating("h", 4));
         set.save(root).unwrap();
         assert!(root.join("Trip/Greece Day3/blinkview.json").exists());
-        assert!(!root.join("blinkview.json").exists(), "must not write to the root");
+        assert!(
+            !root.join("blinkview.json").exists(),
+            "must not write to the root"
+        );
     }
 
     /// The property the whole decision exists for: copy a folder out on its own and it
@@ -612,7 +642,11 @@ mod tests {
         let d = Tmp::new("rootonly");
         let mut u = UserData::default();
         u.set_rating("h", 3);
-        std::fs::write(d.path().join("blinkview.json"), serde_json::to_vec(&u).unwrap()).unwrap();
+        std::fs::write(
+            d.path().join("blinkview.json"),
+            serde_json::to_vec(&u).unwrap(),
+        )
+        .unwrap();
         let set = UserDataSet::load(d.path()).unwrap();
         // Photograph is two levels down; the root is the outermost cascade level.
         assert_eq!(set.get("h", "Trip/Greece Day3").rating, 3);
@@ -625,7 +659,10 @@ mod tests {
         let d = Tmp::new("rekey");
         std::fs::create_dir_all(d.path().join("Trip")).unwrap();
         let mut set = UserDataSet::default();
-        set.edit("old", "Trip", |u| { u.set_rating("old", 5); u.set_label("old", Some("red".into())); });
+        set.edit("old", "Trip", |u| {
+            u.set_rating("old", 5);
+            u.set_label("old", Some("red".into()));
+        });
         assert!(set.rekey("Trip", "old", "new"));
         set.save(d.path()).unwrap();
 
@@ -645,12 +682,21 @@ mod tests {
         let d = Tmp::new("view");
         std::fs::create_dir_all(d.path().join("Trip/Day1")).unwrap();
         let mut set = UserDataSet::default();
-        set.set_view("Trip", Some(FolderView { sort: "custom".into(), order: vec!["a".into(), "b".into()] }));
+        set.set_view(
+            "Trip",
+            Some(FolderView {
+                sort: "custom".into(),
+                order: vec!["a".into(), "b".into()],
+            }),
+        );
         set.save(d.path()).unwrap();
 
         let read = UserDataSet::load(d.path()).unwrap();
         assert_eq!(read.view("Trip").map(|v| v.sort.as_str()), Some("custom"));
-        assert_eq!(read.view("Trip").unwrap().order, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            read.view("Trip").unwrap().order,
+            vec!["a".to_string(), "b".to_string()]
+        );
         // The child was not arranged, so it inherits nothing: an arrangement is about
         // the folder, unlike a rating, which is about a photograph.
         assert!(read.view("Trip/Day1").is_none());
@@ -663,7 +709,13 @@ mod tests {
         std::fs::create_dir_all(d.path().join("Trip")).unwrap();
         let mut set = UserDataSet::default();
         // No ratings at all — the emptiness check must not treat this as litter.
-        set.set_view("Trip", Some(FolderView { sort: "name".into(), order: vec![] }));
+        set.set_view(
+            "Trip",
+            Some(FolderView {
+                sort: "name".into(),
+                order: vec![],
+            }),
+        );
         set.save(d.path()).unwrap();
         assert!(d.path().join("Trip/blinkview.json").exists());
 
@@ -679,7 +731,13 @@ mod tests {
         std::fs::create_dir_all(d.path().join("Trip")).unwrap();
         let mut set = UserDataSet::default();
         set.edit("h", "Trip", |u| u.set_rating("h", 5));
-        set.set_view("Trip", Some(FolderView { sort: "oldest".into(), order: vec![] }));
+        set.set_view(
+            "Trip",
+            Some(FolderView {
+                sort: "oldest".into(),
+                order: vec![],
+            }),
+        );
         set.save(d.path()).unwrap();
         let read = UserDataSet::load(d.path()).unwrap();
         assert_eq!(read.get("h", "Trip").rating, 5);

@@ -79,10 +79,18 @@ pub fn preview(path: &Path) -> Option<Preview> {
         if span.len < 1024 || span.len > MAX_PREVIEW || span.at.saturating_add(span.len) > size {
             continue;
         }
-        let Some(bytes) = read_at(&mut f, span.at, span.len as usize) else { continue };
-        let Some((w, h)) = viewable_jpeg(&bytes) else { continue };
+        let Some(bytes) = read_at(&mut f, span.at, span.len as usize) else {
+            continue;
+        };
+        let Some((w, h)) = viewable_jpeg(&bytes) else {
+            continue;
+        };
         if w.max(h) >= MIN_LONG {
-            return Some(Preview { jpeg: bytes, width: w, height: h });
+            return Some(Preview {
+                jpeg: bytes,
+                width: w,
+                height: h,
+            });
         }
     }
     None
@@ -166,12 +174,16 @@ fn walk_ifd(f: &mut File, be: bool, at: u64, depth: u8, out: &mut Vec<Span>, see
         return;
     }
     seen.push(at);
-    let Some(count_bytes) = read_at(f, at, 2) else { return };
+    let Some(count_bytes) = read_at(f, at, 2) else {
+        return;
+    };
     let count = u16b(&count_bytes, be) as usize;
     if count == 0 || count > 512 {
         return;
     }
-    let Some(entries) = read_at(f, at + 2, count * 12 + 4) else { return };
+    let Some(entries) = read_at(f, at + 2, count * 12 + 4) else {
+        return;
+    };
 
     let value = |tag: u16| -> Option<u32> {
         (0..count).find_map(|i| {
@@ -180,7 +192,10 @@ fn walk_ifd(f: &mut File, be: bool, at: u64, depth: u8, out: &mut Vec<Span>, see
         })
     };
     if let (Some(off), Some(len)) = (value(T_JPEG_OFFSET), value(T_JPEG_LENGTH)) {
-        out.push(Span { at: u64::from(off), len: u64::from(len) });
+        out.push(Span {
+            at: u64::from(off),
+            len: u64::from(len),
+        });
     }
     // A single-strip image is a whole JPEG at one offset. Multi-strip means the picture
     // is cut into pieces, which is a tiled sensor image, never a preview.
@@ -188,7 +203,10 @@ fn walk_ifd(f: &mut File, be: bool, at: u64, depth: u8, out: &mut Vec<Span>, see
         let e = &entries[i * 12..i * 12 + 12];
         if u16b(e, be) == T_STRIP_OFFSETS && u32b(&e[4..8], be) == 1 {
             if let Some(len) = value(T_STRIP_BYTES) {
-                out.push(Span { at: u64::from(u32b(&e[8..12], be)), len: u64::from(len) });
+                out.push(Span {
+                    at: u64::from(u32b(&e[8..12], be)),
+                    len: u64::from(len),
+                });
             }
         }
     }
@@ -218,12 +236,20 @@ fn walk_ifd(f: &mut File, be: bool, at: u64, depth: u8, out: &mut Vec<Span>, see
 
 fn u16b(b: &[u8], be: bool) -> u16 {
     let v = [b[0], b[1]];
-    if be { u16::from_be_bytes(v) } else { u16::from_le_bytes(v) }
+    if be {
+        u16::from_be_bytes(v)
+    } else {
+        u16::from_le_bytes(v)
+    }
 }
 
 fn u32b(b: &[u8], be: bool) -> u32 {
     let v = [b[0], b[1], b[2], b[3]];
-    if be { u32::from_be_bytes(v) } else { u32::from_le_bytes(v) }
+    if be {
+        u32::from_be_bytes(v)
+    } else {
+        u32::from_le_bytes(v)
+    }
 }
 
 // ------------------------------------------------------------------ RAF
@@ -231,7 +257,9 @@ fn u32b(b: &[u8], be: bool) -> u32 {
 /// Fujifilm writes a fixed header: a big-endian offset and length at byte 84, pointing
 /// at a whole JPEG. No directory to walk.
 fn raf_spans(f: &mut File) -> Vec<Span> {
-    let Some(b) = read_at(f, 84, 8) else { return Vec::new() };
+    let Some(b) = read_at(f, 84, 8) else {
+        return Vec::new();
+    };
     let at = u64::from(u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
     let len = u64::from(u32::from_be_bytes([b[4], b[5], b[6], b[7]]));
     vec![Span { at, len }]
@@ -277,7 +305,9 @@ fn walk_boxes(
         let typ = [hdr[4], hdr[5], hdr[6], hdr[7]];
         let mut body = p + 8;
         if size == 1 {
-            let Some(big) = read_at(f, p + 8, 8) else { return };
+            let Some(big) = read_at(f, p + 8, 8) else {
+                return;
+            };
             size = u64::from_be_bytes(big.try_into().unwrap_or([0; 8]));
             body = p + 16;
         } else if size == 0 {
@@ -294,11 +324,17 @@ fn walk_boxes(
             }
             // Canon keeps the EXIF here, as a bare TIFF block rather than in a segment
             // any JPEG or TIFF reader would look in.
-            b"CMT1" if want == Want::Exif => out.push(Span { at: body, len: p + size - body }),
+            b"CMT1" if want == Want::Exif => out.push(Span {
+                at: body,
+                len: p + size - body,
+            }),
             // Canon's preview and thumbnail boxes hold a JPEG after a short header.
             b"PRVW" | b"THMB" if want == Want::Preview => {
                 if let Some(at) = jpeg_start_in(f, body, p + size) {
-                    out.push(Span { at, len: p + size - at });
+                    out.push(Span {
+                        at,
+                        len: p + size - at,
+                    });
                 }
             }
             b"stsz" if want == Want::Preview => {
@@ -437,12 +473,28 @@ mod tests {
             v.extend_from_slice(&[0x00, 0x08, 0x00, 0x08, 0x01, 0x00, 0x11, 0x00]);
             v
         };
-        assert_eq!(viewable_jpeg(&frame(0xC0)), Some((8, 8)), "baseline is a picture");
-        assert_eq!(viewable_jpeg(&frame(0xC2)), Some((8, 8)), "progressive is a picture");
+        assert_eq!(
+            viewable_jpeg(&frame(0xC0)),
+            Some((8, 8)),
+            "baseline is a picture"
+        );
+        assert_eq!(
+            viewable_jpeg(&frame(0xC2)),
+            Some((8, 8)),
+            "progressive is a picture"
+        );
         assert_eq!(viewable_jpeg(&frame(0xC3)), None, "SOF3 is sensor data");
-        assert_eq!(viewable_jpeg(&frame(0xC9)), None, "arithmetic coding is not viewable");
+        assert_eq!(
+            viewable_jpeg(&frame(0xC9)),
+            None,
+            "arithmetic coding is not viewable"
+        );
         assert_eq!(viewable_jpeg(b"not a jpeg at all"), None);
-        assert_eq!(viewable_jpeg(&[0xFF, 0xD8]), None, "truncated is not a picture");
+        assert_eq!(
+            viewable_jpeg(&[0xFF, 0xD8]),
+            None,
+            "truncated is not a picture"
+        );
     }
 
     #[test]

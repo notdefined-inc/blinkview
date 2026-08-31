@@ -62,7 +62,12 @@ fn handle(stream: &mut TcpStream, page: &str) -> Result<Option<String>> {
 
     match (method, path) {
         ("GET", "/") => {
-            respond(stream, "200 OK", "text/html; charset=utf-8", page.as_bytes())?;
+            respond(
+                stream,
+                "200 OK",
+                "text/html; charset=utf-8",
+                page.as_bytes(),
+            )?;
             Ok(None)
         }
         ("POST", "/save") => {

@@ -26,18 +26,34 @@ fn main() -> anyhow::Result<()> {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let (when, src) = blinkview_core::timesource::resolve(&p, mtime);
-        println!("{:12} taken {} via {src:?}", "", when.format("%Y-%m-%d %H:%M:%S"));
+        println!(
+            "{:12} taken {} via {src:?}",
+            "",
+            when.format("%Y-%m-%d %H:%M:%S")
+        );
         match &found {
             Some(pv) => println!(
                 "{name:12} {:5.1} MB -> {}x{} preview, {:4.0} KB read in {:>8.2?}",
-                size as f64 / 1e6, pv.width, pv.height, pv.jpeg.len() as f64 / 1e3, read
+                size as f64 / 1e6,
+                pv.width,
+                pv.height,
+                pv.jpeg.len() as f64 / 1e3,
+                read
             ),
-            None => println!("{name:12} {:5.1} MB -> no preview declared", size as f64 / 1e6),
+            None => println!(
+                "{name:12} {:5.1} MB -> no preview declared",
+                size as f64 / 1e6
+            ),
         }
         let t = std::time::Instant::now();
         let dst = out.join(format!("{name}.jpg"));
         match blinkview_core::thumbs::render_to(&p, &dst, false) {
-            Ok(()) => println!("{:12} thumbnail in {:>8.2?} -> {}", "", t.elapsed(), dst.display()),
+            Ok(()) => println!(
+                "{:12} thumbnail in {:>8.2?} -> {}",
+                "",
+                t.elapsed(),
+                dst.display()
+            ),
             Err(e) => println!("{:12} thumbnail failed: {e}", ""),
         }
     }

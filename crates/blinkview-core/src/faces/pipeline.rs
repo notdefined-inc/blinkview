@@ -58,7 +58,12 @@ pub fn analyze_with_progress(
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<AnalyzeStats> {
     let mut st = AnalyzeStats::default();
-    let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
+    let rows: Vec<_> = lib
+        .index
+        .all()?
+        .into_iter()
+        .filter(|r| r.kind == "photo")
+        .collect();
 
     let mut todo = Vec::new();
     for r in &rows {
@@ -129,7 +134,11 @@ pub fn analyze_with_progress(
             let ch = ((f.h + 2.0 * m) as u32).min(h as u32 - y0).max(1);
             let crop = image::imageops::crop_imm(&rgb, x0, y0, cw, ch).to_image();
             let sq = image::imageops::resize(
-                &crop, FACE_CROP, FACE_CROP, image::imageops::FilterType::Triangle);
+                &crop,
+                FACE_CROP,
+                FACE_CROP,
+                image::imageops::FilterType::Triangle,
+            );
             let dst = face_crop_path(lib.root(), &r.hash, i as i64);
             if let Some(parent) = dst.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -178,7 +187,10 @@ pub fn cluster_unassigned(
         })
         .collect();
 
-    let embs: Vec<&Vec<f32>> = faces.iter().map(|f| f.embedding.as_ref().unwrap()).collect();
+    let embs: Vec<&Vec<f32>> = faces
+        .iter()
+        .map(|f| f.embedding.as_ref().unwrap())
+        .collect();
     let n = embs.len();
     let close = |a: usize, b: usize| 1.0 - embed::cosine(embs[a], embs[b]) <= max_distance;
 

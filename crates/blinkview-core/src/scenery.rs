@@ -25,7 +25,10 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { max_face: DEFAULT_MAX_FACE, dest: DEFAULT_DEST.into() }
+        Self {
+            max_face: DEFAULT_MAX_FACE,
+            dest: DEFAULT_DEST.into(),
+        }
     }
 }
 
@@ -54,7 +57,11 @@ pub fn split(lib: &Library, opt: &Options) -> Result<Split> {
             people += 1;
         }
     }
-    Ok(Split { scenery, people, unanalysed })
+    Ok(Split {
+        scenery,
+        people,
+        unanalysed,
+    })
 }
 
 pub fn plan(lib: &Library, opt: &Options) -> Result<Plan> {
@@ -65,8 +72,16 @@ pub fn plan(lib: &Library, opt: &Options) -> Result<Plan> {
             continue;
         }
         let name = path.rsplit('/').next().unwrap_or(&path);
-        let hash = lib.index.by_path(&path)?.map(|r| r.hash).unwrap_or_default();
-        p.ops.push(Op::Move { hash, from: path.clone(), to: format!("{}/{}", opt.dest, name) });
+        let hash = lib
+            .index
+            .by_path(&path)?
+            .map(|r| r.hash)
+            .unwrap_or_default();
+        p.ops.push(Op::Move {
+            hash,
+            from: path.clone(),
+            to: format!("{}/{}", opt.dest, name),
+        });
     }
     Ok(p)
 }

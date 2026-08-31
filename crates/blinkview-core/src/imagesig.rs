@@ -51,7 +51,11 @@ fn decode_jpeg_scaled(path: &Path, target: u16) -> Result<image::GrayImage> {
                 ((u16::from(p[0]) * 77 + u16::from(p[1]) * 150 + u16::from(p[2]) * 29) >> 8) as u8
             })
             .collect(),
-        other => anyhow::bail!("unsupported jpeg pixel format {other:?} (orig {}x{})", info.width, info.height),
+        other => anyhow::bail!(
+            "unsupported jpeg pixel format {other:?} (orig {}x{})",
+            info.width,
+            info.height
+        ),
     };
     image::GrayImage::from_raw(w, h, gray).context("assembling decoded jpeg")
 }
@@ -90,7 +94,12 @@ pub fn compute(path: &Path) -> Result<Signature> {
         (g, w, h)
     };
 
-    let dh = image::imageops::resize(&gray, (THUMB + 1) as u32, THUMB as u32, FilterType::Triangle);
+    let dh = image::imageops::resize(
+        &gray,
+        (THUMB + 1) as u32,
+        THUMB as u32,
+        FilterType::Triangle,
+    );
     let mut dhash = 0u64;
     for y in 0..8u32 {
         for x in 0..8u32 {
@@ -109,7 +118,13 @@ pub fn compute(path: &Path) -> Result<Signature> {
     let sharp = image::imageops::resize(&gray, 256, 256, FilterType::Triangle);
     let sharpness = laplacian_variance(&sharp, 256, 256);
 
-    Ok(Signature { dhash, thumb, sharpness, width, height })
+    Ok(Signature {
+        dhash,
+        thumb,
+        sharpness,
+        width,
+        height,
+    })
 }
 
 /// Variance of a 4-neighbour Laplacian. A blurred frame has little edge energy.
@@ -142,7 +157,11 @@ pub fn hamming(a: u64, b: u64) -> u32 {
 pub fn normalize(thumb: &[u8]) -> Vec<f32> {
     let n = thumb.len() as f32;
     let mean = thumb.iter().map(|&x| f32::from(x)).sum::<f32>() / n;
-    let sd = (thumb.iter().map(|&x| (f32::from(x) - mean).powi(2)).sum::<f32>() / n)
+    let sd = (thumb
+        .iter()
+        .map(|&x| (f32::from(x) - mean).powi(2))
+        .sum::<f32>()
+        / n)
         .sqrt()
         .max(1e-6);
     thumb.iter().map(|&x| (f32::from(x) - mean) / sd).collect()

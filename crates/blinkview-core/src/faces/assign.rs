@@ -17,9 +17,18 @@ pub const DEFAULT_MARGIN: f32 = 0.05;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Assignment {
     /// Confidently this person.
-    Person { name: String, similarity: f32, runner_up: Option<(String, f32)> },
+    Person {
+        name: String,
+        similarity: f32,
+        runner_up: Option<(String, f32)>,
+    },
     /// Someone is recognisable but two identities are too close to separate.
-    Ambiguous { best: String, best_sim: f32, second: String, second_sim: f32 },
+    Ambiguous {
+        best: String,
+        best_sim: f32,
+        second: String,
+        second_sim: f32,
+    },
     /// Nothing matched well enough. Never moved; always reported.
     Unknown { best_sim: f32 },
 }
@@ -40,7 +49,10 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { min_sim: DEFAULT_MIN_SIM, margin: DEFAULT_MARGIN }
+        Self {
+            min_sim: DEFAULT_MIN_SIM,
+            margin: DEFAULT_MARGIN,
+        }
     }
 }
 
@@ -100,7 +112,11 @@ mod tests {
         People {
             people: pairs
                 .iter()
-                .map(|(n, r)| Person { name: n.to_string(), references: r.clone(), excluded: Vec::new() })
+                .map(|(n, r)| Person {
+                    name: n.to_string(),
+                    references: r.clone(),
+                    excluded: Vec::new(),
+                })
                 .collect(),
             ..Default::default()
         }
@@ -135,7 +151,10 @@ mod tests {
         let a = unit(vec![1.0, 0.0, 0.0]);
         let far = unit(vec![0.1, 1.0, 0.0]);
         let p = people_with(&[("A", vec![a])]);
-        assert!(matches!(assign(&far, &p, &Options::default()), Assignment::Unknown { .. }));
+        assert!(matches!(
+            assign(&far, &p, &Options::default()),
+            Assignment::Unknown { .. }
+        ));
     }
 
     /// The same person in profile embeds differently from front-on. Keeping every
@@ -149,14 +168,21 @@ mod tests {
             ("Me", vec![front.clone(), profile.clone()]),
             ("Other", vec![other]),
         ]);
-        assert_eq!(assign(&profile, &p, &Options::default()).person(), Some("Me"));
+        assert_eq!(
+            assign(&profile, &p, &Options::default()).person(),
+            Some("Me")
+        );
         assert_eq!(assign(&front, &p, &Options::default()).person(), Some("Me"));
     }
 
     #[test]
     fn no_people_means_unknown() {
         assert!(matches!(
-            assign(&unit(vec![1.0, 0.0, 0.0]), &People::default(), &Options::default()),
+            assign(
+                &unit(vec![1.0, 0.0, 0.0]),
+                &People::default(),
+                &Options::default()
+            ),
             Assignment::Unknown { .. }
         ));
     }

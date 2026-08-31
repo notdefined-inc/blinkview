@@ -15,9 +15,13 @@ use std::path::Path;
 
 /// EXIF orientation, defaulting to 1 (upright) when absent or unreadable.
 pub fn orientation(path: &Path) -> u16 {
-    let Ok(file) = std::fs::File::open(path) else { return 1 };
+    let Ok(file) = std::fs::File::open(path) else {
+        return 1;
+    };
     let mut r = std::io::BufReader::new(file);
-    let Ok(exif) = exif::Reader::new().read_from_container(&mut r) else { return 1 };
+    let Ok(exif) = exif::Reader::new().read_from_container(&mut r) else {
+        return 1;
+    };
     exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
         .and_then(|f| f.value.get_uint(0))
         .map(|v| v as u16)
@@ -107,7 +111,11 @@ pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
     dec.read_info().ok()?;
     let info = dec.info()?;
     let (w, h) = (u32::from(info.width), u32::from(info.height));
-    Some(if matches!(orientation(path), 5..=8) { (h, w) } else { (w, h) })
+    Some(if matches!(orientation(path), 5..=8) {
+        (h, w)
+    } else {
+        (w, h)
+    })
 }
 
 /// Decode to RGB with EXIF orientation applied, transcoding first when the format
@@ -155,8 +163,8 @@ pub fn camera_preview(path: &Path, min_long: u32) -> Option<RgbImage> {
         if preview.width.max(preview.height) < min_long {
             return None;
         }
-        let img = image::load_from_memory_with_format(&preview.jpeg, image::ImageFormat::Jpeg)
-            .ok()?;
+        let img =
+            image::load_from_memory_with_format(&preview.jpeg, image::ImageFormat::Jpeg).ok()?;
         return Some(img.to_rgb8());
     }
     embedded_preview(&std::fs::read(path).ok()?, min_long)
@@ -229,7 +237,9 @@ pub fn load_rgb(path: &Path) -> Result<RgbImage> {
     if needs_conversion(path) {
         return load_rgb_converted(path);
     }
-    let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
+    let img: DynamicImage = image::ImageReader::open(path)?
+        .with_guessed_format()?
+        .decode()?;
     Ok(apply_rgb(img.to_rgb8(), orientation(path)))
 }
 
@@ -247,7 +257,9 @@ pub(crate) fn load_rgb_converted(path: &Path) -> Result<RgbImage> {
         path.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
     ));
     convert_to_jpeg(path, &tmp)?;
-    let img: DynamicImage = image::ImageReader::open(&tmp)?.with_guessed_format()?.decode()?;
+    let img: DynamicImage = image::ImageReader::open(&tmp)?
+        .with_guessed_format()?
+        .decode()?;
     // `sips` *carries the EXIF orientation tag across* rather than baking the
     // rotation into the pixels — verified: a 4032x3024 HEIC with tag 6 converts to
     // a 4032x3024 JPEG still tagged 6. Browsers honour the tag, so the full-size
@@ -266,7 +278,9 @@ pub(crate) fn load_rgb_converted(path: &Path) -> Result<RgbImage> {
 /// it after shrinking. Not for HEIC, whose conversion rotates on the way through.
 pub fn load_rgb_unrotated(path: &Path) -> Result<RgbImage> {
     debug_assert!(!needs_conversion(path), "HEIC is rotated during conversion");
-    let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
+    let img: DynamicImage = image::ImageReader::open(path)?
+        .with_guessed_format()?
+        .decode()?;
     Ok(img.to_rgb8())
 }
 

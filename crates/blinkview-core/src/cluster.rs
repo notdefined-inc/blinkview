@@ -46,7 +46,9 @@ pub fn complete_linkage(
             }
             (Some(a), Some(b)) if a != b => {
                 // Merge only if every cross pair is close — never by transitivity.
-                let ok = groups[a].iter().all(|&x| groups[b].iter().all(|&y| close(x, y)));
+                let ok = groups[a]
+                    .iter()
+                    .all(|&x| groups[b].iter().all(|&y| close(x, y)));
                 if ok {
                     let moved = std::mem::take(&mut groups[b]);
                     for &m in &moved {
@@ -79,7 +81,11 @@ mod tests {
         let pairs = vec![(0.1, 0, 1), (0.2, 1, 2)];
         let groups = complete_linkage(3, pairs, close);
         assert_eq!(groups.len(), 1, "{groups:?}");
-        assert_eq!(groups[0].len(), 2, "chained a non-matching member: {groups:?}");
+        assert_eq!(
+            groups[0].len(),
+            2,
+            "chained a non-matching member: {groups:?}"
+        );
     }
 
     /// A genuine clique must still cluster together.

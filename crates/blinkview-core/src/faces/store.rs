@@ -27,7 +27,13 @@ fn from_blob(b: &[u8]) -> Option<Vec<f32>> {
     if b.len() != DIM * 4 {
         return None;
     }
-    Some(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
+    Some(
+        b.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
+            .collect(),
+    )
 }
 
 impl Library {
@@ -36,7 +42,14 @@ impl Library {
             "INSERT OR REPLACE INTO faces (hash,idx,x,y,w,h,score,ratio,embedding)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
-                f.hash, f.idx, f.x, f.y, f.w, f.h, f.score, f.ratio,
+                f.hash,
+                f.idx,
+                f.x,
+                f.y,
+                f.w,
+                f.h,
+                f.score,
+                f.ratio,
                 f.embedding.as_deref().map(to_blob)
             ],
         )?;
@@ -44,18 +57,23 @@ impl Library {
     }
 
     pub fn mark_faces_done(&self, hash: &str) -> Result<()> {
-        self.index
-            .conn()
-            .execute("INSERT OR IGNORE INTO faces_done (hash) VALUES (?1)", params![hash])?;
+        self.index.conn().execute(
+            "INSERT OR IGNORE INTO faces_done (hash) VALUES (?1)",
+            params![hash],
+        )?;
         Ok(())
     }
 
     pub fn faces_done(&self, hash: &str) -> Result<bool> {
-        Ok(self.index.conn().query_row(
-            "SELECT 1 FROM faces_done WHERE hash=?1",
-            params![hash],
-            |_| Ok(()),
-        ).is_ok())
+        Ok(self
+            .index
+            .conn()
+            .query_row(
+                "SELECT 1 FROM faces_done WHERE hash=?1",
+                params![hash],
+                |_| Ok(()),
+            )
+            .is_ok())
     }
 
     pub fn all_faces(&self) -> Result<Vec<StoredFace>> {
@@ -140,7 +158,9 @@ impl Library {
             .with_context(|| format!("writing {}", p.display()))?;
         // The old in-cache copy, if a very old version left one, is stale now.
         let _ = std::fs::remove_file(
-            self.root().join(crate::library::VAULT_DIR).join("people.json"),
+            self.root()
+                .join(crate::library::VAULT_DIR)
+                .join("people.json"),
         );
         Ok(())
     }

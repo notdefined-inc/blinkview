@@ -32,6 +32,10 @@ pub fn find(name: &str) -> Result<PathBuf> {
     }
     bail!(
         "model {name} not found. Looked in: {}\nRun `blinkview models fetch` to download it.",
-        search_paths().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+        search_paths()
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }

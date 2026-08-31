@@ -137,7 +137,9 @@ impl People {
     ///
     /// For listings that will never match a face and so need no vectors expanded.
     pub fn named_in(root: &Path) -> usize {
-        Self::read_records(root).map(|r| r.people.len()).unwrap_or(0)
+        Self::read_records(root)
+            .map(|r| r.people.len())
+            .unwrap_or(0)
     }
 
     /// Records against a library: every pointer becomes the vector it names.
@@ -159,10 +161,17 @@ impl People {
                         }
                     }
                 }
-                Person { name: r.name, references, excluded: r.excluded }
+                Person {
+                    name: r.name,
+                    references,
+                    excluded: r.excluded,
+                }
             })
             .collect();
-        Self { people, dismissed: records.dismissed }
+        Self {
+            people,
+            dismissed: records.dismissed,
+        }
     }
 
     /// The file's shape for this library: vectors that name a face become pointers,
@@ -184,10 +193,18 @@ impl People {
                         None => references.push(v.clone()),
                     }
                 }
-                PersonRecord { name: p.name.clone(), faces, references, excluded: p.excluded.clone() }
+                PersonRecord {
+                    name: p.name.clone(),
+                    faces,
+                    references,
+                    excluded: p.excluded.clone(),
+                }
             })
             .collect();
-        Ok(PeopleRecord { people, dismissed: self.dismissed.clone() })
+        Ok(PeopleRecord {
+            people,
+            dismissed: self.dismissed.clone(),
+        })
     }
 
     pub fn get(&self, name: &str) -> Option<&Person> {
@@ -196,7 +213,8 @@ impl People {
 
     /// True when the user has said this photo is not this person.
     pub fn is_excluded(&self, name: &str, photo_hash: &str) -> bool {
-        self.get(name).is_some_and(|p| p.excluded.iter().any(|h| h == photo_hash))
+        self.get(name)
+            .is_some_and(|p| p.excluded.iter().any(|h| h == photo_hash))
     }
 
     /// Record that these photos are not this person.
@@ -368,9 +386,10 @@ mod tests {
     }
 
     fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-        dir.parent()
-            .unwrap()
-            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+        dir.parent().unwrap().join(format!(
+            "{}-cache",
+            dir.file_name().unwrap().to_string_lossy()
+        ))
     }
 
     #[test]
@@ -425,8 +444,10 @@ mod tests {
     #[test]
     fn names_are_stored_outside_the_disposable_cache() {
         let p = People::path(std::path::Path::new("/lib"));
-        assert!(!p.to_string_lossy().contains(".blinkview"),
-            "names cannot be recomputed and must survive deleting the cache");
+        assert!(
+            !p.to_string_lossy().contains(".blinkview"),
+            "names cannot be recomputed and must survive deleting the cache"
+        );
     }
 
     #[test]
@@ -461,7 +482,10 @@ mod tests {
         lib.put_face(&StoredFace {
             hash: "photo-a".into(),
             idx: 4,
-            x: 0.1, y: 0.1, w: 0.2, h: 0.2,
+            x: 0.1,
+            y: 0.1,
+            w: 0.2,
+            h: 0.2,
             score: 0.9,
             ratio: 0.2,
             embedding: Some(known.clone()),
@@ -477,8 +501,14 @@ mod tests {
 
         let raw = std::fs::read(People::path(&dir)).unwrap();
         let text = String::from_utf8_lossy(&raw);
-        assert!(text.contains("\"faces\""), "the pointer field is what gets written");
-        assert!(text.contains("photo-a:4"), "the known face is named, not copied");
+        assert!(
+            text.contains("\"faces\""),
+            "the pointer field is what gets written"
+        );
+        assert!(
+            text.contains("photo-a:4"),
+            "the known face is named, not copied"
+        );
         assert!(
             raw.len() < 6 * 1024,
             "one pointer and one orphan cost {} bytes; vectors would be kilobytes each",
@@ -513,8 +543,14 @@ mod tests {
         // point at.
         lib.save_people(&people).unwrap();
         let text = std::fs::read_to_string(People::path(&dir)).unwrap();
-        assert!(text.contains("\"references\""), "an unplaceable vector is kept, not dropped");
-        assert_eq!(lib.people().unwrap().people[0].references, vec![vec![0.5, 0.5]]);
+        assert!(
+            text.contains("\"references\""),
+            "an unplaceable vector is kept, not dropped"
+        );
+        assert_eq!(
+            lib.people().unwrap().people[0].references,
+            vec![vec![0.5, 0.5]]
+        );
         std::fs::remove_dir_all(&dir).ok();
         std::fs::remove_dir_all(cache_for(&dir)).ok();
     }

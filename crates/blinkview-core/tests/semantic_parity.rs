@@ -61,7 +61,10 @@ fn text_embeddings_match_the_python_reference() {
 
         assert_eq!(got.len(), semantic::DIM, "{query:?} wrong dimensionality");
         let norm = got.iter().map(|v| v * v).sum::<f32>().sqrt();
-        assert!((norm - 1.0).abs() < 1e-4, "{query:?} not unit length: {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-4,
+            "{query:?} not unit length: {norm}"
+        );
 
         let cos = semantic::similarity(&expected, &got);
         assert!(
@@ -84,5 +87,8 @@ fn different_phrases_embed_differently() {
     let a = enc.embed_text("a photograph of the night sky").unwrap();
     let b = enc.embed_text("a plate of food on a wooden table").unwrap();
     let sim = semantic::similarity(&a, &b);
-    assert!(sim < 0.9, "unrelated phrases should not be near-identical: {sim:.3}");
+    assert!(
+        sim < 0.9,
+        "unrelated phrases should not be near-identical: {sim:.3}"
+    );
 }

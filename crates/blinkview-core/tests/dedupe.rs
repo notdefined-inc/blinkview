@@ -3,8 +3,8 @@
 //! Uses synthetic photos so the suite runs without the reference drive. The
 //! properties asserted here are the ones that failed during the manual session.
 
-use image::{ImageBuffer, Rgb};
 use blinkview_core::{dedupe, scan, Library};
+use image::{ImageBuffer, Rgb};
 use std::path::{Path, PathBuf};
 
 /// A deterministic "scene": smooth gradients plus scene-specific structure.
@@ -39,9 +39,10 @@ fn write(dir: &Path, name: &str, img: &ImageBuffer<Rgb<u8>, Vec<u8>>) {
 /// `~/Library/Caches` would be a bug of its own. Beside the fixture keeps it out of
 /// the library tree, where `scan` would index its thumbnails as photographs.
 fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-    dir.parent()
-        .unwrap()
-        .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    dir.parent().unwrap().join(format!(
+        "{}-cache",
+        dir.file_name().unwrap().to_string_lossy()
+    ))
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -67,7 +68,11 @@ fn groups_a_burst_and_keeps_the_sharpest() {
     let groups = dedupe::find_groups(&lib, &dedupe::Options::default()).unwrap();
     assert_eq!(groups.len(), 1, "expected one burst group, got {groups:?}",);
     let g = &groups[0];
-    assert_eq!(g.duplicates.len() + 1, 3, "the unrelated scene must not join");
+    assert_eq!(
+        g.duplicates.len() + 1,
+        3,
+        "the unrelated scene must not join"
+    );
     assert!(
         !g.keep.path.contains("151203"),
         "kept the blurred frame: {}",
@@ -81,13 +86,20 @@ fn groups_a_burst_and_keeps_the_sharpest() {
 fn leaves_distinct_scenes_alone() {
     let d = fixture("distinct");
     for i in 0..6u32 {
-        write(&d, &format!("2026081{}_15120{}.jpg", i % 9, i), &scene(i * 13 + 1, 0, false));
+        write(
+            &d,
+            &format!("2026081{}_15120{}.jpg", i % 9, i),
+            &scene(i * 13 + 1, 0, false),
+        );
     }
     let mut lib = Library::open_in(&d, cache_for(&d)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     dedupe::ensure_signatures(&lib).unwrap();
     let groups = dedupe::find_groups(&lib, &dedupe::Options::default()).unwrap();
-    assert!(groups.is_empty(), "unrelated scenes were grouped: {groups:?}");
+    assert!(
+        groups.is_empty(),
+        "unrelated scenes were grouped: {groups:?}"
+    );
     std::fs::remove_dir_all(&d).ok();
 }
 

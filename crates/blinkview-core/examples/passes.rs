@@ -10,8 +10,14 @@ use std::time::Instant;
 
 fn build(src: &PathBuf, n: usize, name: &str) -> Result<PathBuf> {
     let lib = Library::open(src)?;
-    let photos: Vec<PathBuf> = lib.index.all()?.iter().filter(|r| r.kind == "photo")
-        .map(|r| lib.abs(&r.path)).filter(|p| p.exists()).collect();
+    let photos: Vec<PathBuf> = lib
+        .index
+        .all()?
+        .iter()
+        .filter(|r| r.kind == "photo")
+        .map(|r| lib.abs(&r.path))
+        .filter(|p| p.exists())
+        .collect();
     let step = (photos.len() / n.max(1)).max(1);
     let dir = std::env::temp_dir().join(format!("blinkview-passes-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -24,8 +30,15 @@ fn build(src: &PathBuf, n: usize, name: &str) -> Result<PathBuf> {
 }
 
 fn main() -> Result<()> {
-    let src = PathBuf::from(std::env::args().nth(1).expect("usage: passes <library> [n]"));
-    let n: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(40);
+    let src = PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .expect("usage: passes <library> [n]"),
+    );
+    let n: usize = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
 
     let a = build(&src, n, "separate")?;
     let mut lib = Library::open(&a)?;
@@ -56,11 +69,21 @@ fn main() -> Result<()> {
     println!("  faces           {:>7.1} ms/photo", per(t_faces));
     println!("  embeddings      {:>7.1} ms/photo", per(t_clip));
     println!("  total           {:>7.1} ms/photo", per(separate));
-    println!("\ncombined pass     {:>7.1} ms/photo   ({} decodes for {} photos)",
-             per(combined), st.decoded, st.considered);
-    println!("\nspeedup           {:>7.2}x", separate / combined.max(0.0001));
+    println!(
+        "\ncombined pass     {:>7.1} ms/photo   ({} decodes for {} photos)",
+        per(combined),
+        st.decoded,
+        st.considered
+    );
+    println!(
+        "\nspeedup           {:>7.2}x",
+        separate / combined.max(0.0001)
+    );
     for (label, secs) in [("separate", separate), ("combined", combined)] {
-        println!("  {label:<9} 200,000 photographs -> {:>5.1} h", secs / n as f64 * 200_000.0 / 3600.0);
+        println!(
+            "  {label:<9} 200,000 photographs -> {:>5.1} h",
+            secs / n as f64 * 200_000.0 / 3600.0
+        );
     }
     let _ = std::fs::remove_dir_all(&a);
     let _ = std::fs::remove_dir_all(&b);

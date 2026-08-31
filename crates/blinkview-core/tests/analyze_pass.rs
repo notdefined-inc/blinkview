@@ -18,9 +18,10 @@ use std::path::PathBuf;
 /// `~/Library/Caches` would be a bug of its own. Beside the fixture keeps it out of
 /// the library tree, where `scan` would index its thumbnails as photographs.
 fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-    dir.parent()
-        .unwrap()
-        .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    dir.parent().unwrap().join(format!(
+        "{}-cache",
+        dir.file_name().unwrap().to_string_lossy()
+    ))
 }
 
 fn fixture(name: &str) -> Option<PathBuf> {
@@ -77,7 +78,11 @@ fn the_combined_pass_finds_the_same_faces_and_embeddings() {
     let got_faces = lib.all_faces().unwrap();
     let got_clip = lib.index.all_clip().unwrap();
 
-    assert_eq!(got_faces.len(), want_faces.len(), "different number of faces");
+    assert_eq!(
+        got_faces.len(),
+        want_faces.len(),
+        "different number of faces"
+    );
     let key = |f: &blinkview_core::faces::store::StoredFace| (f.hash.clone(), f.idx);
     let mut want_sorted = want_faces.clone();
     let mut got_sorted = got_faces.clone();
@@ -85,8 +90,17 @@ fn the_combined_pass_finds_the_same_faces_and_embeddings() {
     got_sorted.sort_by_key(key);
     for (a, b) in want_sorted.iter().zip(got_sorted.iter()) {
         assert_eq!((&a.hash, a.idx), (&b.hash, b.idx));
-        for (name, x, y) in [("x", a.x, b.x), ("y", a.y, b.y), ("w", a.w, b.w), ("h", a.h, b.h)] {
-            assert!((x - y).abs() < 1.0, "{name} moved: {x} vs {y} on {}", a.hash);
+        for (name, x, y) in [
+            ("x", a.x, b.x),
+            ("y", a.y, b.y),
+            ("w", a.w, b.w),
+            ("h", a.h, b.h),
+        ] {
+            assert!(
+                (x - y).abs() < 1.0,
+                "{name} moved: {x} vs {y} on {}",
+                a.hash
+            );
         }
         match (&a.embedding, &b.embedding) {
             (Some(u), Some(v)) => {
@@ -98,15 +112,25 @@ fn the_combined_pass_finds_the_same_faces_and_embeddings() {
         }
     }
 
-    assert_eq!(got_clip.len(), want_clip.len(), "different number of embeddings");
+    assert_eq!(
+        got_clip.len(),
+        want_clip.len(),
+        "different number of embeddings"
+    );
     for (hash, v) in &got_clip {
-        let w = want_clip.iter().find(|(h, _)| h == hash).expect("same photographs");
+        let w = want_clip
+            .iter()
+            .find(|(h, _)| h == hash)
+            .expect("same photographs");
         let cos = semantic::similarity(v, &w.1);
         assert!(cos > 0.9999, "image embedding drifted: cosine {cos:.5} — ADR-0008's threshold was measured against the old value");
     }
 
     // And it really did decode once per photograph rather than three times.
-    assert_eq!(st.decoded, st.considered, "expected exactly one decode each");
+    assert_eq!(
+        st.decoded, st.considered,
+        "expected exactly one decode each"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -134,7 +158,9 @@ fn nothing_is_opened_when_nothing_is_missing() {
 
 #[test]
 fn a_thumbnail_alone_does_not_force_a_full_decode() {
-    let Some(dir) = fixture("preview") else { return };
+    let Some(dir) = fixture("preview") else {
+        return;
+    };
     let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
     // Thumbnails only, so the camera's embedded preview is enough where there is one.
@@ -158,13 +184,27 @@ fn a_second_run_finishes_what_the_first_started() {
     // Stand in for an interruption: do the thumbnails, then everything.
     let a = analyze::run(&mut lib, analyze::Stages::only_thumbs()).unwrap();
     assert!(a.thumbs > 0);
-    let b = analyze::run(&mut lib, analyze::Stages { thumbs: true, faces: true, semantic: false })
-        .unwrap();
+    let b = analyze::run(
+        &mut lib,
+        analyze::Stages {
+            thumbs: true,
+            faces: true,
+            semantic: false,
+        },
+    )
+    .unwrap();
     assert_eq!(b.thumbs, 0, "thumbnails were redone");
     assert!(b.decoded > 0, "faces still needed a decode");
 
-    let c = analyze::run(&mut lib, analyze::Stages { thumbs: true, faces: true, semantic: false })
-        .unwrap();
+    let c = analyze::run(
+        &mut lib,
+        analyze::Stages {
+            thumbs: true,
+            faces: true,
+            semantic: false,
+        },
+    )
+    .unwrap();
     assert_eq!(c.decoded, 0, "a third run still found work to do");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -180,7 +220,11 @@ fn an_unreadable_file_is_not_retried_for_ever() {
     let dir = std::env::temp_dir().join(format!("blinkview-unread-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("corrupt.jpg"), b"\xff\xd8\xffnot really a jpeg at all").unwrap();
+    std::fs::write(
+        dir.join("corrupt.jpg"),
+        b"\xff\xd8\xffnot really a jpeg at all",
+    )
+    .unwrap();
     std::fs::write(dir.join("nonsense.png"), b"definitely not a png").unwrap();
 
     let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
@@ -194,7 +238,10 @@ fn an_unreadable_file_is_not_retried_for_ever() {
     let again = analyze::run(&mut lib, analyze::Stages::only_thumbs()).unwrap();
     assert_eq!(again.decoded, 0, "an unreadable file was tried again");
     assert_eq!(again.unreadable, 0, "and recorded again");
-    assert_eq!(again.skipped, again.considered, "everything should be accounted for");
+    assert_eq!(
+        again.skipped, again.considered,
+        "everything should be accounted for"
+    );
 
     // The reasons are kept, so the count can be explained rather than left mysterious.
     let listed = lib.index.unreadable().unwrap();

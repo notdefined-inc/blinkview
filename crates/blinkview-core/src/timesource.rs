@@ -107,7 +107,9 @@ pub fn resolve(path: &Path, mtime_unix: i64) -> (DateTime<Utc>, TimeSource) {
         }
     }
     (
-        Utc.timestamp_opt(mtime_unix, 0).single().unwrap_or_default(),
+        Utc.timestamp_opt(mtime_unix, 0)
+            .single()
+            .unwrap_or_default(),
         TimeSource::Mtime,
     )
 }
@@ -119,7 +121,10 @@ mod tests {
     #[test]
     fn parses_camera_names() {
         let dt = from_filename("20260816_151256.jpg").unwrap();
-        assert_eq!(dt.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-08-16 15:12:56");
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-08-16 15:12:56"
+        );
     }
 
     #[test]
@@ -132,7 +137,10 @@ mod tests {
     #[test]
     fn round_trips_our_own_format() {
         let dt = from_filename("03-12-56_pm_16_aug_2026.jpg").unwrap();
-        assert_eq!(dt.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-08-16 15:12:56");
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-08-16 15:12:56"
+        );
     }
 
     #[test]
@@ -159,7 +167,10 @@ mod tests {
         std::fs::write(&f, b"not a jpeg").unwrap();
         let (dt, s) = resolve(&f, 0);
         assert_eq!(s, TimeSource::Filename);
-        assert_eq!(dt.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-08-16 15:12:56");
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-08-16 15:12:56"
+        );
         std::fs::remove_dir_all(&d).ok();
     }
 

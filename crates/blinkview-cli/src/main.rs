@@ -21,7 +21,12 @@ fn dir_size(dir: &std::path::Path) -> String {
                 .flatten()
                 .map(|e| match e.metadata() {
                     Ok(m) if m.is_dir() => std::fs::read_dir(e.path())
-                        .map(|sub| sub.flatten().filter_map(|s| s.metadata().ok()).map(|m| m.len()).sum::<u64>())
+                        .map(|sub| {
+                            sub.flatten()
+                                .filter_map(|s| s.metadata().ok())
+                                .map(|m| m.len())
+                                .sum::<u64>()
+                        })
                         .unwrap_or(0),
                     Ok(m) => m.len(),
                     Err(_) => 0,
@@ -39,7 +44,11 @@ fn dir_size(dir: &std::path::Path) -> String {
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "blinkview", version, about = "Local-first photo organizer. Your folders are the database.")]
+#[command(
+    name = "blinkview",
+    version,
+    about = "Local-first photo organizer. Your folders are the database."
+)]
 struct Cli {
     /// Library root (defaults to the current directory).
     #[arg(short = 'C', long, global = true)]
@@ -232,7 +241,9 @@ fn main() -> Result<()> {
             let missing = rows.iter().filter(|r| !lib.abs(&r.path).exists()).count();
             let mut by_dir: std::collections::BTreeMap<&str, usize> = Default::default();
             for r in &rows {
-                *by_dir.entry(r.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("(root)")).or_default() += 1;
+                *by_dir
+                    .entry(r.path.rsplit_once('/').map(|(d, _)| d).unwrap_or("(root)"))
+                    .or_default() += 1;
             }
             println!("library: {}", lib.root().display());
             println!("indexed: {} files", rows.len());
@@ -244,7 +255,10 @@ fn main() -> Result<()> {
             }
             let sources = rows.iter().filter_map(|r| r.taken_src.as_deref()).fold(
                 std::collections::BTreeMap::<&str, usize>::new(),
-                |mut m, s| { *m.entry(s).or_default() += 1; m },
+                |mut m, s| {
+                    *m.entry(s).or_default() += 1;
+                    m
+                },
             );
             if !sources.is_empty() {
                 println!("\ncapture time from: {sources:?}");
@@ -279,9 +293,14 @@ fn main() -> Result<()> {
                     println!("no people known yet — run `blinkview faces review` first.");
                     return Ok(());
                 }
-                let out = blinkview_core::faces::file::plan(&lib, &people, &assign::Options::default())?;
-                println!("{} photos to file, {} shared between people (left in place), {} unclaimed",
-                         out.plan.len(), out.shared.len(), out.unclaimed);
+                let out =
+                    blinkview_core::faces::file::plan(&lib, &people, &assign::Options::default())?;
+                println!(
+                    "{} photos to file, {} shared between people (left in place), {} unclaimed",
+                    out.plan.len(),
+                    out.shared.len(),
+                    out.unclaimed
+                );
                 for op in out.plan.ops.iter().take(8) {
                     println!("  {}  ->  {}", op.from(), op.to());
                 }
@@ -344,16 +363,29 @@ fn main() -> Result<()> {
                 println!("run `blinkview faces people` to see them.");
             }
         },
-        Cmd::Scenery { max_face, dest, apply } => {
+        Cmd::Scenery {
+            max_face,
+            dest,
+            apply,
+        } => {
             let mut lib = open(&cli)?;
-            let opt = scenery::Options { max_face: *max_face, dest: dest.clone() };
+            let opt = scenery::Options {
+                max_face: *max_face,
+                dest: dest.clone(),
+            };
             let split = scenery::split(&lib, &opt)?;
             if split.unanalysed > 0 {
-                println!("{} photos have no face data yet — run `blinkview faces analyze` first.",
-                         split.unanalysed);
+                println!(
+                    "{} photos have no face data yet — run `blinkview faces analyze` first.",
+                    split.unanalysed
+                );
             }
-            println!("{} photos with no close-up person, {} with someone at {:.0}% of frame or more",
-                     split.scenery.len(), split.people, max_face * 100.0);
+            println!(
+                "{} photos with no close-up person, {} with someone at {:.0}% of frame or more",
+                split.scenery.len(),
+                split.people,
+                max_face * 100.0
+            );
             if !apply {
                 println!("\ndry run — nothing changed. Re-run with --apply to commit.");
                 return Ok(());
@@ -365,15 +397,23 @@ fn main() -> Result<()> {
         }
         Cmd::Dedupe { rmse, dest, apply } => {
             let mut lib = open(&cli)?;
-            let opt = dedupe::Options { rmse: *rmse, dest: dest.clone(), ..Default::default() };
+            let opt = dedupe::Options {
+                rmse: *rmse,
+                dest: dest.clone(),
+                ..Default::default()
+            };
             let n = dedupe::ensure_signatures_with_progress(&lib, &cli_progress("analysing"))?;
             if n > 0 {
                 println!("analysed {n} photos");
             }
             let groups = dedupe::find_groups(&lib, &opt)?;
             let moves: usize = groups.iter().map(|g| g.duplicates.len()).sum();
-            println!("{} groups, {} photos, {} would move (keeping the sharpest)",
-                     groups.len(), moves + groups.len(), moves);
+            println!(
+                "{} groups, {} photos, {} would move (keeping the sharpest)",
+                groups.len(),
+                moves + groups.len(),
+                moves
+            );
             for g in groups.iter().take(5) {
                 println!("  keep {}", g.keep.path);
                 for d in g.duplicates.iter().take(4) {
@@ -416,7 +456,12 @@ fn main() -> Result<()> {
             let j = plan.apply(&mut lib)?;
             println!("\napplied. undo with:  blinkview undo {} --apply", j.id);
         }
-        Cmd::Find { query, threshold, limit, index } => {
+        Cmd::Find {
+            query,
+            threshold,
+            limit,
+            index,
+        } => {
             use blinkview_core::semantic;
             let lib = open(&cli)?;
             if !semantic::Encoder::available() {
@@ -425,7 +470,10 @@ fn main() -> Result<()> {
             }
             if *index {
                 let st = semantic::analyze(&lib, &cli_progress("understanding"))?;
-                println!("embedded {} photos ({} already done)", st.embedded, st.skipped);
+                println!(
+                    "embedded {} photos ({} already done)",
+                    st.embedded, st.skipped
+                );
                 for e in st.errors.iter().take(3) {
                     eprintln!("  error: {e}");
                 }
@@ -437,18 +485,30 @@ fn main() -> Result<()> {
             }
             let indexed = lib.index.clip_count()?;
             if indexed == 0 {
-                println!("no photos have been understood yet — run `blinkview find --index <query>`");
+                println!(
+                    "no photos have been understood yet — run `blinkview find --index <query>`"
+                );
                 return Ok(());
             }
             let hits = semantic::search(&lib, &q, *threshold, *limit)?;
-            let by_hash: std::collections::BTreeMap<_, _> =
-                lib.index.all()?.into_iter().map(|r| (r.hash, r.path)).collect();
+            let by_hash: std::collections::BTreeMap<_, _> = lib
+                .index
+                .all()?
+                .into_iter()
+                .map(|r| (r.hash, r.path))
+                .collect();
             println!("{} of {indexed} photos match {q:?}", hits.len());
             for h in &hits {
-                println!("  {:.3}  {}", h.score, by_hash.get(&h.hash).cloned().unwrap_or_default());
+                println!(
+                    "  {:.3}  {}",
+                    h.score,
+                    by_hash.get(&h.hash).cloned().unwrap_or_default()
+                );
             }
             if hits.is_empty() {
-                println!("  (nothing above {threshold:.2} — the model is not confident enough to guess)");
+                println!(
+                    "  (nothing above {threshold:.2} — the model is not confident enough to guess)"
+                );
             }
         }
         Cmd::Thumbs => {
@@ -458,9 +518,15 @@ fn main() -> Result<()> {
                 blinkview_core::analyze::Stages::only_thumbs(),
                 &cli_progress("thumbnails"),
             )?;
-            println!("built {} thumbnails ({} from an embedded preview)", st.thumbs, st.from_preview);
+            println!(
+                "built {} thumbnails ({} from an embedded preview)",
+                st.thumbs, st.from_preview
+            );
         }
-        Cmd::Analyze { no_faces, no_semantic } => {
+        Cmd::Analyze {
+            no_faces,
+            no_semantic,
+        } => {
             let mut lib = open(&cli)?;
             let stages = blinkview_core::analyze::Stages {
                 thumbs: true,
@@ -468,7 +534,10 @@ fn main() -> Result<()> {
                 semantic: !no_semantic,
             };
             let st = blinkview_core::analyze::run_with_progress(
-                &mut lib, stages, &cli_progress("analysing"))?;
+                &mut lib,
+                stages,
+                &cli_progress("analysing"),
+            )?;
             println!(
                 "{} photographs · {} decoded ({} from a preview) · {} thumbnails · {} faces · {} understood",
                 st.considered, st.decoded, st.from_preview, st.thumbs, st.faces, st.embedded
@@ -576,7 +645,9 @@ fn main() -> Result<()> {
                 for (vault, path) in blinkview_core::cache::known() {
                     // Only a cache naming a *vanished* folder is junk. One with no
                     // breadcrumb is left alone: unknown is not the same as gone.
-                    let Some(gone) = path.filter(|p| !p.exists()) else { continue };
+                    let Some(gone) = path.filter(|p| !p.exists()) else {
+                        continue;
+                    };
                     if std::fs::remove_dir_all(&vault).is_ok() {
                         println!(
                             "  removed {}  (was {})",

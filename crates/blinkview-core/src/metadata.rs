@@ -48,7 +48,9 @@ pub struct Exif {
 
 /// Read what a photograph says about itself. A file with no EXIF is not an error.
 pub fn read(path: &Path) -> Exif {
-    let Ok(file) = std::fs::File::open(path) else { return Exif::default() };
+    let Ok(file) = std::fs::File::open(path) else {
+        return Exif::default();
+    };
     let mut buf = std::io::BufReader::new(file);
     let Ok(ex) = exif::Reader::new().read_from_container(&mut buf) else {
         return Exif::default();
@@ -200,18 +202,22 @@ fn strip_png(b: &[u8]) -> Result<Vec<u8>> {
 pub fn strip_file(lib: &crate::Library, rel_path: &str, keep: bool) -> Result<Stripped> {
     let src = lib.abs(rel_path);
     if !strippable(&src) {
-        bail!(
-            "blinkview cannot strip {} files",
-            ext(&src).to_uppercase()
-        );
+        bail!("blinkview cannot strip {} files", ext(&src).to_uppercase());
     }
     let bytes = std::fs::read(&src)?;
     let out = strip_bytes(&src, &bytes)?;
-    let original = if keep { crate::edit::keep_original(lib, rel_path)? } else { None };
+    let original = if keep {
+        crate::edit::keep_original(lib, rel_path)?
+    } else {
+        None
+    };
     let tmp = src.with_extension("blinkview-tmp");
     std::fs::write(&tmp, &out)?;
     std::fs::rename(&tmp, &src)?;
-    Ok(Stripped { original, hash: crate::scan::hash_file(&src)? })
+    Ok(Stripped {
+        original,
+        hash: crate::scan::hash_file(&src)?,
+    })
 }
 
 /// What a strip did.
@@ -253,13 +259,22 @@ mod tests {
 
         // Gone: EXIF and the comment.
         assert!(!contains(&out, b"secrets and coordinates"), "EXIF survived");
-        assert!(!contains(&out, b"naming the photographer"), "the comment survived");
+        assert!(
+            !contains(&out, b"naming the photographer"),
+            "the comment survived"
+        );
         // Kept: the things that decide how it looks.
-        assert!(contains(&out, b"ICC_PROFILE"), "the colour profile must stay");
+        assert!(
+            contains(&out, b"ICC_PROFILE"),
+            "the colour profile must stay"
+        );
         assert!(contains(&out, b"JFIF"), "JFIF must stay");
         assert!(contains(&out, b"Adobe"), "the Adobe transform must stay");
         // Kept byte for byte: the scan data and the end marker.
-        assert!(out.ends_with(&[0x12, 0x34, 0x56, 0x78, 0xFF, 0xD9]), "image data changed");
+        assert!(
+            out.ends_with(&[0x12, 0x34, 0x56, 0x78, 0xFF, 0xD9]),
+            "image data changed"
+        );
         assert!(out.len() < src.len());
     }
 
@@ -300,7 +315,9 @@ mod tests {
 
     #[test]
     fn a_format_that_cannot_be_stripped_says_so_by_name() {
-        let e = strip_bytes(Path::new("clip.mov"), &[0; 8]).unwrap_err().to_string();
+        let e = strip_bytes(Path::new("clip.mov"), &[0; 8])
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("MOV"), "{e}");
         assert!(!strippable(Path::new("a.heic")));
         assert!(strippable(Path::new("a.JPG")));

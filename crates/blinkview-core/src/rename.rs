@@ -10,7 +10,11 @@
 //! The default format uses hyphens because the reference drive is exFAT, where `:`
 //! is reserved (see `fsops::RESERVED`).
 
-use crate::{index::FileRow, plan::{Op, Plan}, Library};
+use crate::{
+    index::FileRow,
+    plan::{Op, Plan},
+    Library,
+};
 use anyhow::Result;
 use chrono::{TimeZone, Utc};
 use std::collections::HashSet;
@@ -23,7 +27,9 @@ pub const DEFAULT_FORMAT: &str = "%I-%M-%S_%p_%d_%b_%Y";
 /// base `..._19_aug` plus counter `2026`, which would have silently destroyed the year
 /// on 65 files. Only a suffix that is not part of the timestamp counts.
 fn split_counter(stem: &str) -> (&str, Option<u32>) {
-    let Some(idx) = stem.rfind('_') else { return (stem, None) };
+    let Some(idx) = stem.rfind('_') else {
+        return (stem, None);
+    };
     let (base, tail) = stem.split_at(idx);
     let tail = &tail[1..];
     match tail.parse::<u32>() {
@@ -44,7 +50,10 @@ fn stem_for(row: &FileRow, format: &str) -> String {
 }
 
 fn ext_of(path: &str) -> String {
-    path.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase()
+    path.rsplit('.')
+        .next()
+        .unwrap_or("jpg")
+        .to_ascii_lowercase()
 }
 
 fn dir_of(path: &str) -> Option<&str> {
@@ -92,8 +101,7 @@ pub fn plan_scoped(lib: &Library, format: &str, only: Option<&[String]>) -> Resu
         .filter_map(|r| r.path.rsplit('/').next().map(|s| s.to_string()))
         .collect();
 
-    let scope: Option<HashSet<&str>> =
-        only.map(|h| h.iter().map(|s| s.as_str()).collect());
+    let scope: Option<HashSet<&str>> = only.map(|h| h.iter().map(|s| s.as_str()).collect());
     let mut work: Vec<&FileRow> = rows
         .iter()
         .filter(|r| scope.as_ref().is_none_or(|s| s.contains(r.hash.as_str())))
@@ -144,7 +152,11 @@ pub fn plan_scoped(lib: &Library, format: &str, only: Option<&[String]>) -> Resu
             Some(d) => format!("{d}/{name}"),
             None => name,
         };
-        p.ops.push(Op::Rename { hash: row.hash.clone(), from: row.path.clone(), to });
+        p.ops.push(Op::Rename {
+            hash: row.hash.clone(),
+            from: row.path.clone(),
+            to,
+        });
     }
     Ok(p)
 }
@@ -155,21 +167,31 @@ mod tests {
 
     /// A cache beside the fixture, so a unit test never writes to the machine's.
     fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-        dir.parent()
-            .unwrap()
-            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+        dir.parent().unwrap().join(format!(
+            "{}-cache",
+            dir.file_name().unwrap().to_string_lossy()
+        ))
     }
 
     #[test]
     fn does_not_mistake_a_year_for_a_counter() {
         // The exact bug the dry run caught.
-        assert_eq!(split_counter("01-13-51_pm_19_aug_2026"), ("01-13-51_pm_19_aug_2026", None));
+        assert_eq!(
+            split_counter("01-13-51_pm_19_aug_2026"),
+            ("01-13-51_pm_19_aug_2026", None)
+        );
     }
 
     #[test]
     fn finds_a_real_counter() {
-        assert_eq!(split_counter("01-13-51_pm_19_aug_2026_2"), ("01-13-51_pm_19_aug_2026", Some(2)));
-        assert_eq!(split_counter("05-16-27_pm_18_aug_2026_12"), ("05-16-27_pm_18_aug_2026", Some(12)));
+        assert_eq!(
+            split_counter("01-13-51_pm_19_aug_2026_2"),
+            ("01-13-51_pm_19_aug_2026", Some(2))
+        );
+        assert_eq!(
+            split_counter("05-16-27_pm_18_aug_2026_12"),
+            ("05-16-27_pm_18_aug_2026", Some(12))
+        );
     }
 
     /// A library of dummy files. Indexing is by extension, so the bytes need only
@@ -189,9 +211,14 @@ mod tests {
 
     #[test]
     fn a_scope_renames_only_what_it_names() {
-        let (d, lib) = library("scope", &[
-            "20260820_120101.jpg", "20260820_120102.jpg", "20260820_120103.jpg",
-        ]);
+        let (d, lib) = library(
+            "scope",
+            &[
+                "20260820_120101.jpg",
+                "20260820_120102.jpg",
+                "20260820_120103.jpg",
+            ],
+        );
         let rows = lib.index.all().unwrap();
         let one: Vec<String> = rows
             .iter()
@@ -259,9 +286,13 @@ mod tests {
     #[test]
     fn default_format_is_exfat_safe() {
         let row = FileRow {
-            hash: "h".into(), path: "a/20260820_120132.jpg".into(),
-            size: 1, mtime: 0, kind: "photo".into(),
-            taken_at: Some(1786968092), taken_src: Some("filename".into()),
+            hash: "h".into(),
+            path: "a/20260820_120132.jpg".into(),
+            size: 1,
+            mtime: 0,
+            kind: "photo".into(),
+            taken_at: Some(1786968092),
+            taken_src: Some("filename".into()),
         };
         let name = stem_for(&row, DEFAULT_FORMAT);
         assert!(crate::fsops::validate_filename(&format!("{name}.jpg")).is_ok());

@@ -30,7 +30,11 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { rmse: DEFAULT_RMSE, hamming: DEFAULT_HAMMING, dest: DEFAULT_DEST.into() }
+        Self {
+            rmse: DEFAULT_RMSE,
+            hamming: DEFAULT_HAMMING,
+            dest: DEFAULT_DEST.into(),
+        }
     }
 }
 
@@ -45,7 +49,12 @@ pub fn ensure_signatures_with_progress(
     lib: &Library,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<usize> {
-    let rows: Vec<FileRow> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
+    let rows: Vec<FileRow> = lib
+        .index
+        .all()?
+        .into_iter()
+        .filter(|r| r.kind == "photo")
+        .collect();
 
     // Resolve everything the workers need *before* going parallel: the SQLite
     // connection is not Sync, so no index access may cross the rayon boundary.
@@ -82,7 +91,12 @@ pub struct Group {
 
 /// Group near-duplicates. Returns groups of two or more, largest first.
 pub fn find_groups(lib: &Library, opt: &Options) -> Result<Vec<Group>> {
-    let rows: Vec<FileRow> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
+    let rows: Vec<FileRow> = lib
+        .index
+        .all()?
+        .into_iter()
+        .filter(|r| r.kind == "photo")
+        .collect();
     let mut sigs = Vec::with_capacity(rows.len());
     let mut keep_rows = Vec::with_capacity(rows.len());
     for r in rows {
@@ -95,7 +109,10 @@ pub fn find_groups(lib: &Library, opt: &Options) -> Result<Vec<Group>> {
 
     // Normalize every thumbnail once. Doing it inside the comparison meant each image
     // was re-normalized once per candidate pair it appeared in.
-    let norms: Vec<Vec<f32>> = sigs.par_iter().map(|s| imagesig::normalize(&s.thumb)).collect();
+    let norms: Vec<Vec<f32>> = sigs
+        .par_iter()
+        .map(|s| imagesig::normalize(&s.thumb))
+        .collect();
 
     // Stage 1+2: candidates by dHash, confirmed by pixels.
     let pairs: Vec<(f32, usize, usize)> = (0..n)
@@ -107,8 +124,7 @@ pub fn find_groups(lib: &Library, opt: &Options) -> Result<Vec<Group>> {
                     if imagesig::hamming(sigs[i].dhash, sigs[j].dhash) > opt.hamming {
                         return None;
                     }
-                    imagesig::rmse_norm_within(&norms[i], &norms[j], opt.rmse)
-                        .map(|d| (d, i, j))
+                    imagesig::rmse_norm_within(&norms[i], &norms[j], opt.rmse).map(|d| (d, i, j))
                 })
                 .collect::<Vec<_>>()
         })
@@ -126,9 +142,7 @@ pub fn find_groups(lib: &Library, opt: &Options) -> Result<Vec<Group>> {
         .iter()
         .map(|&(_, i, j)| (i.min(j) as u32, i.max(j) as u32))
         .collect();
-    let close = |a: usize, b: usize| {
-        verified.contains(&(a.min(b) as u32, a.max(b) as u32))
-    };
+    let close = |a: usize, b: usize| verified.contains(&(a.min(b) as u32, a.max(b) as u32));
     let groups = cluster::complete_linkage(n, pairs, close);
 
     // Stage 4: the sharpest frame stays.
@@ -138,12 +152,19 @@ pub fn find_groups(lib: &Library, opt: &Options) -> Result<Vec<Group>> {
             let best = *g
                 .iter()
                 .max_by(|&&a, &&b| {
-                    sigs[a].sharpness.partial_cmp(&sigs[b].sharpness).unwrap_or(std::cmp::Ordering::Equal)
+                    sigs[a]
+                        .sharpness
+                        .partial_cmp(&sigs[b].sharpness)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .expect("groups are non-empty");
             Group {
                 keep: keep_rows[best].clone(),
-                duplicates: g.iter().filter(|&&i| i != best).map(|&i| keep_rows[i].clone()).collect(),
+                duplicates: g
+                    .iter()
+                    .filter(|&&i| i != best)
+                    .map(|&i| keep_rows[i].clone())
+                    .collect(),
             }
         })
         .collect())

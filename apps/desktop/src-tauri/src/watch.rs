@@ -32,7 +32,9 @@ pub struct Watchers {
 
 impl Default for Watchers {
     fn default() -> Self {
-        Self { inner: Mutex::new(HashMap::new()) }
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -79,7 +81,7 @@ fn debounce(rx: mpsc::Receiver<notify::Result<Event>>, marker: PathBuf, on_chang
                 Err(mpsc::RecvTimeoutError::Disconnected) => None,
             },
         };
-        let Some(msg) = msg else { return };  // the watcher was dropped
+        let Some(msg) = msg else { return }; // the watcher was dropped
 
         match msg {
             Some(Ok(ev)) if interesting(&ev, &marker) => pending = Some(Instant::now()),
@@ -121,7 +123,11 @@ mod tests {
     use notify::event::{CreateKind, EventKind};
 
     fn ev(kind: EventKind, path: &str) -> Event {
-        Event { kind, paths: vec![PathBuf::from(path)], attrs: Default::default() }
+        Event {
+            kind,
+            paths: vec![PathBuf::from(path)],
+            attrs: Default::default(),
+        }
     }
 
     #[test]
@@ -136,7 +142,10 @@ mod tests {
         // A cache left beside the photographs by a version before ADR-0019, still
         // being written by nothing at all — but ignored all the same if touched.
         assert!(!interesting(
-            &ev(EventKind::Create(CreateKind::File), "/lib/.blinkview/thumbs/ab.jpg"),
+            &ev(
+                EventKind::Create(CreateKind::File),
+                "/lib/.blinkview/thumbs/ab.jpg"
+            ),
             &marker
         ));
     }
@@ -155,7 +164,10 @@ mod tests {
         let marker = PathBuf::from("/lib/.blinkview-id");
         // Serving a photograph to the grid opens it; that must not look like an edit.
         assert!(!interesting(
-            &ev(EventKind::Access(notify::event::AccessKind::Read), "/lib/Trip/a.jpg"),
+            &ev(
+                EventKind::Access(notify::event::AccessKind::Read),
+                "/lib/Trip/a.jpg"
+            ),
             &marker
         ));
     }

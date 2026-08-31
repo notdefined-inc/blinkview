@@ -1,7 +1,7 @@
 //! Diagnostic: generate the synthetic burst fixture and print its pairwise distances,
 //! so test thresholds are calibrated against measurements rather than guesses.
-use image::{ImageBuffer, Rgb};
 use blinkview_core::imagesig;
+use image::{ImageBuffer, Rgb};
 
 fn scene(seed: u32, jitter: u32, amp: u32) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     ImageBuffer::from_fn(320, 240, |x, y| {
@@ -26,18 +26,27 @@ fn main() -> anyhow::Result<()> {
         .filter(|p| p.extension().is_some_and(|x| x == "jpg"))
         .collect();
     files.sort();
-    let sigs: Vec<_> = files.iter().map(|p| imagesig::compute(p).unwrap()).collect();
+    let sigs: Vec<_> = files
+        .iter()
+        .map(|p| imagesig::compute(p).unwrap())
+        .collect();
     for (i, f) in files.iter().enumerate() {
-        println!("{:<14} sharpness={:>9.1}", f.file_stem().unwrap().to_string_lossy(), sigs[i].sharpness);
+        println!(
+            "{:<14} sharpness={:>9.1}",
+            f.file_stem().unwrap().to_string_lossy(),
+            sigs[i].sharpness
+        );
     }
     println!("\n{:<10} {:<10} {:>8} {:>8}", "a", "b", "hamming", "rmse");
     for i in 0..files.len() {
         for j in i + 1..files.len() {
-            println!("{:<10} {:<10} {:>8} {:>8.3}",
+            println!(
+                "{:<10} {:<10} {:>8} {:>8.3}",
                 files[i].file_stem().unwrap().to_string_lossy(),
                 files[j].file_stem().unwrap().to_string_lossy(),
                 imagesig::hamming(sigs[i].dhash, sigs[j].dhash),
-                imagesig::rmse(&sigs[i].thumb, &sigs[j].thumb));
+                imagesig::rmse(&sigs[i].thumb, &sigs[j].thumb)
+            );
         }
     }
     Ok(())

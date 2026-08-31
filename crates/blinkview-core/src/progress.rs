@@ -31,7 +31,12 @@ impl<'a> Counter<'a> {
         // when there are few.
         let every = (total / 100).max(1);
         sink(0, total);
-        Self { done: AtomicUsize::new(0), total, every, sink }
+        Self {
+            done: AtomicUsize::new(0),
+            total,
+            every,
+            sink,
+        }
     }
 
     /// Record one completed item.
@@ -78,7 +83,11 @@ mod tests {
             }
         }
         // ~100 updates plus the initial one — not 10,000.
-        assert!(*count.lock().unwrap() < 150, "emitted {} events", count.lock().unwrap());
+        assert!(
+            *count.lock().unwrap() < 150,
+            "emitted {} events",
+            count.lock().unwrap()
+        );
     }
 
     #[test]
@@ -87,10 +96,14 @@ mod tests {
         {
             let sink = |d: usize, _: usize| {
                 let mut m = max.lock().unwrap();
-                if d > *m { *m = d }
+                if d > *m {
+                    *m = d
+                }
             };
             let c = Counter::new(5, &sink);
-            for _ in 0..5 { c.tick(); }
+            for _ in 0..5 {
+                c.tick();
+            }
         }
         assert_eq!(*max.lock().unwrap(), 5);
     }

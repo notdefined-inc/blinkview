@@ -37,7 +37,11 @@ impl Face {
         let y2 = (self.y + self.h).min(o.y + o.h);
         let inter = (x2 - x1).max(0.0) * (y2 - y1).max(0.0);
         let union = self.area() + o.area() - inter;
-        if union <= 0.0 { 0.0 } else { inter / union }
+        if union <= 0.0 {
+            0.0
+        } else {
+            inter / union
+        }
     }
 }
 
@@ -52,7 +56,10 @@ impl Detector {
             .commit_from_file(model)
             .with_context(|| format!("loading detector {}", model.display()))?;
         let input_name = session.inputs()[0].name().to_string();
-        Ok(Self { session, input_name })
+        Ok(Self {
+            session,
+            input_name,
+        })
     }
 
     /// Detect faces in an RGB image. Coordinates are in that image's pixel space.
@@ -63,7 +70,14 @@ impl Detector {
     /// (it fails with "broadcast an axis by a dimension other than 1, 36 by 37").
     /// Padding on the far edges leaves the origin untouched, so detected coordinates
     /// need no correction.
-    pub fn detect(&mut self, rgb: &[u8], w: usize, h: usize, score_thr: f32, nms_thr: f32) -> Result<Vec<Face>> {
+    pub fn detect(
+        &mut self,
+        rgb: &[u8],
+        w: usize,
+        h: usize,
+        score_thr: f32,
+        nms_thr: f32,
+    ) -> Result<Vec<Face>> {
         let pw = w.div_ceil(32) * 32;
         let ph = h.div_ceil(32) * 32;
 
@@ -74,20 +88,28 @@ impl Detector {
                 let p = (y * w + x) * 3;
                 input[[0, 0, y, x]] = f32::from(rgb[p + 2]); // B
                 input[[0, 1, y, x]] = f32::from(rgb[p + 1]); // G
-                input[[0, 2, y, x]] = f32::from(rgb[p]);     // R
+                input[[0, 2, y, x]] = f32::from(rgb[p]); // R
             }
         }
         let (w, h) = (pw, ph);
-        let outputs = self
-            .session
-            .run(ort::inputs![self.input_name.as_str() => ort::value::Tensor::from_array(input)?])?;
+        let outputs = self.session.run(
+            ort::inputs![self.input_name.as_str() => ort::value::Tensor::from_array(input)?],
+        )?;
 
         let mut faces = Vec::new();
         for stride in STRIDES {
-            let cls = outputs[format!("cls_{stride}").as_str()].try_extract_tensor::<f32>()?.1;
-            let obj = outputs[format!("obj_{stride}").as_str()].try_extract_tensor::<f32>()?.1;
-            let bbox = outputs[format!("bbox_{stride}").as_str()].try_extract_tensor::<f32>()?.1;
-            let kps = outputs[format!("kps_{stride}").as_str()].try_extract_tensor::<f32>()?.1;
+            let cls = outputs[format!("cls_{stride}").as_str()]
+                .try_extract_tensor::<f32>()?
+                .1;
+            let obj = outputs[format!("obj_{stride}").as_str()]
+                .try_extract_tensor::<f32>()?
+                .1;
+            let bbox = outputs[format!("bbox_{stride}").as_str()]
+                .try_extract_tensor::<f32>()?
+                .1;
+            let kps = outputs[format!("kps_{stride}").as_str()]
+                .try_extract_tensor::<f32>()?
+                .1;
 
             let cols = w / stride;
             let rows = h / stride;
@@ -112,7 +134,14 @@ impl Detector {
                             (r as f32 + kps[i * 10 + 2 * n + 1]) * s,
                         );
                     }
-                    faces.push(Face { x: cx - fw / 2.0, y: cy - fh / 2.0, w: fw, h: fh, score, landmarks });
+                    faces.push(Face {
+                        x: cx - fw / 2.0,
+                        y: cy - fh / 2.0,
+                        w: fw,
+                        h: fh,
+                        score,
+                        landmarks,
+                    });
                 }
             }
         }
@@ -122,7 +151,11 @@ impl Detector {
 
 /// Greedy non-maximum suppression, highest score first.
 fn nms(mut faces: Vec<Face>, thr: f32) -> Vec<Face> {
-    faces.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    faces.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut keep: Vec<Face> = Vec::new();
     for f in faces {
         if keep.iter().all(|k| k.iou(&f) <= thr) {
@@ -137,19 +170,35 @@ mod tests {
     use super::*;
 
     fn face(x: f32, y: f32, s: f32, score: f32) -> Face {
-        Face { x, y, w: s, h: s, score, landmarks: [(0.0, 0.0); 5] }
+        Face {
+            x,
+            y,
+            w: s,
+            h: s,
+            score,
+            landmarks: [(0.0, 0.0); 5],
+        }
     }
 
     #[test]
     fn nms_drops_overlapping_boxes() {
-        let out = nms(vec![face(0.0, 0.0, 10.0, 0.9), face(1.0, 1.0, 10.0, 0.8)], 0.3);
+        let out = nms(
+            vec![face(0.0, 0.0, 10.0, 0.9), face(1.0, 1.0, 10.0, 0.8)],
+            0.3,
+        );
         assert_eq!(out.len(), 1);
-        assert!((out[0].score - 0.9).abs() < 1e-6, "must keep the higher score");
+        assert!(
+            (out[0].score - 0.9).abs() < 1e-6,
+            "must keep the higher score"
+        );
     }
 
     #[test]
     fn nms_keeps_separate_faces() {
-        let out = nms(vec![face(0.0, 0.0, 10.0, 0.9), face(100.0, 100.0, 10.0, 0.8)], 0.3);
+        let out = nms(
+            vec![face(0.0, 0.0, 10.0, 0.9), face(100.0, 100.0, 10.0, 0.8)],
+            0.3,
+        );
         assert_eq!(out.len(), 2);
     }
 

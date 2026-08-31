@@ -59,7 +59,9 @@ fn main() -> Result<()> {
                 path: lib.abs(&r.path).display().to_string(),
                 name,
                 folder,
-                thumb: blinkview_core::thumbs::thumb_path_at(&root, &r.hash).display().to_string(),
+                thumb: blinkview_core::thumbs::thumb_path_at(&root, &r.hash)
+                    .display()
+                    .to_string(),
                 taken_at: r.taken_at,
                 faces: 0,
                 people: vec![],
@@ -81,11 +83,20 @@ fn main() -> Result<()> {
     println!("user_data cached+clone {ud_ms:>6.1} ms   (every query)");
     println!("build PhotoInfo      {build_ms:>8.1} ms");
     println!("serialise to JSON    {ser_ms:>8.1} ms");
-    println!("total rust           {:>8.1} ms", rows_ms + ud_ms + build_ms + ser_ms);
-    println!("\npayload              {:>8.1} MB   ({} bytes/photo)",
-        json.len() as f64 / 1e6, json.len() / n.max(1));
+    println!(
+        "total rust           {:>8.1} ms",
+        rows_ms + ud_ms + build_ms + ser_ms
+    );
+    println!(
+        "\npayload              {:>8.1} MB   ({} bytes/photo)",
+        json.len() as f64 / 1e6,
+        json.len() / n.max(1)
+    );
     let at200k = (rows_ms + ud_ms + build_ms + ser_ms) / n as f64 * 200_000.0;
-    println!("at 200,000           {:>8.1} s rust   {:>6.0} MB payload",
-        at200k / 1000.0, json.len() as f64 / n as f64 * 200_000.0 / 1e6);
+    println!(
+        "at 200,000           {:>8.1} s rust   {:>6.0} MB payload",
+        at200k / 1000.0,
+        json.len() as f64 / n as f64 * 200_000.0 / 1e6
+    );
     Ok(())
 }

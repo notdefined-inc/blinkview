@@ -42,9 +42,12 @@ pub fn root() -> PathBuf {
     if let Ok(p) = std::env::var("BLINKVIEW_CACHE") {
         return PathBuf::from(p);
     }
-    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default();
+    let home = || {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_default()
+    };
     #[cfg(target_os = "macos")]
     return home().join("Library/Caches/dev.notdefined.blinkview");
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -84,7 +87,9 @@ pub fn vault_for(lib_root: &Path) -> PathBuf {
 /// For readers that must not cause side effects: `Library::open_readable` waits on a
 /// scan that another thread is running, and minting an id here would race it.
 pub fn existing_vault_for(lib_root: &Path) -> Option<PathBuf> {
-    let canonical = lib_root.canonicalize().unwrap_or_else(|_| lib_root.to_path_buf());
+    let canonical = lib_root
+        .canonicalize()
+        .unwrap_or_else(|_| lib_root.to_path_buf());
     let id = read_marker(&canonical)?;
     let vault = libraries(&root()).join(id);
     vault.is_dir().then_some(vault)
@@ -115,7 +120,9 @@ pub fn forget(lib_root: &Path) {
 pub fn known() -> Vec<(PathBuf, Option<PathBuf>)> {
     let mut out = Vec::new();
     let libs = libraries(&root());
-    let Ok(entries) = std::fs::read_dir(&libs) else { return out };
+    let Ok(entries) = std::fs::read_dir(&libs) else {
+        return out;
+    };
     for e in entries.flatten() {
         let vault = e.path();
         if !vault.is_dir() {
@@ -137,7 +144,9 @@ pub fn known() -> Vec<(PathBuf, Option<PathBuf>)> {
 /// touching the machine's — `Library::open` otherwise writes to the real root, and a
 /// test suite that littered `~/Library/Caches` would be a bug of its own.
 pub(crate) fn resolve(lib_root: &Path, cache_root: &Path) -> PathBuf {
-    let root = lib_root.canonicalize().unwrap_or_else(|_| lib_root.to_path_buf());
+    let root = lib_root
+        .canonicalize()
+        .unwrap_or_else(|_| lib_root.to_path_buf());
     let libraries = libraries(cache_root);
 
     // An existing marker is the fast path: this library has been opened before.
@@ -262,7 +271,11 @@ fn hex32(bytes: &[u8]) -> String {
         }
         h
     };
-    format!("{:016x}{:016x}", fnv(0xcbf2_9ce4_8422_2325), fnv(0x9e37_79b9_7f4a_7c15))
+    format!(
+        "{:016x}{:016x}",
+        fnv(0xcbf2_9ce4_8422_2325),
+        fnv(0x9e37_79b9_7f4a_7c15)
+    )
 }
 
 /// The stable id for a library whose marker cannot be written: a hash of where it is.

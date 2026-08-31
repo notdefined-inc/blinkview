@@ -22,13 +22,19 @@ fn timed<T>(label: &str, paths: &[PathBuf], mut f: impl FnMut(&Path) -> Result<T
         }
     }
     let per = ms(t.elapsed()) / ok.max(1) as f64;
-    println!("{label:<34} {per:>8.1} ms/photo   ({ok}/{} ok)", paths.len());
+    println!(
+        "{label:<34} {per:>8.1} ms/photo   ({ok}/{} ok)",
+        paths.len()
+    );
     per
 }
 
 fn main() -> Result<()> {
     let root = PathBuf::from(std::env::args().nth(1).expect("usage: bench <library> [n]"));
-    let n: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(40);
+    let n: usize = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
 
     let lib = blinkview_core::Library::open(&root)?;
     let rows = lib.index.all()?;
@@ -38,7 +44,11 @@ fn main() -> Result<()> {
         .map(|r| lib.abs(&r.path))
         .filter(|p| p.exists())
         .collect();
-    println!("library {} — {} photos indexed\n", root.display(), photos.len());
+    println!(
+        "library {} — {} photos indexed\n",
+        root.display(),
+        photos.len()
+    );
     if photos.is_empty() {
         return Ok(());
     }
@@ -66,15 +76,24 @@ fn main() -> Result<()> {
         bytes += std::fs::read(p).map(|b| b.len() as u64).unwrap_or(0);
     }
     let secs = t.elapsed().as_secs_f64();
-    println!("{:<34} {:>8.1} ms/photo   ({:.1} MB/s, mean {:.1} MB)",
-        "read file bytes", secs * 1000.0 / sample.len() as f64,
-        bytes as f64 / 1e6 / secs, bytes as f64 / 1e6 / sample.len() as f64);
+    println!(
+        "{:<34} {:>8.1} ms/photo   ({:.1} MB/s, mean {:.1} MB)",
+        "read file bytes",
+        secs * 1000.0 / sample.len() as f64,
+        bytes as f64 / 1e6 / secs,
+        bytes as f64 / 1e6 / sample.len() as f64
+    );
 
     // Again, now that the OS cache is warm: separates disk from decode.
     let t = Instant::now();
-    for p in &sample { let _ = std::fs::read(p); }
-    println!("{:<34} {:>8.1} ms/photo   (cache warm)",
-        "read again", t.elapsed().as_secs_f64() * 1000.0 / sample.len() as f64);
+    for p in &sample {
+        let _ = std::fs::read(p);
+    }
+    println!(
+        "{:<34} {:>8.1} ms/photo   (cache warm)",
+        "read again",
+        t.elapsed().as_secs_f64() * 1000.0 / sample.len() as f64
+    );
 
     println!("\n--- decode alone ---");
     timed("full decode", &sample, blinkview_core::imageio::load_rgb);
@@ -98,10 +117,16 @@ fn main() -> Result<()> {
         let long = blinkview_core::faces::pipeline::ANALYSIS_LONG_EDGE;
         let shrink = |img: image::RgbImage| {
             let (w, h) = (img.width(), img.height());
-            if w.max(h) <= long { return img; }
+            if w.max(h) <= long {
+                return img;
+            }
             let s = long as f32 / w.max(h) as f32;
-            image::imageops::resize(&img, (w as f32*s) as u32, (h as f32*s) as u32,
-                                    image::imageops::FilterType::Triangle)
+            image::imageops::resize(
+                &img,
+                (w as f32 * s) as u32,
+                (h as f32 * s) as u32,
+                image::imageops::FilterType::Triangle,
+            )
         };
         timed("decode + shrink + detect (real)", &sample, |p| {
             let img = shrink(blinkview_core::imageio::load_rgb(p)?);
@@ -109,15 +134,26 @@ fn main() -> Result<()> {
             det.detect(img.as_raw(), w, h, 0.6, 0.3).map(|v| v.len())
         });
         // Inference alone, on an image already the right size.
-        let ready: Vec<image::RgbImage> = sample.iter()
+        let ready: Vec<image::RgbImage> = sample
+            .iter()
             .filter_map(|p| blinkview_core::imageio::load_rgb(p).ok())
-            .map(&shrink).collect();
+            .map(&shrink)
+            .collect();
         let t = Instant::now();
         for img in &ready {
-            let _ = det.detect(img.as_raw(), img.width() as usize, img.height() as usize, 0.6, 0.3);
+            let _ = det.detect(
+                img.as_raw(),
+                img.width() as usize,
+                img.height() as usize,
+                0.6,
+                0.3,
+            );
         }
-        println!("{:<34} {:>8.1} ms/photo   (inference only)", "detect at 1280px",
-            ms(t.elapsed()) / ready.len().max(1) as f64);
+        println!(
+            "{:<34} {:>8.1} ms/photo   (inference only)",
+            "detect at 1280px",
+            ms(t.elapsed()) / ready.len().max(1) as f64
+        );
     } else {
         println!("(models not installed)");
     }
@@ -134,29 +170,50 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let rows = lib.index.all()?;
     let all_ms = ms(t.elapsed());
-    println!("{:<34} {:>8.1} ms   ({} rows)", "index.all()", all_ms, rows.len());
+    println!(
+        "{:<34} {:>8.1} ms   ({} rows)",
+        "index.all()",
+        all_ms,
+        rows.len()
+    );
 
     let t = Instant::now();
     let people = lib.people()?;
-    println!("{:<34} {:>8.1} ms   ({} people)", "People::load", ms(t.elapsed()), people.people.len());
+    println!(
+        "{:<34} {:>8.1} ms   ({} people)",
+        "People::load",
+        ms(t.elapsed()),
+        people.people.len()
+    );
 
     let t = Instant::now();
     let faces = lib.all_faces()?;
     let faces_ms = ms(t.elapsed());
-    println!("{:<34} {:>8.1} ms   ({} faces)", "all_faces()", faces_ms, faces.len());
+    println!(
+        "{:<34} {:>8.1} ms   ({} faces)",
+        "all_faces()",
+        faces_ms,
+        faces.len()
+    );
 
     let t = Instant::now();
     let opt = blinkview_core::faces::assign::Options::default();
     let mut hits = 0usize;
     for f in &faces {
         if let Some(e) = f.embedding.as_ref() {
-            if blinkview_core::faces::assign::assign(e, &people, &opt).person().is_some() {
+            if blinkview_core::faces::assign::assign(e, &people, &opt)
+                .person()
+                .is_some()
+            {
                 hits += 1;
             }
         }
     }
     let assign_ms = ms(t.elapsed());
-    println!("{:<34} {:>8.1} ms   ({hits} assigned)", "assign every face", assign_ms);
+    println!(
+        "{:<34} {:>8.1} ms   ({hits} assigned)",
+        "assign every face", assign_ms
+    );
 
     let t = Instant::now();
     let ud = blinkview_core::userdata::UserDataSet::load(lib.root())?;
@@ -164,12 +221,21 @@ fn main() -> Result<()> {
     let _ = ud;
 
     let total = all_ms + faces_ms + assign_ms;
-    println!("{:<34} {:>8.1} ms  -> {:.1} s at 200k photos",
-        "sum", total, total / rows.len().max(1) as f64 * 200_000.0 / 1000.0);
+    println!(
+        "{:<34} {:>8.1} ms  -> {:.1} s at 200k photos",
+        "sum",
+        total,
+        total / rows.len().max(1) as f64 * 200_000.0 / 1000.0
+    );
 
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
     println!("\n--- projection for 200,000 photos on {cores} cores ---");
-    println!("thumbnails  {:>8.1} min", full * 200_000.0 / 1000.0 / 60.0 / cores as f64);
+    println!(
+        "thumbnails  {:>8.1} min",
+        full * 200_000.0 / 1000.0 / 60.0 / cores as f64
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
     Ok(())

@@ -120,17 +120,17 @@ impl Index {
 
     /// Rows sharing a content hash. Used to re-identify files moved outside the tool.
     pub fn by_hash(&self, hash: &str) -> Result<Vec<FileRow>> {
-        let mut st = self
-            .conn
-            .prepare("SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files WHERE hash=?1")?;
+        let mut st = self.conn.prepare(
+            "SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files WHERE hash=?1",
+        )?;
         let rows = st.query_map(params![hash], row_to_file)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn all(&self) -> Result<Vec<FileRow>> {
-        let mut st = self
-            .conn
-            .prepare("SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files ORDER BY path")?;
+        let mut st = self.conn.prepare(
+            "SELECT hash,path,size,mtime,kind,taken_at,taken_src FROM files ORDER BY path",
+        )?;
         let rows = st.query_map([], row_to_file)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -143,7 +143,15 @@ impl Index {
                  hash=excluded.hash, size=excluded.size, mtime=excluded.mtime,
                  kind=excluded.kind, taken_at=excluded.taken_at,
                  taken_src=excluded.taken_src"#,
-            params![f.hash, f.path, f.size, f.mtime, f.kind, f.taken_at, f.taken_src],
+            params![
+                f.hash,
+                f.path,
+                f.size,
+                f.mtime,
+                f.kind,
+                f.taken_at,
+                f.taken_src
+            ],
         )?;
         Ok(())
     }
@@ -256,7 +264,14 @@ impl Index {
         self.conn.execute(
             "INSERT OR REPLACE INTO signatures (hash,dhash,thumb,sharpness,width,height)
              VALUES (?1,?2,?3,?4,?5,?6)",
-            params![hash, s.dhash as i64, s.thumb, s.sharpness, s.width, s.height],
+            params![
+                hash,
+                s.dhash as i64,
+                s.thumb,
+                s.sharpness,
+                s.width,
+                s.height
+            ],
         )?;
         Ok(())
     }
@@ -269,7 +284,11 @@ impl Index {
     pub fn get_clip(&self, hash: &str) -> Result<Option<Vec<f32>>> {
         let blob: Option<Vec<u8>> = self
             .conn
-            .query_row("SELECT embedding FROM clip WHERE hash=?1", params![hash], |r| r.get(0))
+            .query_row(
+                "SELECT embedding FROM clip WHERE hash=?1",
+                params![hash],
+                |r| r.get(0),
+            )
             .optional()?;
         Ok(blob.as_deref().and_then(floats_from))
     }
@@ -290,7 +309,12 @@ impl Index {
         self.conn.execute(
             "INSERT OR REPLACE INTO unreadable (hash, reason, at, version) \
              VALUES (?1, ?2, ?3, ?4)",
-            params![hash, reason, chrono::Utc::now().timestamp(), DECODER_GENERATION],
+            params![
+                hash,
+                reason,
+                chrono::Utc::now().timestamp(),
+                DECODER_GENERATION
+            ],
         )?;
         Ok(())
     }
@@ -324,7 +348,10 @@ impl Index {
 
     /// How many photographs have an embedding, without reading any of them.
     pub fn count_clip(&self) -> Result<usize> {
-        Ok(self.conn.query_row("SELECT COUNT(*) FROM clip", [], |r| r.get::<_, i64>(0))? as usize)
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM clip", [], |r| r.get::<_, i64>(0))?
+            as usize)
     }
 
     pub fn all_clip(&self) -> Result<Vec<(String, Vec<f32>)>> {
@@ -342,7 +369,9 @@ impl Index {
     }
 
     pub fn clip_count(&self) -> Result<i64> {
-        Ok(self.conn.query_row("SELECT COUNT(*) FROM clip", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM clip", [], |r| r.get(0))?)
     }
 
     pub fn count(&self) -> Result<i64> {
@@ -367,7 +396,13 @@ fn floats_from(b: &[u8]) -> Option<Vec<f32>> {
     if b.is_empty() || !b.len().is_multiple_of(4) {
         return None;
     }
-    Some(b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect())
+    Some(
+        b.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
+            .collect(),
+    )
 }
 
 fn row_to_file(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {

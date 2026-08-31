@@ -22,7 +22,10 @@ fn model_or_skip() -> Option<std::path::PathBuf> {
 #[test]
 fn sface_embedding_matches_opencv() {
     let Some(model) = model_or_skip() else { return };
-    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/sface_input.png");
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/sface_input.png"
+    );
     let expected: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -38,13 +41,20 @@ fn sface_embedding_matches_opencv() {
         .map(|v| v.as_f64().unwrap() as f32)
         .collect();
 
-    let img = image::ImageReader::open(fixture).unwrap().decode().unwrap().to_rgb8();
+    let img = image::ImageReader::open(fixture)
+        .unwrap()
+        .decode()
+        .unwrap()
+        .to_rgb8();
     let mut e = embed::Embedder::load(&model).unwrap();
     let got = e.embed(img.as_raw()).unwrap();
 
     assert_eq!(got.len(), embed::DIM);
     let norm = got.iter().map(|v| v * v).sum::<f32>().sqrt();
-    assert!((norm - 1.0).abs() < 1e-4, "embedding must be L2-normalized, got {norm}");
+    assert!(
+        (norm - 1.0).abs() < 1e-4,
+        "embedding must be L2-normalized, got {norm}"
+    );
 
     let cos = embed::cosine(&want, &got);
     assert!(

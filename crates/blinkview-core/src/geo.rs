@@ -35,7 +35,11 @@ impl Place {
     /// otherwise read "Singapore, Singapore, Singapore".
     pub fn label(&self) -> String {
         let mut parts: Vec<&str> = Vec::new();
-        for p in [self.name.as_str(), self.region.as_str(), self.country.as_str()] {
+        for p in [
+            self.name.as_str(),
+            self.region.as_str(),
+            self.country.as_str(),
+        ] {
             if !p.is_empty() && !parts.contains(&p) {
                 parts.push(p);
             }
@@ -108,7 +112,8 @@ fn parse(b: &[u8]) -> Result<Table> {
 
     let n = u32at(take(4)?);
     let mut rows = Vec::with_capacity(n);
-    let mut grid: std::collections::HashMap<(i16, i16), Vec<u32>> = std::collections::HashMap::new();
+    let mut grid: std::collections::HashMap<(i16, i16), Vec<u32>> =
+        std::collections::HashMap::new();
     for i in 0..n {
         let len = take(1)?[0] as usize;
         let name = String::from_utf8_lossy(take(len)?).to_string();
@@ -119,17 +124,35 @@ fn parse(b: &[u8]) -> Result<Table> {
         let lon = i32::from_le_bytes([s[4], s[5], s[6], s[7]]) as f32 / 1e4;
         let country = u16::from_le_bytes([s[8], s[9]]);
         let region = u16::from_le_bytes([s[10], s[11]]);
-        grid.entry(cell(lat as f64, lon as f64)).or_default().push(i as u32);
-        rows.push(Row { name, ascii, lat, lon, country, region });
+        grid.entry(cell(lat as f64, lon as f64))
+            .or_default()
+            .push(i as u32);
+        rows.push(Row {
+            name,
+            ascii,
+            lat,
+            lon,
+            country,
+            region,
+        });
     }
-    Ok(Table { rows, countries, regions, grid })
+    Ok(Table {
+        rows,
+        countries,
+        regions,
+        grid,
+    })
 }
 
 fn place_at(t: &Table, i: usize) -> Place {
     let r = &t.rows[i];
     Place {
         name: r.name.clone(),
-        region: t.regions.get(r.region as usize).cloned().unwrap_or_default(),
+        region: t
+            .regions
+            .get(r.region as usize)
+            .cloned()
+            .unwrap_or_default(),
         country: t
             .countries
             .get(r.country as usize)
@@ -171,7 +194,9 @@ pub fn nearest(lat: f64, lon: f64) -> Option<Place> {
                     continue; // interior of the ring: already searched
                 }
                 let key = (clat + dy, wrap_lon_cell(clon + dx));
-                let Some(ids) = t.grid.get(&key) else { continue };
+                let Some(ids) = t.grid.get(&key) else {
+                    continue;
+                };
                 for &i in ids {
                     let r = &t.rows[i as usize];
                     let d = haversine((lat, lon), (r.lat as f64, r.lon as f64));
@@ -189,7 +214,8 @@ pub fn nearest(lat: f64, lon: f64) -> Option<Place> {
             }
         }
     }
-    best.filter(|(d, _)| *d <= MAX_KM).map(|(_, i)| place_at(t, i))
+    best.filter(|(d, _)| *d <= MAX_KM)
+        .map(|(_, i)| place_at(t, i))
 }
 
 fn wrap_lon_cell(x: i16) -> i16 {
@@ -268,8 +294,16 @@ pub fn read_gps(path: &Path) -> Option<(f64, f64)> {
     };
     let lat = dms(exif::Tag::GPSLatitude)?;
     let lon = dms(exif::Tag::GPSLongitude)?;
-    let lat = if refc(exif::Tag::GPSLatitudeRef)?.starts_with('S') { -lat } else { lat };
-    let lon = if refc(exif::Tag::GPSLongitudeRef)?.starts_with('W') { -lon } else { lon };
+    let lat = if refc(exif::Tag::GPSLatitudeRef)?.starts_with('S') {
+        -lat
+    } else {
+        lat
+    };
+    let lon = if refc(exif::Tag::GPSLongitudeRef)?.starts_with('W') {
+        -lon
+    } else {
+        lon
+    };
     if lat == 0.0 && lon == 0.0 {
         return None;
     }
@@ -318,7 +352,11 @@ struct Tiff {
 
 fn rd16(b: &[u8], at: usize, be: bool) -> Result<u16> {
     let s = b.get(at..at + 2).context("TIFF ends early")?;
-    Ok(if be { u16::from_be_bytes([s[0], s[1]]) } else { u16::from_le_bytes([s[0], s[1]]) })
+    Ok(if be {
+        u16::from_be_bytes([s[0], s[1]])
+    } else {
+        u16::from_le_bytes([s[0], s[1]])
+    })
 }
 
 fn rd32(b: &[u8], at: usize, be: bool) -> Result<u32> {
@@ -354,13 +392,20 @@ fn read_ifd(b: &[u8], at: usize, be: bool) -> Result<Vec<Entry>> {
                 None => bail!("TIFF value for tag {tag:#06x} points outside the block"),
             }
         };
-        out.push(Entry { tag, typ, count, data });
+        out.push(Entry {
+            tag,
+            typ,
+            count,
+            data,
+        });
     }
     Ok(out)
 }
 
 fn sub_ifd(b: &[u8], entries: &[Entry], tag: u16, be: bool) -> Vec<Entry> {
-    let Some(e) = entries.iter().find(|e| e.tag == tag) else { return Vec::new() };
+    let Some(e) = entries.iter().find(|e| e.tag == tag) else {
+        return Vec::new();
+    };
     if e.data.len() < 4 {
         return Vec::new();
     }
@@ -411,14 +456,30 @@ fn parse_tiff(b: &[u8]) -> Result<Tiff> {
             ifd1 = entries;
         }
     }
-    Ok(Tiff { big_endian: be, ifd0, exif, gps, interop, ifd1, thumbnail })
+    Ok(Tiff {
+        big_endian: be,
+        ifd0,
+        exif,
+        gps,
+        interop,
+        ifd1,
+        thumbnail,
+    })
 }
 
 fn u16b(v: u16, be: bool) -> [u8; 2] {
-    if be { v.to_be_bytes() } else { v.to_le_bytes() }
+    if be {
+        v.to_be_bytes()
+    } else {
+        v.to_le_bytes()
+    }
 }
 fn u32b(v: u32, be: bool) -> [u8; 4] {
-    if be { v.to_be_bytes() } else { v.to_le_bytes() }
+    if be {
+        v.to_be_bytes()
+    } else {
+        v.to_le_bytes()
+    }
 }
 
 /// Serialise a directory, appending oversized values to `heap`.
@@ -467,24 +528,56 @@ fn gps_entries(lat: f64, lon: f64, be: bool) -> Vec<Entry> {
         out
     };
     vec![
-        Entry { tag: 0x0000, typ: 1, count: 4, data: vec![2, 3, 0, 0] },
         Entry {
-            tag: 0x0001, typ: 2, count: 2,
-            data: if lat < 0.0 { b"S\0".to_vec() } else { b"N\0".to_vec() },
+            tag: 0x0000,
+            typ: 1,
+            count: 4,
+            data: vec![2, 3, 0, 0],
         },
-        Entry { tag: 0x0002, typ: 5, count: 3, data: dms(lat) },
         Entry {
-            tag: 0x0003, typ: 2, count: 2,
-            data: if lon < 0.0 { b"W\0".to_vec() } else { b"E\0".to_vec() },
+            tag: 0x0001,
+            typ: 2,
+            count: 2,
+            data: if lat < 0.0 {
+                b"S\0".to_vec()
+            } else {
+                b"N\0".to_vec()
+            },
         },
-        Entry { tag: 0x0004, typ: 5, count: 3, data: dms(lon) },
+        Entry {
+            tag: 0x0002,
+            typ: 5,
+            count: 3,
+            data: dms(lat),
+        },
+        Entry {
+            tag: 0x0003,
+            typ: 2,
+            count: 2,
+            data: if lon < 0.0 {
+                b"W\0".to_vec()
+            } else {
+                b"E\0".to_vec()
+            },
+        },
+        Entry {
+            tag: 0x0004,
+            typ: 5,
+            count: 3,
+            data: dms(lon),
+        },
     ]
 }
 
 fn set_ascii(entries: &mut Vec<Entry>, tag: u16, value: &str) {
     let mut data = value.as_bytes().to_vec();
     data.push(0);
-    let entry = Entry { tag, typ: 2, count: data.len() as u32, data };
+    let entry = Entry {
+        tag,
+        typ: 2,
+        count: data.len() as u32,
+        data,
+    };
     if let Some(old) = entries.iter_mut().find(|e| e.tag == tag) {
         *old = entry;
     } else {
@@ -502,7 +595,12 @@ fn rebuild_tiff(t: &Tiff, replacement_gps: Option<Vec<Entry>>, datetime: Option<
         .filter(|e| e.tag != T_EXIF_IFD && e.tag != T_GPS_IFD)
         .cloned()
         .collect();
-    let mut exif: Vec<Entry> = t.exif.iter().filter(|e| e.tag != T_INTEROP).cloned().collect();
+    let mut exif: Vec<Entry> = t
+        .exif
+        .iter()
+        .filter(|e| e.tag != T_INTEROP)
+        .cloned()
+        .collect();
     let gps = replacement_gps.unwrap_or_else(|| t.gps.clone());
     if let Some(value) = datetime {
         // IFD0 DateTime, EXIF DateTimeOriginal and DateTimeDigitized. Writing all
@@ -517,7 +615,12 @@ fn rebuild_tiff(t: &Tiff, replacement_gps: Option<Vec<Entry>>, datetime: Option<
 
     // Two passes: lay everything out with placeholder pointers to learn the sizes, then
     // emit again now that the offsets are known.
-    let pointer = |tag: u16, be: bool| Entry { tag, typ: 4, count: 1, data: u32b(0, be).to_vec() };
+    let pointer = |tag: u16, be: bool| Entry {
+        tag,
+        typ: 4,
+        count: 1,
+        data: u32b(0, be).to_vec(),
+    };
     let mut ifd0_p = ifd0.clone();
     ifd0_p.push(pointer(T_EXIF_IFD, be));
     if !gps.is_empty() {
@@ -535,11 +638,26 @@ fn rebuild_tiff(t: &Tiff, replacement_gps: Option<Vec<Entry>>, datetime: Option<
     let exif_at = ifd0_at + sz(ifd0_p.len());
     let gps_at = exif_at + sz(exif_p.len());
     let interop_at = gps_at + if gps.is_empty() { 0 } else { sz(gps.len()) };
-    let ifd1_at = interop_at + if t.interop.is_empty() { 0 } else { sz(t.interop.len()) };
-    let heap_base = ifd1_at + if t.ifd1.is_empty() { 0 } else { sz(t.ifd1.len()) };
+    let ifd1_at = interop_at
+        + if t.interop.is_empty() {
+            0
+        } else {
+            sz(t.interop.len())
+        };
+    let heap_base = ifd1_at
+        + if t.ifd1.is_empty() {
+            0
+        } else {
+            sz(t.ifd1.len())
+        };
 
     // Now with real pointers.
-    let ptr = |tag: u16, at: usize| Entry { tag, typ: 4, count: 1, data: u32b(at as u32, be).to_vec() };
+    let ptr = |tag: u16, at: usize| Entry {
+        tag,
+        typ: 4,
+        count: 1,
+        data: u32b(at as u32, be).to_vec(),
+    };
     let mut ifd0_f = ifd0;
     ifd0_f.push(ptr(T_EXIF_IFD, exif_at));
     if !gps.is_empty() {
@@ -555,7 +673,11 @@ fn rebuild_tiff(t: &Tiff, replacement_gps: Option<Vec<Entry>>, datetime: Option<
     let mut heap = Vec::new();
     let b_ifd0 = write_ifd(&ifd0_f, be, &mut heap, heap_base);
     let b_exif = write_ifd(&exif_f, be, &mut heap, heap_base);
-    let b_gps = if gps.is_empty() { Vec::new() } else { write_ifd(&gps, be, &mut heap, heap_base) };
+    let b_gps = if gps.is_empty() {
+        Vec::new()
+    } else {
+        write_ifd(&gps, be, &mut heap, heap_base)
+    };
     let b_interop = if t.interop.is_empty() {
         Vec::new()
     } else {
@@ -572,7 +694,11 @@ fn rebuild_tiff(t: &Tiff, replacement_gps: Option<Vec<Entry>>, datetime: Option<
             }
         }
     }
-    let b_ifd1 = if ifd1.is_empty() { Vec::new() } else { write_ifd(&ifd1, be, &mut heap, heap_base) };
+    let b_ifd1 = if ifd1.is_empty() {
+        Vec::new()
+    } else {
+        write_ifd(&ifd1, be, &mut heap, heap_base)
+    };
     if !t.thumbnail.is_empty() {
         heap.extend_from_slice(&t.thumbnail);
     }
@@ -626,7 +752,11 @@ pub fn write_gps(path: &Path, lat: f64, lon: f64) -> Result<()> {
     if !matches!(ext.as_str(), "jpg" | "jpeg") {
         bail!(
             "blinkview can only write a location into JPEG files, not {}",
-            if ext.is_empty() { "this".into() } else { ext.to_uppercase() }
+            if ext.is_empty() {
+                "this".into()
+            } else {
+                ext.to_uppercase()
+            }
         );
     }
     if !(lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0) {
@@ -637,7 +767,9 @@ pub fn write_gps(path: &Path, lat: f64, lon: f64) -> Result<()> {
     // as having no location. Refusing to write what we cannot read keeps the two
     // halves of this module honest with each other.
     if lat == 0.0 && lon == 0.0 {
-        bail!("0, 0 is what a camera writes when it has no fix, so blinkview reads it as no location");
+        bail!(
+            "0, 0 is what a camera writes when it has no fix, so blinkview reads it as no location"
+        );
     }
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let tiff = match find_app1(&bytes) {
@@ -690,7 +822,11 @@ pub fn write_datetime(path: &Path, datetime: NaiveDateTime) -> Result<()> {
     if !matches!(ext.as_str(), "jpg" | "jpeg") {
         bail!(
             "blinkview can only write a capture time into JPEG files, not {}",
-            if ext.is_empty() { "this".into() } else { ext.to_uppercase() }
+            if ext.is_empty() {
+                "this".into()
+            } else {
+                ext.to_uppercase()
+            }
         );
     }
 
@@ -792,7 +928,10 @@ pub struct Located {
 /// including the answer "none", so a second run over an unchanged library does nothing
 /// at all. Reading GPS is a header parse rather than a decode — cheap enough to do on
 /// demand when the map opens, which is why it is not part of the analysis pass.
-pub fn locate(lib: &mut crate::Library, progress: &(dyn Fn(usize, usize) + Sync)) -> Result<Located> {
+pub fn locate(
+    lib: &mut crate::Library,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<Located> {
     let rows: Vec<_> = lib
         .index
         .all()?
@@ -800,10 +939,16 @@ pub fn locate(lib: &mut crate::Library, progress: &(dyn Fn(usize, usize) + Sync)
         .filter(|r| r.kind == "photo")
         .collect();
     let seen = lib.index.gps_checked()?;
-    let todo: Vec<_> = rows.into_iter().filter(|r| !seen.contains(&r.hash)).collect();
+    let todo: Vec<_> = rows
+        .into_iter()
+        .filter(|r| !seen.contains(&r.hash))
+        .collect();
 
     let counter = crate::progress::Counter::new(todo.len(), progress);
-    let mut out = Located { checked: 0, found: 0 };
+    let mut out = Located {
+        checked: 0,
+        found: 0,
+    };
     for r in &todo {
         counter.tick();
         let at = read_gps(&lib.abs(&r.path));
@@ -841,9 +986,12 @@ mod tests {
     fn a_photograph_with_no_exif_can_be_given_a_location() {
         let d = tmp("fresh");
         let p = jpeg(&d, "a.jpg");
-        assert!(read_gps(&p).is_none(), "the fixture starts with no coordinates");
+        assert!(
+            read_gps(&p).is_none(),
+            "the fixture starts with no coordinates"
+        );
 
-        write_gps(&p, 36.3932, 25.4615).unwrap();          // Santorini
+        write_gps(&p, 36.3932, 25.4615).unwrap(); // Santorini
         let (lat, lon) = read_gps(&p).expect("coordinates after writing");
         assert!((lat - 36.3932).abs() < 0.001, "{lat}");
         assert!((lon - 25.4615).abs() < 0.001, "{lon}");
@@ -857,7 +1005,8 @@ mod tests {
     fn a_photograph_with_no_exif_can_be_given_a_capture_time() {
         let d = tmp("fresh-time");
         let p = jpeg(&d, "a.jpg");
-        let wanted = NaiveDateTime::parse_from_str("2026-08-19 14:03:27", "%Y-%m-%d %H:%M:%S").unwrap();
+        let wanted =
+            NaiveDateTime::parse_from_str("2026-08-19 14:03:27", "%Y-%m-%d %H:%M:%S").unwrap();
 
         write_datetime(&p, wanted).unwrap();
 
@@ -872,7 +1021,8 @@ mod tests {
         let d = tmp("time-keeps-gps");
         let p = jpeg(&d, "a.jpg");
         write_gps(&p, 36.3932, 25.4615).unwrap();
-        let wanted = NaiveDateTime::parse_from_str("2026-08-20 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let wanted =
+            NaiveDateTime::parse_from_str("2026-08-20 09:45:00", "%Y-%m-%d %H:%M:%S").unwrap();
 
         write_datetime(&p, wanted).unwrap();
 
@@ -893,7 +1043,10 @@ mod tests {
             let p = jpeg(&d, name);
             write_gps(&p, lat, lon).unwrap();
             let (a, b) = read_gps(&p).expect(name);
-            assert!((a - lat).abs() < 0.001 && (b - lon).abs() < 0.001, "{name}: {a},{b}");
+            assert!(
+                (a - lat).abs() < 0.001 && (b - lon).abs() < 0.001,
+                "{name}: {a},{b}"
+            );
         }
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -905,7 +1058,7 @@ mod tests {
         // Give it an EXIF block first, the way a camera would, then add coordinates.
         write_gps(&p, 10.0, 10.0).unwrap();
         let before = std::fs::read(&p).unwrap();
-        write_gps(&p, 51.5074, -0.1278).unwrap();          // London
+        write_gps(&p, 51.5074, -0.1278).unwrap(); // London
         let (lat, lon) = read_gps(&p).unwrap();
         assert!((lat - 51.5074).abs() < 0.001 && (lon - -0.1278).abs() < 0.001);
         // Replacing coordinates must not grow the file without bound.
@@ -970,7 +1123,11 @@ mod tests {
         std::fs::write(&q, &broken).unwrap();
         let before = std::fs::read(&q).unwrap();
         let _ = write_gps(&q, 1.0, 1.0);
-        assert_eq!(std::fs::read(&q).unwrap(), before, "a failed write must change nothing");
+        assert_eq!(
+            std::fs::read(&q).unwrap(),
+            before,
+            "a failed write must change nothing"
+        );
         // No temporary file is left behind either.
         assert!(!d.join("broken.blinkview-gps-tmp").exists());
         let _ = std::fs::remove_dir_all(&d);
@@ -1006,13 +1163,19 @@ mod tests {
     #[test]
     fn a_label_does_not_repeat_itself() {
         let p = Place {
-            name: "Singapore".into(), region: "Singapore".into(),
-            country: "Singapore".into(), lat: 0.0, lon: 0.0,
+            name: "Singapore".into(),
+            region: "Singapore".into(),
+            country: "Singapore".into(),
+            lat: 0.0,
+            lon: 0.0,
         };
         assert_eq!(p.label(), "Singapore");
         let p = Place {
-            name: "Fira".into(), region: "South Aegean".into(),
-            country: "Greece".into(), lat: 0.0, lon: 0.0,
+            name: "Fira".into(),
+            region: "South Aegean".into(),
+            country: "Greece".into(),
+            lat: 0.0,
+            lon: 0.0,
         };
         assert_eq!(p.label(), "Fira, South Aegean, Greece");
     }
@@ -1021,7 +1184,10 @@ mod tests {
     fn searching_offers_the_place_people_mean_first() {
         let hits = search("paris", 5);
         assert_eq!(hits[0].name, "Paris");
-        assert_eq!(hits[0].country, "France", "the biggest Paris is the French one");
+        assert_eq!(
+            hits[0].country, "France",
+            "the biggest Paris is the French one"
+        );
         assert!(search("zzzzzznowhere", 5).is_empty());
         assert!(search("  ", 5).is_empty());
     }
@@ -1031,7 +1197,12 @@ mod tests {
         // Nobody types the accent. Before the ASCII spelling was carried in the table,
         // "fira" reached Firavitoba in Colombia before Firá on Santorini.
         let hits = search("fira", 5);
-        assert_eq!(hits[0].country, "Greece", "{:?}", hits.iter().map(|h| h.label()).collect::<Vec<_>>());
+        assert_eq!(
+            hits[0].country,
+            "Greece",
+            "{:?}",
+            hits.iter().map(|h| h.label()).collect::<Vec<_>>()
+        );
 
         let hits = search("reykjavik", 3);
         assert_eq!(hits[0].country, "Iceland", "{:?}", hits[0]);

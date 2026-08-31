@@ -50,11 +50,17 @@ impl TextEncoder {
         let session = Session::builder()?.commit_from_file(&tp)?;
         let tokenizer = tokenizers::Tokenizer::from_file(&kp)
             .map_err(|e| anyhow::anyhow!("loading {}: {e}", kp.display()))?;
-        Ok(Self { input: session.inputs()[0].name().to_string(), session, tokenizer })
+        Ok(Self {
+            input: session.inputs()[0].name().to_string(),
+            session,
+            tokenizer,
+        })
     }
 
     pub fn available() -> bool {
-        [TEXT, TOKENIZER].iter().all(|n| crate::faces::models::find(n).is_ok())
+        [TEXT, TOKENIZER]
+            .iter()
+            .all(|n| crate::faces::models::find(n).is_ok())
     }
 
     /// Embed a phrase into the same 512-d space as [`Encoder::embed_image`].
@@ -88,7 +94,10 @@ impl ImageEncoder {
     pub fn load() -> Result<Self> {
         let vp = crate::faces::models::find(VISION)?;
         let session = Session::builder()?.commit_from_file(&vp)?;
-        Ok(Self { input: session.inputs()[0].name().to_string(), session })
+        Ok(Self {
+            input: session.inputs()[0].name().to_string(),
+            session,
+        })
     }
 
     pub fn available() -> bool {
@@ -136,7 +145,10 @@ pub struct Encoder {
 
 impl Encoder {
     pub fn load() -> Result<Self> {
-        Ok(Self { vision: ImageEncoder::load()?, text: TextEncoder::load()? })
+        Ok(Self {
+            vision: ImageEncoder::load()?,
+            text: TextEncoder::load()?,
+        })
     }
 
     /// True when the models are installed, so callers can degrade rather than fail.
@@ -184,7 +196,12 @@ pub struct AnalyzeStats {
 /// photo in flight rather than the whole pass.
 pub fn analyze(lib: &Library, progress: &(dyn Fn(usize, usize) + Sync)) -> Result<AnalyzeStats> {
     let mut st = AnalyzeStats::default();
-    let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
+    let rows: Vec<_> = lib
+        .index
+        .all()?
+        .into_iter()
+        .filter(|r| r.kind == "photo")
+        .collect();
     let mut todo = Vec::new();
     for r in &rows {
         if lib.index.get_clip(&r.hash)?.is_some() {
@@ -243,10 +260,17 @@ pub fn search_with(
         .index
         .all_clip()?
         .into_iter()
-        .map(|(hash, e)| Hit { score: similarity(&q, &e), hash })
+        .map(|(hash, e)| Hit {
+            score: similarity(&q, &e),
+            hash,
+        })
         .filter(|h| h.score >= threshold)
         .collect();
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     hits.truncate(limit);
     Ok(hits)
 }

@@ -21,11 +21,21 @@ use std::collections::BTreeMap;
 pub fn folder_name(album: &str) -> Option<String> {
     let cleaned: String = album
         .chars()
-        .map(|c| if crate::fsops::RESERVED.contains(&c) { '-' } else { c })
+        .map(|c| {
+            if crate::fsops::RESERVED.contains(&c) {
+                '-'
+            } else {
+                c
+            }
+        })
         .collect();
     // A leading dot would hide the folder; a trailing dot or space is invalid on
     // several filesystems even where exFAT tolerates it.
-    let cleaned = cleaned.trim().trim_start_matches('.').trim_end_matches('.').trim();
+    let cleaned = cleaned
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .trim();
     (!cleaned.is_empty()).then(|| cleaned.to_string())
 }
 
@@ -51,7 +61,10 @@ pub fn plan(lib: &Library) -> Result<Migration> {
         folder_of_hash.insert(r.hash.clone(), r.path);
     }
 
-    let mut m = Migration { plan: Plan::new("albums to folders"), ..Default::default() };
+    let mut m = Migration {
+        plan: Plan::new("albums to folders"),
+        ..Default::default()
+    };
     let mut claimed: BTreeMap<String, String> = BTreeMap::new();
 
     for (album, _) in set.albums() {
@@ -72,7 +85,9 @@ pub fn plan(lib: &Library) -> Result<Migration> {
             if let Some(first) = claimed.get(hash) {
                 m.plan.skipped.push((
                     path.clone(),
-                    format!("also in {album:?}; a file lives in one folder, so it went to {first:?}"),
+                    format!(
+                        "also in {album:?}; a file lives in one folder, so it went to {first:?}"
+                    ),
                 ));
                 continue;
             }

@@ -24,19 +24,35 @@ pub struct Stages {
 
 impl Default for Stages {
     fn default() -> Self {
-        Self { thumbs: true, faces: true, semantic: true }
+        Self {
+            thumbs: true,
+            faces: true,
+            semantic: true,
+        }
     }
 }
 
 impl Stages {
     pub fn only_thumbs() -> Self {
-        Self { thumbs: true, faces: false, semantic: false }
+        Self {
+            thumbs: true,
+            faces: false,
+            semantic: false,
+        }
     }
     pub fn only_faces() -> Self {
-        Self { thumbs: false, faces: true, semantic: false }
+        Self {
+            thumbs: false,
+            faces: true,
+            semantic: false,
+        }
     }
     pub fn only_semantic() -> Self {
-        Self { thumbs: false, faces: false, semantic: true }
+        Self {
+            thumbs: false,
+            faces: false,
+            semantic: true,
+        }
     }
 }
 
@@ -97,7 +113,10 @@ struct Kit {
 fn physical_memory() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
-        let out = std::process::Command::new("sysctl").args(["-n", "hw.memsize"]).output().ok()?;
+        let out = std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()?;
         return String::from_utf8(out.stdout).ok()?.trim().parse().ok();
     }
     #[cfg(target_os = "linux")]
@@ -132,12 +151,17 @@ fn physical_memory() -> Option<u64> {
 ///
 /// `BLINKVIEW_WORKERS` overrides the result, for a machine that still wants less.
 fn workers() -> usize {
-    if let Ok(n) = std::env::var("BLINKVIEW_WORKERS").unwrap_or_default().parse::<usize>() {
+    if let Ok(n) = std::env::var("BLINKVIEW_WORKERS")
+        .unwrap_or_default()
+        .parse::<usize>()
+    {
         if n > 0 {
             return n;
         }
     }
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     let by_memory = physical_memory()
         .map(|bytes| (bytes / (4 * 1024 * 1024 * 1024)) as usize)
         .unwrap_or(usize::MAX);
@@ -175,13 +199,22 @@ pub fn run_cancellable(
     // Workers carry the vault rather than the root: the cache is not under the root
     // any more (ADR-0019), and resolving it per job would re-read the marker per job.
     let vault = lib.vault().to_path_buf();
-    let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
+    let rows: Vec<_> = lib
+        .index
+        .all()?
+        .into_iter()
+        .filter(|r| r.kind == "photo")
+        .collect();
 
     // Videos cannot join the one-decode pass — their pixels belong to ffmpeg, not
     // imageio — but leaving every poster to the lazy per-cell path made a fresh
     // import pay one ffmpeg spawn mid-scroll, on the same threads that decode
     // photographs. They are built here instead, by a small sub-pass after the photos.
-    let ffmpeg = if stages.thumbs { thumbs::resolve() } else { None };
+    let ffmpeg = if stages.thumbs {
+        thumbs::resolve()
+    } else {
+        None
+    };
     let video_todo = video_thumb_todo(lib, ffmpeg.as_deref())?;
 
     let mut todo = Vec::new();
@@ -211,13 +244,19 @@ pub fn run_cancellable(
         });
     }
 
-    let mut st = Stats { considered: rows.len(), skipped, ..Default::default() };
+    let mut st = Stats {
+        considered: rows.len(),
+        skipped,
+        ..Default::default()
+    };
     if todo.is_empty() && video_todo.is_empty() {
         return Ok(st);
     }
 
     let counter = crate::progress::Counter::new(todo.len() + video_todo.len(), progress);
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(workers()).build()?;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers())
+        .build()?;
     let (tx, rx) = std::sync::mpsc::channel::<Outcome>();
 
     std::thread::scope(|scope| -> Result<()> {
@@ -256,14 +295,22 @@ pub fn run_cancellable(
         });
         // `tx` was moved into for_each_with and dropped with it, so the writer's
         // channel closes and it can finish.
-        let acc = writer.join().map_err(|_| anyhow::anyhow!("commit thread panicked"))??;
+        let acc = writer
+            .join()
+            .map_err(|_| anyhow::anyhow!("commit thread panicked"))??;
         merge(&mut st, acc);
         Ok(())
     })?;
 
     if !video_todo.is_empty() {
-        let (made, first_error) =
-            build_video_thumbs(&root, &vault, &video_todo, ffmpeg.as_deref().expect("checked above"), &counter, stop);
+        let (made, first_error) = build_video_thumbs(
+            &root,
+            &vault,
+            &video_todo,
+            ffmpeg.as_deref().expect("checked above"),
+            &counter,
+            stop,
+        );
         st.thumbs += made;
         if let Some((rel, e)) = first_error {
             st.errors.push(format!("{rel}: thumbnail: {e}"));
@@ -280,7 +327,10 @@ pub fn run_cancellable(
 /// to ~140 MB for a 1080p stream (measured on the shipped binary), so photograph-pass
 /// sizing would run four of those at once on the 8 GB machine this was measured on.
 fn video_workers() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 2)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+        .clamp(1, 2)
 }
 
 /// The videos still owed a poster, given the ffmpeg a pass will use.
@@ -291,7 +341,9 @@ fn video_thumb_todo(
     lib: &Library,
     ffmpeg: Option<&std::ffi::OsStr>,
 ) -> Result<Vec<(String, std::path::PathBuf)>> {
-    let Some(_) = ffmpeg else { return Ok(Vec::new()) };
+    let Some(_) = ffmpeg else {
+        return Ok(Vec::new());
+    };
     Ok(lib
         .index
         .all()?
@@ -315,8 +367,12 @@ fn build_video_thumbs(
     stop: &(dyn Fn() -> bool + Sync),
 ) -> (usize, Option<(String, anyhow::Error)>) {
     let made = std::sync::atomic::AtomicUsize::new(0);
-    let first_error: std::sync::Mutex<Option<(String, anyhow::Error)>> = std::sync::Mutex::new(None);
-    let pool = match rayon::ThreadPoolBuilder::new().num_threads(video_workers()).build() {
+    let first_error: std::sync::Mutex<Option<(String, anyhow::Error)>> =
+        std::sync::Mutex::new(None);
+    let pool = match rayon::ThreadPoolBuilder::new()
+        .num_threads(video_workers())
+        .build()
+    {
         Ok(p) => p,
         Err(e) => return (0, Some((String::new(), anyhow::Error::new(e)))),
     };
@@ -343,7 +399,10 @@ fn build_video_thumbs(
             counter.tick();
         });
     });
-    (made.into_inner(), first_error.into_inner().unwrap_or_else(|p| p.into_inner()))
+    (
+        made.into_inner(),
+        first_error.into_inner().unwrap_or_else(|p| p.into_inner()),
+    )
 }
 
 fn merge(into: &mut Stats, from: Stats) {
@@ -431,8 +490,12 @@ fn process(vault: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
         let mut kit = cell.borrow_mut();
         if job.faces && want_faces {
             if kit.det.is_none() {
-                kit.det = models::find(models::YUNET).ok().and_then(|p| detect::Detector::load(&p).ok());
-                kit.emb = models::find(models::SFACE).ok().and_then(|p| embed::Embedder::load(&p).ok());
+                kit.det = models::find(models::YUNET)
+                    .ok()
+                    .and_then(|p| detect::Detector::load(&p).ok());
+                kit.emb = models::find(models::SFACE)
+                    .ok()
+                    .and_then(|p| embed::Embedder::load(&p).ok());
             }
             let Kit { det, emb, .. } = &mut *kit;
             match (det.as_mut(), emb.as_mut()) {
@@ -442,7 +505,9 @@ fn process(vault: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
                         Err(e) => st.errors.push(format!("{}: faces: {e}", job.rel)),
                     }
                 }
-                _ => st.errors.push(format!("{}: faces: models unavailable", job.rel)),
+                _ => st
+                    .errors
+                    .push(format!("{}: faces: models unavailable", job.rel)),
             }
         }
         if job.clip {
@@ -478,7 +543,10 @@ fn fit_dimensions(w: u32, h: u32, nw: u32, nh: u32) -> (u32, u32) {
     let ratio = (nw as f64 / w as f64).min(nh as f64 / h as f64);
     let rw = ((w as f64 * ratio).round() as u64).max(1);
     let rh = ((h as f64 * ratio).round() as u64).max(1);
-    (rw.min(u32::MAX as u64) as u32, rh.min(u32::MAX as u64) as u32)
+    (
+        rw.min(u32::MAX as u64) as u32,
+        rh.min(u32::MAX as u64) as u32,
+    )
 }
 
 /// Detect and embed faces, writing the crops. Mirrors `faces::pipeline` exactly, so the
@@ -515,7 +583,13 @@ fn faces_from(
     };
     let (w, h) = (rgb.width() as usize, rgb.height() as usize);
 
-    let found = det.detect(rgb.as_raw(), w, h, pipeline::DEFAULT_SCORE, pipeline::DEFAULT_NMS)?;
+    let found = det.detect(
+        rgb.as_raw(),
+        w,
+        h,
+        pipeline::DEFAULT_SCORE,
+        pipeline::DEFAULT_NMS,
+    )?;
     let mut rows = Vec::new();
     for (i, f) in found.iter().enumerate() {
         // A detection inside the zero padding, or off the edge, is not a real one.
@@ -569,9 +643,10 @@ mod tests {
 
     /// A cache beside the fixture, so a unit test never writes to the machine's.
     fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-        dir.parent()
-            .unwrap()
-            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+        dir.parent().unwrap().join(format!(
+            "{}-cache",
+            dir.file_name().unwrap().to_string_lossy()
+        ))
     }
 
     /// `fit_dimensions` must agree with `DynamicImage::resize` on every shape.
@@ -615,8 +690,11 @@ mod tests {
         ] {
             let s = pipeline::ANALYSIS_LONG_EDGE as f32 / w.max(h) as f32;
             let (nw, nh) = ((w as f32 * s) as u32, (h as f32 * s) as u32);
-            let want = image::DynamicImage::ImageRgb8(image::RgbImage::new(w, h))
-                .resize(nw, nh, image::imageops::FilterType::Triangle);
+            let want = image::DynamicImage::ImageRgb8(image::RgbImage::new(w, h)).resize(
+                nw,
+                nh,
+                image::imageops::FilterType::Triangle,
+            );
             assert_eq!(
                 fit_dimensions(w, h, nw, nh),
                 (want.width(), want.height()),
@@ -629,7 +707,11 @@ mod tests {
     /// argument, which is where `render_video_with` puts the output path.
     fn fake_ffmpeg(dir: &std::path::Path) -> std::path::PathBuf {
         let p = dir.join("fake-ffmpeg.sh");
-        std::fs::write(&p, "#!/bin/sh\nfor last; do :; done\nprintf x > \"$last\"\n").unwrap();
+        std::fs::write(
+            &p,
+            "#!/bin/sh\nfor last; do :; done\nprintf x > \"$last\"\n",
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -651,14 +733,13 @@ mod tests {
     fn the_video_pass_writes_posters_with_a_resolved_binary() {
         let dir = scratch("write");
         let ff = fake_ffmpeg(&dir);
-        let todo: Vec<(String, std::path::PathBuf)> =
-            [("v1", "a.mp4"), ("v2", "b.mp4")]
-                .into_iter()
-                .map(|(hash, name)| {
-                    std::fs::write(dir.join(name), b"not really a video").unwrap();
-                    (hash.to_string(), dir.join(name))
-                })
-                .collect();
+        let todo: Vec<(String, std::path::PathBuf)> = [("v1", "a.mp4"), ("v2", "b.mp4")]
+            .into_iter()
+            .map(|(hash, name)| {
+                std::fs::write(dir.join(name), b"not really a video").unwrap();
+                (hash.to_string(), dir.join(name))
+            })
+            .collect();
         let sink = crate::progress::silent;
         let counter = crate::progress::Counter::new(todo.len(), &sink);
         let vault = dir.join("vault");
@@ -668,7 +749,10 @@ mod tests {
         assert_eq!(made, 2, "both posters written");
         assert!(err.is_none(), "unexpected failure: {err:?}");
         for (hash, _) in &todo {
-            assert!(thumbs::thumb_path_in(&vault, hash).exists(), "{hash} has no poster");
+            assert!(
+                thumbs::thumb_path_in(&vault, hash).exists(),
+                "{hash} has no poster"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -702,9 +786,12 @@ mod tests {
         std::fs::create_dir_all(done.parent().unwrap()).unwrap();
         std::fs::write(&done, b"poster").unwrap();
 
-        let with_ffmpeg =
-            video_thumb_todo(&lib, Some(std::ffi::OsStr::new("ffmpeg"))).unwrap();
-        assert_eq!(with_ffmpeg.len(), 1, "only the video without a poster: {with_ffmpeg:?}");
+        let with_ffmpeg = video_thumb_todo(&lib, Some(std::ffi::OsStr::new("ffmpeg"))).unwrap();
+        assert_eq!(
+            with_ffmpeg.len(),
+            1,
+            "only the video without a poster: {with_ffmpeg:?}"
+        );
         assert_eq!(with_ffmpeg[0].0, "bbbb");
 
         assert!(video_thumb_todo(&lib, None).unwrap().is_empty());

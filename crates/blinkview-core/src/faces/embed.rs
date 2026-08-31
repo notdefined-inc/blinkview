@@ -29,7 +29,9 @@ const TEMPLATE: [(f32, f32); 5] = [
 fn similarity_transform(src: &[(f32, f32); 5], dst: &[(f32, f32); 5]) -> [f32; 6] {
     let n = src.len() as f32;
     let mean = |p: &[(f32, f32); 5]| {
-        let (sx, sy) = p.iter().fold((0.0, 0.0), |(ax, ay), (x, y)| (ax + x, ay + y));
+        let (sx, sy) = p
+            .iter()
+            .fold((0.0, 0.0), |(ax, ay), (x, y)| (ax + x, ay + y));
         (sx / n, sy / n)
     };
     let (smx, smy) = mean(src);
@@ -51,7 +53,14 @@ fn similarity_transform(src: &[(f32, f32); 5], dst: &[(f32, f32); 5]) -> [f32; 6
     }
     let (a, b) = (cov_a / var_s, cov_b / var_s);
     // [ a -b ] is scale*rotation; translation places the source centroid on the target.
-    [a, -b, dmx - (a * smx - b * smy), b, a, dmy - (b * smx + a * smy)]
+    [
+        a,
+        -b,
+        dmx - (a * smx - b * smy),
+        b,
+        a,
+        dmy - (b * smx + a * smy),
+    ]
 }
 
 /// Invert a 2x3 affine so the destination grid can be sampled from the source.
@@ -61,7 +70,14 @@ fn invert(m: &[f32; 6]) -> Option<[f32; 6]> {
         return None;
     }
     let (ia, ib, ic, id) = (m[4] / det, -m[1] / det, -m[3] / det, m[0] / det);
-    Some([ia, ib, -(ia * m[2] + ib * m[5]), ic, id, -(ic * m[2] + id * m[5])])
+    Some([
+        ia,
+        ib,
+        -(ia * m[2] + ib * m[5]),
+        ic,
+        id,
+        -(ic * m[2] + id * m[5]),
+    ])
 }
 
 /// Warp the face onto the 112x112 template with bilinear sampling.
@@ -103,7 +119,10 @@ impl Embedder {
             .commit_from_file(model)
             .with_context(|| format!("loading recognizer {}", model.display()))?;
         let input_name = session.inputs()[0].name().to_string();
-        Ok(Self { session, input_name })
+        Ok(Self {
+            session,
+            input_name,
+        })
     }
 
     /// Embed an aligned 112x112 RGB face. Result is L2-normalized, so a dot product
@@ -121,14 +140,14 @@ impl Embedder {
         for y in 0..SIDE {
             for x in 0..SIDE {
                 let p = (y * SIDE + x) * 3;
-                input[[0, 0, y, x]] = f32::from(aligned_rgb[p]);     // R
+                input[[0, 0, y, x]] = f32::from(aligned_rgb[p]); // R
                 input[[0, 1, y, x]] = f32::from(aligned_rgb[p + 1]); // G
                 input[[0, 2, y, x]] = f32::from(aligned_rgb[p + 2]); // B
             }
         }
-        let out = self
-            .session
-            .run(ort::inputs![self.input_name.as_str() => ort::value::Tensor::from_array(input)?])?;
+        let out = self.session.run(
+            ort::inputs![self.input_name.as_str() => ort::value::Tensor::from_array(input)?],
+        )?;
         let (_, data) = out[0].try_extract_tensor::<f32>()?;
         let norm = data.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-9);
         Ok(data.iter().map(|v| v / norm).collect())
@@ -155,7 +174,8 @@ mod tests {
     #[test]
     fn transform_recovers_a_known_scale_and_shift() {
         // Landmarks at half scale, offset by (10, 20), must map back onto the template.
-        let src: [(f32, f32); 5] = std::array::from_fn(|i| (TEMPLATE[i].0 * 0.5 + 10.0, TEMPLATE[i].1 * 0.5 + 20.0));
+        let src: [(f32, f32); 5] =
+            std::array::from_fn(|i| (TEMPLATE[i].0 * 0.5 + 10.0, TEMPLATE[i].1 * 0.5 + 20.0));
         let m = similarity_transform(&src, &TEMPLATE);
         for i in 0..5 {
             let (x, y) = src[i];

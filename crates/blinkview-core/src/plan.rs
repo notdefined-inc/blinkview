@@ -16,9 +16,17 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Op {
     /// Move a file to a different folder, keeping its name.
-    Move { hash: String, from: String, to: String },
+    Move {
+        hash: String,
+        from: String,
+        to: String,
+    },
     /// Rename a file in place.
-    Rename { hash: String, from: String, to: String },
+    Rename {
+        hash: String,
+        from: String,
+        to: String,
+    },
 }
 
 impl Op {
@@ -46,7 +54,10 @@ pub struct Plan {
 
 impl Plan {
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into(), ..Default::default() }
+        Self {
+            label: label.into(),
+            ..Default::default()
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -84,7 +95,8 @@ impl Plan {
             let abs_to = lib.abs(to);
             // A destination that exists is only acceptable if that same file is itself
             // being moved away by this plan.
-            if abs_to.exists() && !sources.contains(to) && !self.ops.iter().any(|o| o.from() == to) {
+            if abs_to.exists() && !sources.contains(to) && !self.ops.iter().any(|o| o.from() == to)
+            {
                 bail!("destination already exists: {to}");
             }
             if let Some(parent) = abs_to.parent() {
@@ -180,9 +192,10 @@ pub fn move_into(lib: &Library, hashes: &[String], dest: &str) -> Result<Plan> {
     if dest.is_empty() {
         anyhow::bail!("no destination folder given");
     }
-    if let Some(c) = dest.split('/').find_map(|seg| {
-        seg.chars().find(|c| crate::fsops::RESERVED.contains(c))
-    }) {
+    if let Some(c) = dest
+        .split('/')
+        .find_map(|seg| seg.chars().find(|c| crate::fsops::RESERVED.contains(c)))
+    {
         anyhow::bail!("folder name contains a reserved character {c:?}");
     }
 
@@ -201,10 +214,8 @@ pub fn move_into(lib: &Library, hashes: &[String], dest: &str) -> Result<Plan> {
             continue;
         }
         if taken.contains(name) {
-            plan.skipped.push((
-                r.path.clone(),
-                format!("{dest}/{name} already exists"),
-            ));
+            plan.skipped
+                .push((r.path.clone(), format!("{dest}/{name} already exists")));
             continue;
         }
         plan.ops.push(Op::Move {

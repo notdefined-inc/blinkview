@@ -95,8 +95,12 @@ fn crop_data_uri(
     let m = f.w * CROP_MARGIN;
     let x0 = ((f.x - m) * scale).max(0.0) as u32;
     let y0 = ((f.y - m) * scale).max(0.0) as u32;
-    let w = (((f.w + 2.0 * m) * scale) as u32).min(img.width().saturating_sub(x0)).max(1);
-    let h = (((f.h + 2.0 * m) * scale) as u32).min(img.height().saturating_sub(y0)).max(1);
+    let w = (((f.w + 2.0 * m) * scale) as u32)
+        .min(img.width().saturating_sub(x0))
+        .max(1);
+    let h = (((f.h + 2.0 * m) * scale) as u32)
+        .min(img.height().saturating_sub(y0))
+        .max(1);
     let sub = image::imageops::crop_imm(&img, x0, y0, w, h).to_image();
     let sq = image::imageops::resize(&sub, side, side, image::imageops::FilterType::Lanczos3);
 
@@ -115,13 +119,26 @@ fn b64(data: &[u8]) -> String {
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(T[(n >> 18 & 63) as usize] as char);
         out.push(T[(n >> 12 & 63) as usize] as char);
-        out.push(if c.len() > 1 { T[(n >> 6 & 63) as usize] as char } else { '=' });
-        out.push(if c.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+        out.push(if c.len() > 1 {
+            T[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if c.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
 
-pub fn build(lib: &Library, people: &People, opt: &assign::Options, max_distance: f32) -> Result<ReviewPayload> {
+pub fn build(
+    lib: &Library,
+    people: &People,
+    opt: &assign::Options,
+    max_distance: f32,
+) -> Result<ReviewPayload> {
     build_with_progress(lib, people, opt, max_distance, &crate::progress::silent)
 }
 
@@ -133,8 +150,12 @@ pub fn build_with_progress(
     max_distance: f32,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<ReviewPayload> {
-    let hash_to_path: std::collections::BTreeMap<String, String> =
-        lib.index.all()?.into_iter().map(|r| (r.hash, r.path)).collect();
+    let hash_to_path: std::collections::BTreeMap<String, String> = lib
+        .index
+        .all()?
+        .into_iter()
+        .map(|r| (r.hash, r.path))
+        .collect();
     let all = lib.all_faces()?;
     let total_faces = all.len();
 
@@ -158,8 +179,13 @@ pub fn build_with_progress(
 
         // Suggestion comes from the group's mean, which is more stable than any
         // single face when the cluster spans poses.
-        let (mut suggestion, mut similarity, mut runner_up, mut runner_up_similarity, mut ambiguous) =
-            (None, None, None, None, false);
+        let (
+            mut suggestion,
+            mut similarity,
+            mut runner_up,
+            mut runner_up_similarity,
+            mut ambiguous,
+        ) = (None, None, None, None, false);
         if !people.is_empty() {
             if let Some(e) = sorted.first().and_then(|f| f.embedding.clone()) {
                 let scores = assign::score_all(&e, people);
@@ -196,7 +222,13 @@ pub fn build_with_progress(
                     ReviewFace {
                         hash: f.hash.clone(),
                         idx: f.idx,
-                        crop: crop_data_uri(&root, f, path, *side, Some(&crate::thumbs::thumb_path_in(&vault, &f.hash)))?,
+                        crop: crop_data_uri(
+                            &root,
+                            f,
+                            path,
+                            *side,
+                            Some(&crate::thumbs::thumb_path_in(&vault, &f.hash)),
+                        )?,
                         score: f.score,
                     },
                 ))
@@ -226,7 +258,11 @@ pub fn build_with_progress(
         clusters.push(ReviewCluster {
             id,
             faces,
-            photo_count: g.iter().map(|f| &f.hash).collect::<std::collections::BTreeSet<_>>().len(),
+            photo_count: g
+                .iter()
+                .map(|f| &f.hash)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
             face_count: g.len(),
             suggestion,
             similarity,

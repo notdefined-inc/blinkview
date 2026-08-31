@@ -60,11 +60,46 @@ pub struct Adjust {
 pub const PRESETS: [(&str, Adjust); 5] = [
     // Saturation at -1.0 removes colour entirely; the small contrast lift is what
     // keeps a black-and-white from reading as a grey wash.
-    ("Mono", Adjust { brightness: 0.0, contrast: 0.12, saturation: -1.0 }),
-    ("Warm", Adjust { brightness: 0.04, contrast: 0.06, saturation: 0.18 }),
-    ("Cool", Adjust { brightness: 0.02, contrast: 0.08, saturation: -0.12 }),
-    ("Punch", Adjust { brightness: 0.0, contrast: 0.28, saturation: 0.3 }),
-    ("Faded", Adjust { brightness: 0.08, contrast: -0.18, saturation: -0.22 }),
+    (
+        "Mono",
+        Adjust {
+            brightness: 0.0,
+            contrast: 0.12,
+            saturation: -1.0,
+        },
+    ),
+    (
+        "Warm",
+        Adjust {
+            brightness: 0.04,
+            contrast: 0.06,
+            saturation: 0.18,
+        },
+    ),
+    (
+        "Cool",
+        Adjust {
+            brightness: 0.02,
+            contrast: 0.08,
+            saturation: -0.12,
+        },
+    ),
+    (
+        "Punch",
+        Adjust {
+            brightness: 0.0,
+            contrast: 0.28,
+            saturation: 0.3,
+        },
+    ),
+    (
+        "Faded",
+        Adjust {
+            brightness: 0.08,
+            contrast: -0.18,
+            saturation: -0.22,
+        },
+    ),
 ];
 
 impl Adjust {
@@ -151,7 +186,11 @@ pub fn straighten_zoom(w: f32, h: f32, degrees: f32) -> f32 {
         return 1.0;
     }
     let (kw, _) = inscribed_same_aspect(w, h, degrees.to_radians());
-    if kw <= 0.0 { 1.0 } else { w / kw }
+    if kw <= 0.0 {
+        1.0
+    } else {
+        w / kw
+    }
 }
 
 /// Rotate by an arbitrary angle with bilinear sampling, then trim the blank corners.
@@ -287,13 +326,21 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
         let (w, h) = (img.width() as f32, img.height() as f32);
         let x = (c.x.clamp(0.0, 1.0) * w) as u32;
         let y = (c.y.clamp(0.0, 1.0) * h) as u32;
-        let cw = ((c.w.clamp(0.0, 1.0) * w) as u32).min(img.width().saturating_sub(x)).max(1);
-        let ch = ((c.h.clamp(0.0, 1.0) * h) as u32).min(img.height().saturating_sub(y)).max(1);
+        let cw = ((c.w.clamp(0.0, 1.0) * w) as u32)
+            .min(img.width().saturating_sub(x))
+            .max(1);
+        let ch = ((c.h.clamp(0.0, 1.0) * h) as u32)
+            .min(img.height().saturating_sub(y))
+            .max(1);
         img = image::imageops::crop_imm(&img, x, y, cw, ch).to_image();
     }
 
     // Preserve the original before anything is overwritten.
-    let original = if edit.keep_original { keep_original(lib, rel_path)? } else { None };
+    let original = if edit.keep_original {
+        keep_original(lib, rel_path)?
+    } else {
+        None
+    };
 
     // Write beside the target and swap, so a failure never leaves a truncated photo
     // where the original used to be.
@@ -304,7 +351,12 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
         .with_context(|| "writing the edited image")?;
     std::fs::rename(&tmp, &src).with_context(|| "replacing the photo")?;
 
-    Ok(Applied { original, width, height, hash: crate::scan::hash_file(&src)? })
+    Ok(Applied {
+        original,
+        width,
+        height,
+        hash: crate::scan::hash_file(&src)?,
+    })
 }
 
 #[cfg(test)]
@@ -313,9 +365,10 @@ mod tests {
 
     /// A cache beside the fixture, so a unit test never writes to the machine's.
     fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-        dir.parent()
-            .unwrap()
-            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+        dir.parent().unwrap().join(format!(
+            "{}-cache",
+            dir.file_name().unwrap().to_string_lossy()
+        ))
     }
 
     /// The window carries the same five presets, in the units its sliders use
@@ -324,8 +377,8 @@ mod tests {
     /// checked against each other rather than kept in step by hand.
     #[test]
     fn the_window_and_the_core_agree_on_what_a_preset_means() {
-        let js = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps/desktop/dist/app.js");
+        let js =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop/dist/app.js");
         let src = std::fs::read_to_string(&js)
             .unwrap_or_else(|e| panic!("reading {}: {e}", js.display()));
         let flat: String = src.chars().filter(|c| !c.is_whitespace()).collect();
@@ -336,7 +389,10 @@ mod tests {
                 (a.contrast * 100.0).round() as i32,
                 (a.saturation * 100.0).round() as i32,
             );
-            assert!(flat.contains(&want), "app.js is missing or disagrees on {want}");
+            assert!(
+                flat.contains(&want),
+                "app.js is missing or disagrees on {want}"
+            );
         }
     }
 
@@ -356,7 +412,11 @@ mod tests {
             Ok(_) => panic!("a camera RAW must never be rewritten"),
         };
         assert!(err.contains("camera RAW"), "{err}");
-        assert_eq!(std::fs::read(&raw).unwrap(), before, "the file must be untouched");
+        assert_eq!(
+            std::fs::read(&raw).unwrap(),
+            before,
+            "the file must be untouched"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -386,10 +446,19 @@ mod tests {
         let img = image::RgbImage::from_pixel(400, 300, image::Rgb([200, 100, 50]));
         let out = straighten(&img, 5.0);
         // Smaller than the source, because the wedges are cut away...
-        assert!(out.width() < 400 && out.height() < 300, "{}x{}", out.width(), out.height());
+        assert!(
+            out.width() < 400 && out.height() < 300,
+            "{}x{}",
+            out.width(),
+            out.height()
+        );
         // ...and no pixel is blank: every corner still carries image.
-        for (x, y) in [(0, 0), (out.width() - 1, 0), (0, out.height() - 1),
-                       (out.width() - 1, out.height() - 1)] {
+        for (x, y) in [
+            (0, 0),
+            (out.width() - 1, 0),
+            (0, out.height() - 1),
+            (out.width() - 1, out.height() - 1),
+        ] {
             let p = out.get_pixel(x, y);
             assert!(p[0] > 150, "corner {x},{y} is blank: {p:?}");
         }
@@ -403,8 +472,10 @@ mod tests {
             let out = straighten(&img, angle);
             let before = 400.0 / 300.0;
             let after = out.width() as f32 / out.height() as f32;
-            assert!((before - after).abs() < 0.02,
-                "{angle} deg reshaped {before:.3} -> {after:.3}");
+            assert!(
+                (before - after).abs() < 0.02,
+                "{angle} deg reshaped {before:.3} -> {after:.3}"
+            );
         }
     }
 
@@ -417,8 +488,11 @@ mod tests {
             let out = straighten(&img, angle);
             let zoom = straighten_zoom(400.0, 300.0, angle);
             let implied = 400.0 / zoom;
-            assert!((implied - out.width() as f32).abs() <= 1.5,
-                "{angle} deg: preview implies {implied:.1}px wide, save gave {}", out.width());
+            assert!(
+                (implied - out.width() as f32).abs() <= 1.5,
+                "{angle} deg: preview implies {implied:.1}px wide, save gave {}",
+                out.width()
+            );
         }
     }
 
@@ -441,19 +515,38 @@ mod tests {
         let mut img = image::RgbImage::from_pixel(4, 4, image::Rgb([120, 130, 140]));
         let before = img.clone();
         adjust(&mut img, &Adjust::default());
-        assert_eq!(img.into_raw(), before.into_raw(), "a neutral adjust must change nothing");
+        assert_eq!(
+            img.into_raw(),
+            before.into_raw(),
+            "a neutral adjust must change nothing"
+        );
     }
 
     #[test]
     fn brightness_and_saturation_move_the_right_way() {
         let mut up = image::RgbImage::from_pixel(2, 2, image::Rgb([100, 100, 100]));
-        adjust(&mut up, &Adjust { brightness: 0.3, ..Default::default() });
+        adjust(
+            &mut up,
+            &Adjust {
+                brightness: 0.3,
+                ..Default::default()
+            },
+        );
         assert!(up.get_pixel(0, 0)[0] > 100);
 
         let mut grey = image::RgbImage::from_pixel(2, 2, image::Rgb([200, 40, 40]));
-        adjust(&mut grey, &Adjust { saturation: -1.0, ..Default::default() });
+        adjust(
+            &mut grey,
+            &Adjust {
+                saturation: -1.0,
+                ..Default::default()
+            },
+        );
         let p = grey.get_pixel(0, 0);
-        assert!(p[0].abs_diff(p[1]) <= 1 && p[1].abs_diff(p[2]) <= 1, "fully desaturated: {p:?}");
+        assert!(
+            p[0].abs_diff(p[1]) <= 1 && p[1].abs_diff(p[2]) <= 1,
+            "fully desaturated: {p:?}"
+        );
     }
 
     #[test]
@@ -483,7 +576,12 @@ mod tests {
         let mut e = edit(Rotate::Cw90);
         e.keep_original = false;
         // Left half of the rotated (10x40) image.
-        e.crop = Some(Crop { x: 0.0, y: 0.0, w: 1.0, h: 0.5 });
+        e.crop = Some(Crop {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 0.5,
+        });
         let out = apply(&lib, "20260101_000000.jpg", &e).unwrap();
         assert_eq!((out.width, out.height), (10, 20), "rotate then crop");
         std::fs::remove_dir_all(&dir).ok();
@@ -506,7 +604,12 @@ mod tests {
     #[test]
     fn crop_fractions_are_clamped_not_trusted() {
         // The UI sends fractions; a bad one must not panic or read out of bounds.
-        let c = Crop { x: -0.5, y: 2.0, w: 5.0, h: -1.0 };
+        let c = Crop {
+            x: -0.5,
+            y: 2.0,
+            w: 5.0,
+            h: -1.0,
+        };
         assert_eq!(c.x.clamp(0.0, 1.0), 0.0);
         assert_eq!(c.y.clamp(0.0, 1.0), 1.0);
         assert_eq!(c.w.clamp(0.0, 1.0), 1.0);

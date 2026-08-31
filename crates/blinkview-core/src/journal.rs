@@ -25,7 +25,11 @@ fn slug(label: &str) -> String {
         })
         .collect();
     let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() { "op".into() } else { trimmed }
+    if trimmed.is_empty() {
+        "op".into()
+    } else {
+        trimmed
+    }
 }
 
 impl Journal {

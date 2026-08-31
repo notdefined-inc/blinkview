@@ -10,21 +10,23 @@
 //! and losing it costs nothing but re-adding folders.
 
 use blinkview_core::{
-    dedupe,
-    userdata::{FolderView, PhotoMeta, UserData, UserDataSet},
+    analyze, dedupe,
     faces::{assign, fetch as model_fetch, file as faces_file, people::People, pipeline, review},
     journal::Journal,
-    analyze, plan::folder_of, rename, scan, scenery, semantic, thumbs, Library,
+    plan::folder_of,
+    rename, scan, scenery, semantic, thumbs,
+    userdata::{FolderView, PhotoMeta, UserData, UserDataSet},
+    Library,
 };
 mod remote;
 mod watch;
 
-use serde::{Deserialize, Serialize};
-use tauri::Manager;
 use chrono::{Datelike, NaiveDateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 #[derive(Clone, Serialize)]
 struct ProgressEvent<'a> {
@@ -44,7 +46,16 @@ fn emitter<'a>(
     source: &'a str,
 ) -> impl Fn(usize, usize) + Sync + 'a {
     move |done, total| {
-        remote::emit_all(app, "progress", &ProgressEvent { op, done, total, source });
+        remote::emit_all(
+            app,
+            "progress",
+            &ProgressEvent {
+                op,
+                done,
+                total,
+                source,
+            },
+        );
     }
 }
 
@@ -59,7 +70,9 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 /// 36 MB for a 12 MP photograph — so an unbounded pool answering a fast scroll would
 /// have hundreds of those alive at once.
 static IMAGE_POOL: std::sync::LazyLock<rayon::ThreadPool> = std::sync::LazyLock::new(|| {
-    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     rayon::ThreadPoolBuilder::new()
         .num_threads(n.clamp(2, 6))
         .thread_name(|i| format!("blinkview-img-{i}"))
@@ -186,7 +199,10 @@ const LEGACY_IDENTIFIER: &str = "dev.notdefined.openfoto";
 
 fn sources_path(app: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
-    let dir = app.path().app_config_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("sources.json");
     adopt_legacy_sources(&dir, &path);
@@ -199,11 +215,17 @@ fn adopt_legacy_sources(dir: &std::path::Path, path: &std::path::Path) {
     if path.exists() {
         return;
     }
-    let Some(legacy) = dir.parent().map(|p| p.join(LEGACY_IDENTIFIER).join("sources.json")) else {
+    let Some(legacy) = dir
+        .parent()
+        .map(|p| p.join(LEGACY_IDENTIFIER).join("sources.json"))
+    else {
         return;
     };
     if legacy.is_file() && std::fs::copy(&legacy, path).is_ok() {
-        eprintln!("[blinkview] carried the source list over from {}", legacy.display());
+        eprintln!(
+            "[blinkview] carried the source list over from {}",
+            legacy.display()
+        );
     }
 }
 
@@ -218,7 +240,10 @@ fn load_source_entries(app: &tauri::AppHandle) -> Vec<SourceEntry> {
 fn save_sources(app: &tauri::AppHandle, list: &[SourceEntry]) {
     let _ = std::fs::write(
         sources_path(app),
-        serde_json::to_vec_pretty(&SourcesFile { sources: list.to_vec() }).unwrap_or_default(),
+        serde_json::to_vec_pretty(&SourcesFile {
+            sources: list.to_vec(),
+        })
+        .unwrap_or_default(),
     );
 }
 
@@ -317,9 +342,15 @@ pub struct PhotoInfo {
     height: u32,
 }
 
-fn is_zero_u8(n: &u8) -> bool { *n == 0 }
-fn is_zero_u32(n: &u32) -> bool { *n == 0 }
-fn is_zero_usize(n: &usize) -> bool { *n == 0 }
+fn is_zero_u8(n: &u8) -> bool {
+    *n == 0
+}
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
+fn is_zero_usize(n: &usize) -> bool {
+    *n == 0
+}
 
 /// Begin watching a library, so changes made in Finder reach the window.
 ///
@@ -329,7 +360,9 @@ fn is_zero_usize(n: &usize) -> bool { *n == 0 }
 fn start_watching(app: &tauri::AppHandle, state: &AppState, root: &str) {
     let (app, root_owned) = (app.clone(), root.to_string());
     let res = state.watchers.watch(root, move || {
-        let Some(state) = app.try_state::<AppState>() else { return };
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
         let changed = with(&state, &root_owned, |lib| {
             let st = scan::scan(lib, false)?;
             // Folders may have appeared or vanished, so the cascade is no longer known
@@ -413,7 +446,8 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
     }
 
     let mut libs = state.libs.lock().map_err(err)?;
-    libs.entry(root.to_string()).or_insert_with(|| Arc::new(Mutex::new(lib)));
+    libs.entry(root.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(lib)));
     Ok(())
 }
 
@@ -467,7 +501,11 @@ fn with_readable<T>(
 /// point, which is what lets the command wrappers be `async` and therefore run
 /// off the UI thread. Heavy work (thumbnails, face detection) would otherwise
 /// freeze the window.
-fn with<T>(state: &AppState, root: &str, f: impl FnOnce(&mut Library) -> anyhow::Result<T>) -> R<T> {
+fn with<T>(
+    state: &AppState,
+    root: &str,
+    f: impl FnOnce(&mut Library) -> anyhow::Result<T>,
+) -> R<T> {
     if peek_handle(state, root)?.is_some() {
         return Err(format!(
             "{} is open as a read-only peek. Keep this folder before changing photographs.",
@@ -528,9 +566,17 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         // photograph had merely gone from one counted place to another.
         let trashed = in_folder(&r.path, TRASH);
         if !trashed {
-            if r.kind == "photo" { photos += 1 } else { videos += 1 }
+            if r.kind == "photo" {
+                photos += 1
+            } else {
+                videos += 1
+            }
         }
-        let d = r.path.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        let d = r
+            .path
+            .rsplit_once('/')
+            .map(|(d, _)| d.to_string())
+            .unwrap_or_default();
         *own.entry(d.clone()).or_default() += 1;
         *total.entry(d.clone()).or_default() += 1;
         for a in ancestors(&d) {
@@ -567,7 +613,11 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
     // One directory read, not one `stat` per photograph. At 200k photos the old form
     // was 200k syscalls every time the sidebar refreshed.
     let ready = std::fs::read_dir(lib.vault().join("thumbs"))
-        .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "jpg")).count())
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "jpg"))
+                .count()
+        })
         .unwrap_or(0)
         .min(photos);
 
@@ -577,7 +627,10 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
     for f in lib.all_faces()? {
         if let Some(e) = f.embedding.as_ref() {
             if let Some(n) = assign::assign(e, &people_file, &opt).person() {
-                claimed.entry(n.to_string()).or_default().insert(f.hash.clone());
+                claimed
+                    .entry(n.to_string())
+                    .or_default()
+                    .insert(f.hash.clone());
             }
         }
     }
@@ -611,7 +664,11 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
             .into_iter()
             .filter(|(path, n)| *n > 0 || empties.contains(path))
             .map(|(path, count)| FolderInfo {
-                depth: if path.is_empty() { 0 } else { path.matches('/').count() + 1 },
+                depth: if path.is_empty() {
+                    0
+                } else {
+                    path.matches('/').count() + 1
+                },
                 name: if path.is_empty() {
                     "All photos".into()
                 } else {
@@ -633,7 +690,10 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
 }
 
 #[tauri::command]
-async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> R<Vec<SourceInfo>> {
+async fn list_sources(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> R<Vec<SourceInfo>> {
     let list = load_source_entries(&app);
     *state.sources.lock().map_err(err)? = list.clone();
     let mut out = Vec::new();
@@ -643,8 +703,14 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
             out.push(SourceInfo {
                 name: root.rsplit('/').next().unwrap_or(&root).to_string(),
                 path: root,
-                photos: 0, videos: 0, folders: vec![], people: vec![],
-                faces_analysed: 0, thumbs_ready: 0, missing: true, indexing: false,
+                photos: 0,
+                videos: 0,
+                folders: vec![],
+                people: vec![],
+                faces_analysed: 0,
+                thumbs_ready: 0,
+                missing: true,
+                indexing: false,
                 shallow: source.shallow(),
             });
             continue;
@@ -667,8 +733,14 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| root.clone()),
                     path: root.clone(),
-                    photos: 0, videos: 0, folders: vec![], people: vec![],
-                    faces_analysed: 0, thumbs_ready: 0, missing: false, indexing: true,
+                    photos: 0,
+                    videos: 0,
+                    folders: vec![],
+                    people: vec![],
+                    faces_analysed: 0,
+                    thumbs_ready: 0,
+                    missing: false,
+                    indexing: true,
                     shallow: source.shallow(),
                 });
             }
@@ -690,7 +762,9 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
 /// literal path; refusing it here is not needed because `list_sources` already shows
 /// it as missing.
 fn source_conflict(candidate: &std::path::Path, sources: &[String]) -> Option<String> {
-    let canon = candidate.canonicalize().unwrap_or_else(|_| candidate.to_path_buf());
+    let canon = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf());
     let name = |p: &std::path::Path| {
         p.file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -698,7 +772,9 @@ fn source_conflict(candidate: &std::path::Path, sources: &[String]) -> Option<St
     };
     for s in sources {
         let existing = std::path::Path::new(s);
-        let other = existing.canonicalize().unwrap_or_else(|_| existing.to_path_buf());
+        let other = existing
+            .canonicalize()
+            .unwrap_or_else(|_| existing.to_path_buf());
         if other == canon {
             return Some(format!("{} is already in your library.", name(&canon)));
         }
@@ -754,7 +830,10 @@ fn register_source(
         c.remove(&path);
     }
     let list = load_source_entries(app);
-    let paths: Vec<String> = list.iter().map(|source| source.path().to_string()).collect();
+    let paths: Vec<String> = list
+        .iter()
+        .map(|source| source.path().to_string())
+        .collect();
     // Overlaps are refused here, at the only door a folder can enter through.
     if let Some(why) = source_conflict(std::path::Path::new(&path), &paths) {
         return Err(why);
@@ -876,10 +955,7 @@ async fn peek_folder(state: tauri::State<'_, AppState>, path: String) -> R<PeekI
 }
 
 #[tauri::command]
-async fn peek_photos(
-    state: tauri::State<'_, AppState>,
-    path: String,
-) -> R<Vec<PhotoInfo>> {
+async fn peek_photos(state: tauri::State<'_, AppState>, path: String) -> R<Vec<PhotoInfo>> {
     let peek = peek_handle(&state, &path)?.ok_or_else(|| format!("{path} is not being peeked"))?;
     let lib = peek.lock().map_err(err)?;
     let mut out: Vec<PhotoInfo> = lib
@@ -1014,12 +1090,16 @@ async fn open_path(
         });
     }
     if canonical.is_file() {
-        let root = canonical.parent().ok_or("the file has no containing folder")?;
+        let root = canonical
+            .parent()
+            .ok_or("the file has no containing folder")?;
         let info = begin_peek(&state, &root.display().to_string())?;
         return Ok(OpenTarget {
             mode: "peek".into(),
             path: info.path.clone(),
-            file: canonical.file_name().map(|name| name.to_string_lossy().to_string()),
+            file: canonical
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string()),
             folder: None,
             peek: Some(info),
         });
@@ -1054,7 +1134,10 @@ async fn set_source_depth(
     shallow: bool,
 ) -> R<SourceInfo> {
     let mut entries = load_source_entries(&app);
-    let Some(index) = entries.iter().position(|source| same_source(source.path(), &path)) else {
+    let Some(index) = entries
+        .iter()
+        .position(|source| same_source(source.path(), &path))
+    else {
         return Err(format!("{path} is not an added folder"));
     };
     let stored = entries[index].path().to_string();
@@ -1093,7 +1176,11 @@ async fn autodetect_faces(
     with(&state, &path, |lib| {
         let st = analyze::run_cancellable(
             lib,
-            analyze::Stages { thumbs: true, faces: true, semantic: false },
+            analyze::Stages {
+                thumbs: true,
+                faces: true,
+                semantic: false,
+            },
             &sink,
             &stop,
         )?;
@@ -1120,7 +1207,9 @@ pub struct SourceData {
 }
 
 fn dir_bytes(p: &std::path::Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(p) else { return 0 };
+    let Ok(entries) = std::fs::read_dir(p) else {
+        return 0;
+    };
     entries
         .flatten()
         .map(|e| match e.file_type() {
@@ -1164,7 +1253,9 @@ async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<Sourc
 /// folders. `.blinkview` is excluded by the leading dot, like every other hidden name.
 fn walk_dirs(root: &std::path::Path) -> Vec<String> {
     fn rec(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if !p.is_dir() || e.file_name().to_string_lossy().starts_with('.') {
@@ -1188,7 +1279,9 @@ fn walk_metadata(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     if f.is_file() {
         out.push(f);
     }
-    let Ok(entries) = std::fs::read_dir(root) else { return out };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return out;
+    };
     for e in entries.flatten() {
         let p = e.path();
         if p.is_dir() && !e.file_name().to_string_lossy().starts_with('.') {
@@ -1261,7 +1354,9 @@ async fn remove_source(
     if std::fs::remove_file(blinkview_core::faces::people::People::path(&root)).is_ok() {
         removed += 1;
     }
-    Ok(format!("Removed, and deleted {removed} blinkview file(s). Your photographs are untouched."))
+    Ok(format!(
+        "Removed, and deleted {removed} blinkview file(s). Your photographs are untouched."
+    ))
 }
 
 /// Make a folder inside the library.
@@ -1282,9 +1377,20 @@ async fn create_folder(
         blinkview_core::fsops::validate_filename(name)?;
         let parent = parent.trim().trim_matches('/');
         if !lib.abs(parent).is_dir() {
-            anyhow::bail!("{} is not a folder in this library", if parent.is_empty() { "the library root" } else { parent });
+            anyhow::bail!(
+                "{} is not a folder in this library",
+                if parent.is_empty() {
+                    "the library root"
+                } else {
+                    parent
+                }
+            );
         }
-        let rel = if parent.is_empty() { name.to_string() } else { format!("{parent}/{name}") };
+        let rel = if parent.is_empty() {
+            name.to_string()
+        } else {
+            format!("{parent}/{name}")
+        };
         let dir = lib.abs(&rel);
         // Adopting an existing folder silently would make "new folder" a lie, and the
         // one it adopted might be full.
@@ -1341,9 +1447,9 @@ async fn photos(
                 folder.as_ref().is_none_or(|f| in_folder(&r.path, f))
             })
             .filter(|r| {
-                person.as_ref().is_none_or(|p| {
-                    who.get(&r.hash).is_some_and(|v| v.iter().any(|x| x == p))
-                })
+                person
+                    .as_ref()
+                    .is_none_or(|p| who.get(&r.hash).is_some_and(|v| v.iter().any(|x| x == p)))
             })
             .map(|r| {
                 let sig = lib.index.get_signature(&r.hash).ok().flatten();
@@ -1445,11 +1551,18 @@ async fn analyze_faces(
         // Thumbnails ride along: the photograph is being decoded anyway.
         let st = analyze::run_cancellable(
             lib,
-            analyze::Stages { thumbs: true, faces: true, semantic: false },
+            analyze::Stages {
+                thumbs: true,
+                faces: true,
+                semantic: false,
+            },
             &sink,
             &stop,
         )?;
-        Ok(format!("{} photos analysed · {} faces found", st.decoded, st.faces))
+        Ok(format!(
+            "{} photos analysed · {} faces found",
+            st.decoded, st.faces
+        ))
     })
 }
 
@@ -1487,7 +1600,11 @@ async fn analyze_resume(
     with(&state, &path, |lib| {
         let st = analyze::run_cancellable(
             lib,
-            analyze::Stages { thumbs: true, faces, semantic },
+            analyze::Stages {
+                thumbs: true,
+                faces,
+                semantic,
+            },
             &sink,
             &stop,
         )?;
@@ -1498,8 +1615,16 @@ async fn analyze_resume(
 #[tauri::command]
 async fn pending_work(state: tauri::State<'_, AppState>, path: String) -> R<Pending> {
     with_readable(&state, &path, |lib| {
-        let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
-        let mut p = Pending { photos: rows.len(), ..Default::default() };
+        let rows: Vec<_> = lib
+            .index
+            .all()?
+            .into_iter()
+            .filter(|r| r.kind == "photo")
+            .collect();
+        let mut p = Pending {
+            photos: rows.len(),
+            ..Default::default()
+        };
         for r in &rows {
             if lib.index.is_unreadable(&r.hash)? {
                 p.unreadable += 1;
@@ -1631,21 +1756,20 @@ async fn set_photo_location(
             .unwrap_or_else(|| format!("{lat:.4}, {lon:.4}"));
         Ok(match refused.first() {
             None => format!("{done} placed in {where_to}"),
-            Some(why) => format!("{done} placed in {where_to} · {} left alone — {why}", refused.len()),
+            Some(why) => format!(
+                "{done} placed in {where_to} · {} left alone — {why}",
+                refused.len()
+            ),
         })
     })
 }
 
 fn parse_capture_datetime(value: &str) -> anyhow::Result<NaiveDateTime> {
     let value = value.trim();
-    let parsed = [
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%d %H:%M:%S",
-    ]
-    .into_iter()
-    .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
-    .ok_or_else(|| anyhow::anyhow!("choose a complete date and time"))?;
+    let parsed = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"]
+        .into_iter()
+        .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
+        .ok_or_else(|| anyhow::anyhow!("choose a complete date and time"))?;
     if !(1900..=9999).contains(&parsed.year()) {
         anyhow::bail!("EXIF dates must be between 1900 and 9999");
     }
@@ -1677,7 +1801,9 @@ async fn set_photo_datetime(
         let (mut done, mut refused, mut carried) = (0usize, Vec::new(), Vec::new());
         for hash in &hashes {
             counter.tick();
-            let Some(rel) = by_hash.get(hash) else { continue };
+            let Some(rel) = by_hash.get(hash) else {
+                continue;
+            };
             let cached_gps = lib.index.get_gps(hash)?;
             match blinkview_core::geo::write_datetime(&lib.abs(rel), wanted) {
                 Ok(()) => {
@@ -1697,7 +1823,10 @@ async fn set_photo_datetime(
         let stamped = wanted.format("%-d %b %Y at %H:%M");
         Ok(match refused.first() {
             None => format!("{done} set to {stamped}"),
-            Some(why) => format!("{done} set to {stamped} · {} left alone — {why}", refused.len()),
+            Some(why) => format!(
+                "{done} set to {stamped} · {} left alone — {why}",
+                refused.len()
+            ),
         })
     })
 }
@@ -1717,8 +1846,17 @@ pub struct SemanticStatus {
 async fn semantic_status(state: tauri::State<'_, AppState>, path: String) -> R<SemanticStatus> {
     let available = semantic::TextEncoder::available();
     with(&state, &path, |lib| {
-        let total = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").count();
-        Ok(SemanticStatus { available, embedded: lib.index.count_clip()?, total })
+        let total = lib
+            .index
+            .all()?
+            .into_iter()
+            .filter(|r| r.kind == "photo")
+            .count();
+        Ok(SemanticStatus {
+            available,
+            embedded: lib.index.count_clip()?,
+            total,
+        })
     })
 }
 
@@ -1735,7 +1873,11 @@ async fn semantic_index(
     with(&state, &path, |lib| {
         let st = analyze::run_cancellable(
             lib,
-            analyze::Stages { thumbs: true, faces: false, semantic: true },
+            analyze::Stages {
+                thumbs: true,
+                faces: false,
+                semantic: true,
+            },
             &sink,
             &stop,
         )?;
@@ -1782,7 +1924,13 @@ async fn semantic_search(
             semantic::DEFAULT_THRESHOLD,
             limit.unwrap_or(500),
         )?;
-        Ok(hits.into_iter().map(|h| SemanticHit { hash: h.hash, score: h.score }).collect())
+        Ok(hits
+            .into_iter()
+            .map(|h| SemanticHit {
+                hash: h.hash,
+                score: h.score,
+            })
+            .collect())
     })
 }
 
@@ -1809,7 +1957,13 @@ async fn clusters(
     let sink = emitter(&app, "clusters", &path);
     with(&state, &path, |lib| {
         let people = lib.people()?;
-        let p = review::build_with_progress(lib, &people, &assign::Options::default(), distance, &sink)?;
+        let p = review::build_with_progress(
+            lib,
+            &people,
+            &assign::Options::default(),
+            distance,
+            &sink,
+        )?;
         Ok(p.clusters
             .into_iter()
             .map(|c| ClusterView {
@@ -1834,7 +1988,8 @@ async fn name_clusters(
 ) -> R<usize> {
     with(&state, &path, |lib| {
         let mut people = lib.people()?;
-        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        let groups =
+            pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         let mut learned = 0;
         for (id, name) in &assignments {
             if let Some(g) = groups.get(*id) {
@@ -1890,13 +2045,20 @@ async fn people_overview(
         let mut claimed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut cover: BTreeMap<String, (String, i64)> = BTreeMap::new();
         for f in lib.all_faces()? {
-            let Some(e) = f.embedding.as_ref() else { continue };
+            let Some(e) = f.embedding.as_ref() else {
+                continue;
+            };
             if let Some(n) = assign::assign(e, &people, &opt).person() {
                 if people.is_excluded(n, &f.hash) {
                     continue;
                 }
-                claimed.entry(n.to_string()).or_default().insert(f.hash.clone());
-                cover.entry(n.to_string()).or_insert((f.hash.clone(), f.idx));
+                claimed
+                    .entry(n.to_string())
+                    .or_default()
+                    .insert(f.hash.clone());
+                cover
+                    .entry(n.to_string())
+                    .or_insert((f.hash.clone(), f.idx));
             }
         }
 
@@ -1905,9 +2067,9 @@ async fn people_overview(
             .iter()
             .map(|p| PersonEntry {
                 photos: claimed.get(&p.name).map(|s| s.len()).unwrap_or(0),
-                cover: cover.get(&p.name).map(|(h, i)| {
-                    pipeline::face_crop_path(&root, h, *i).display().to_string()
-                }),
+                cover: cover
+                    .get(&p.name)
+                    .map(|(h, i)| pipeline::face_crop_path(&root, h, *i).display().to_string()),
                 name: Some(p.name.clone()),
                 cluster: None,
                 suggestion: None,
@@ -1925,21 +2087,25 @@ async fn people_overview(
             .iter()
             .enumerate()
             .map(|(id, g)| {
-                let best = g
-                    .iter()
-                    .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+                let best = g.iter().max_by(|a, b| {
+                    a.score
+                        .partial_cmp(&b.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 PersonEntry {
                     name: None,
                     cluster: Some(id),
                     photos: g.iter().map(|f| &f.hash).collect::<BTreeSet<_>>().len(),
                     cover: best.map(|f| {
-                        pipeline::face_crop_path(&root, &f.hash, f.idx).display().to_string()
+                        pipeline::face_crop_path(&root, &f.hash, f.idx)
+                            .display()
+                            .to_string()
                     }),
                     suggestion: best.and_then(|f| {
                         f.embedding.as_ref().and_then(|e| {
-                            assign::score_all(e, &people).first().and_then(|(n, s)| {
-                                (*s >= 0.45).then(|| n.clone())
-                            })
+                            assign::score_all(e, &people)
+                                .first()
+                                .and_then(|(n, s)| (*s >= 0.45).then(|| n.clone()))
                         })
                     }),
                 }
@@ -1947,7 +2113,10 @@ async fn people_overview(
             .collect();
         unnamed.sort_by(|a, b| b.photos.cmp(&a.photos));
         out.extend(unnamed);
-        Ok(PeopleView { entries: out, dismissed: people.dismissed_count() })
+        Ok(PeopleView {
+            entries: out,
+            dismissed: people.dismissed_count(),
+        })
     })
 }
 
@@ -1965,8 +2134,11 @@ async fn dismiss_cluster(
 ) -> R<String> {
     with(&state, &path, |lib| {
         let mut people = lib.people()?;
-        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
-        let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
+        let groups =
+            pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        let g = groups
+            .get(cluster)
+            .ok_or_else(|| anyhow::anyhow!("no such group"))?;
         let faces: Vec<(String, i64)> = g.iter().map(|f| (f.hash.clone(), f.idx)).collect();
         let photos = g.iter().map(|f| &f.hash).collect::<BTreeSet<_>>().len();
         let n = people.dismiss(&faces);
@@ -2008,7 +2180,9 @@ async fn merge_people(
         let mut people = lib.people()?;
         let moved = people.merge(&from, &into)?;
         lib.save_people(&people)?;
-        Ok(format!("{from} is now {into} · {moved} more reference faces for {into}"))
+        Ok(format!(
+            "{from} is now {into} · {moved} more reference faces for {into}"
+        ))
     })
 }
 
@@ -2023,8 +2197,11 @@ async fn name_cluster(
 ) -> R<usize> {
     with(&state, &path, |lib| {
         let mut people = lib.people()?;
-        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
-        let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
+        let groups =
+            pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        let g = groups
+            .get(cluster)
+            .ok_or_else(|| anyhow::anyhow!("no such group"))?;
         let refs: Vec<Vec<f32>> = g.iter().filter_map(|f| f.embedding.clone()).collect();
         let n = refs.len();
         people.add_references(name.trim(), refs);
@@ -2043,10 +2220,17 @@ async fn cluster_photos(
 ) -> R<Vec<String>> {
     with(&state, &path, |lib| {
         let people = lib.people()?;
-        let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
+        let groups =
+            pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         Ok(groups
             .get(cluster)
-            .map(|g| g.iter().map(|f| f.hash.clone()).collect::<BTreeSet<_>>().into_iter().collect())
+            .map(|g| {
+                g.iter()
+                    .map(|f| f.hash.clone())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect()
+            })
             .unwrap_or_default())
     })
 }
@@ -2077,7 +2261,16 @@ async fn models_status() -> R<Vec<ModelStatus>> {
 #[tauri::command]
 async fn models_fetch(app: tauri::AppHandle, _state: tauri::State<'_, AppState>) -> R<String> {
     let sink = |name: &str, done: usize, total: usize| {
-        remote::emit_all(&app, "progress", &ProgressEvent { op: "models", done, total, source: "" });
+        remote::emit_all(
+            &app,
+            "progress",
+            &ProgressEvent {
+                op: "models",
+                done,
+                total,
+                source: "",
+            },
+        );
         let _ = name;
     };
     let got = model_fetch::fetch_missing(&sink).map_err(err)?;
@@ -2116,21 +2309,37 @@ fn edit_each(
 }
 
 #[tauri::command]
-async fn set_rating(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, rating: u8) -> R<()> {
+async fn set_rating(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    rating: u8,
+) -> R<()> {
     with(&state, &path, |lib| {
         edit_each(lib, &hashes, |u, h| u.set_rating(h, rating))
     })
 }
 
 #[tauri::command]
-async fn set_label(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, label: Option<String>) -> R<()> {
+async fn set_label(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    label: Option<String>,
+) -> R<()> {
     with(&state, &path, |lib| {
         edit_each(lib, &hashes, |u, h| u.set_label(h, label.clone()))
     })
 }
 
 #[tauri::command]
-async fn set_album(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>, album: String, member: bool) -> R<()> {
+async fn set_album(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+    album: String,
+    member: bool,
+) -> R<()> {
     with(&state, &path, |lib| {
         // Albums are on the way out (ADR-0009); this keeps existing ones editable
         // until the migration to folders ships.
@@ -2149,10 +2358,7 @@ pub struct MigrationView {
 }
 
 #[tauri::command]
-async fn plan_album_migration(
-    state: tauri::State<'_, AppState>,
-    path: String,
-) -> R<MigrationView> {
+async fn plan_album_migration(state: tauri::State<'_, AppState>, path: String) -> R<MigrationView> {
     with(&state, &path, |lib| {
         let m = blinkview_core::albums::plan(lib)?;
         Ok(MigrationView {
@@ -2235,7 +2441,11 @@ async fn plan_move(
         let p = blinkview_core::plan::move_into(lib, &hashes, &dest)?;
         Ok(MoveView {
             dest: dest.trim().trim_matches('/').to_string(),
-            moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
+            moves: p
+                .ops
+                .iter()
+                .map(|o| (o.from().to_string(), o.to().to_string()))
+                .collect(),
             skipped: p.skipped,
         })
     })
@@ -2290,7 +2500,11 @@ async fn save_search(
 
 /// The directory holding a folder's own `blinkview.json`.
 fn folder_dir(root: &std::path::Path, folder: &str) -> std::path::PathBuf {
-    if folder.is_empty() { root.to_path_buf() } else { root.join(folder) }
+    if folder.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(folder)
+    }
 }
 
 /// How a folder is arranged.
@@ -2306,7 +2520,9 @@ async fn folder_view(
     folder: String,
 ) -> R<FolderView> {
     with_readable(&state, &path, |lib| {
-        Ok(UserData::load(&folder_dir(lib.root(), &folder))?.view.unwrap_or_default())
+        Ok(UserData::load(&folder_dir(lib.root(), &folder))?
+            .view
+            .unwrap_or_default())
     })
 }
 
@@ -2341,7 +2557,10 @@ async fn set_folder_view(
 #[tauri::command]
 async fn list_albums(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(String, usize)>> {
     with(&state, &path, |lib| {
-        Ok(UserDataSet::load(lib.root())?.albums().into_iter().collect())
+        Ok(UserDataSet::load(lib.root())?
+            .albums()
+            .into_iter()
+            .collect())
     })
 }
 
@@ -2368,7 +2587,11 @@ pub struct PhotoDetail {
 }
 
 #[tauri::command]
-async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: String) -> R<PhotoDetail> {
+async fn photo_detail(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hash: String,
+) -> R<PhotoDetail> {
     with_readable(&state, &path, |lib| {
         let row = lib
             .index
@@ -2447,10 +2670,20 @@ async fn edit_photo(
         let _ = std::fs::remove_file(thumbs::thumb_path(lib, &hash));
         // Ratings and labels are keyed by that hash too (ADR-0007), so they have to be
         // carried across or editing a five-star photograph silently unrates it.
-        carry_metadata(lib, &[(folder_of(&row.path).to_string(), hash.clone(), out.hash.clone())])?;
+        carry_metadata(
+            lib,
+            &[(
+                folder_of(&row.path).to_string(),
+                hash.clone(),
+                out.hash.clone(),
+            )],
+        )?;
         scan::scan(lib, false)?;
         Ok(match out.original {
-            Some(o) => format!("Saved {}x{} · original kept in {}", out.width, out.height, o),
+            Some(o) => format!(
+                "Saved {}x{} · original kept in {}",
+                out.width, out.height, o
+            ),
             None => format!("Saved {}x{} · original not kept", out.width, out.height),
         })
     })
@@ -2565,10 +2798,17 @@ async fn strip_metadata(
         }
         carry_metadata(lib, &carried)?;
         scan::scan(lib, false)?;
-        let kept = if keep && done > 0 { " · originals kept in Originals/" } else { "" };
+        let kept = if keep && done > 0 {
+            " · originals kept in Originals/"
+        } else {
+            ""
+        };
         Ok(match refused.first() {
             None => format!("{done} stripped{kept}"),
-            Some(why) => format!("{done} stripped{kept} · {} left alone — {why}", refused.len()),
+            Some(why) => format!(
+                "{done} stripped{kept} · {} left alone — {why}",
+                refused.len()
+            ),
         })
     })
 }
@@ -2616,7 +2856,11 @@ async fn delete_photos(
         }
         let n = plan.len();
         let j = plan.apply(lib)?;
-        let where_to = if dest == TRASH { "Trash".to_string() } else { dest };
+        let where_to = if dest == TRASH {
+            "Trash".to_string()
+        } else {
+            dest
+        };
         Ok(format!("Moved {n} to {where_to} · undo id {}", j.id))
     })
 }
@@ -2638,17 +2882,28 @@ async fn rename_photo(
             .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
         let ext = row.path.rsplit('.').next().unwrap_or("jpg").to_string();
         let mut new_name = name.trim().to_string();
-        if !new_name.to_lowercase().ends_with(&format!(".{}", ext.to_lowercase())) {
+        if !new_name
+            .to_lowercase()
+            .ends_with(&format!(".{}", ext.to_lowercase()))
+        {
             new_name = format!("{new_name}.{ext}");
         }
         blinkview_core::fsops::validate_filename(&new_name)?;
-        let dir = row.path.rsplit_once('/').map(|(d, _)| format!("{d}/")).unwrap_or_default();
+        let dir = row
+            .path
+            .rsplit_once('/')
+            .map(|(d, _)| format!("{d}/"))
+            .unwrap_or_default();
         let to = format!("{dir}{new_name}");
         if to == row.path {
             return Ok("Name unchanged".into());
         }
         let mut plan = blinkview_core::Plan::new("rename-one");
-        plan.ops.push(blinkview_core::Op::Rename { hash, from: row.path, to: to.clone() });
+        plan.ops.push(blinkview_core::Op::Rename {
+            hash,
+            from: row.path,
+            to: to.clone(),
+        });
         plan.apply(lib)?;
         Ok(format!("Renamed to {new_name}"))
     })
@@ -2661,7 +2916,11 @@ async fn rename_photo(
 /// person. Needed because a name can end up matching nothing (every photo untagged, or
 /// a mistaken second spelling) and a name that matches nothing is not information.
 #[tauri::command]
-async fn forget_person(state: tauri::State<'_, AppState>, path: String, person: String) -> R<String> {
+async fn forget_person(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    person: String,
+) -> R<String> {
     with(&state, &path, |lib| {
         let mut people = lib.people()?;
         if !people.remove(&person) {
@@ -2730,15 +2989,27 @@ async fn untag_person(
             person,
             want.len(),
             if want.len() == 1 { "" } else { "s" },
-            if moved > 0 { format!(", {moved} moved back to root") } else { String::new() },
-            if forgotten { format!(" — no photos left, so {person} was forgotten") } else { String::new() }
+            if moved > 0 {
+                format!(", {moved} moved back to root")
+            } else {
+                String::new()
+            },
+            if forgotten {
+                format!(" — no photos left, so {person} was forgotten")
+            } else {
+                String::new()
+            }
         ))
     })
 }
 
 /// Restore photos from the library Trash back to the root.
 #[tauri::command]
-async fn restore_photos(state: tauri::State<'_, AppState>, path: String, hashes: Vec<String>) -> R<String> {
+async fn restore_photos(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    hashes: Vec<String>,
+) -> R<String> {
     with(&state, &path, |lib| {
         let want: BTreeSet<String> = hashes.into_iter().collect();
         let mut plan = blinkview_core::Plan::new("restore");
@@ -2747,7 +3018,11 @@ async fn restore_photos(state: tauri::State<'_, AppState>, path: String, hashes:
                 continue;
             }
             let name = r.path.rsplit('/').next().unwrap_or(&r.path).to_string();
-            plan.ops.push(blinkview_core::Op::Move { hash: r.hash.clone(), from: r.path.clone(), to: name });
+            plan.ops.push(blinkview_core::Op::Move {
+                hash: r.hash.clone(),
+                from: r.path.clone(),
+                to: name,
+            });
         }
         if plan.is_empty() {
             return Ok("Nothing to restore".into());
@@ -2793,7 +3068,11 @@ async fn empty_trash(state: tauri::State<'_, AppState>, path: String) -> R<Strin
             if !p.is_file() {
                 continue;
             }
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             // Never clobber something already in the system Trash.
             let mut dest = sys.join(&name);
             let mut n = 2;
@@ -2841,7 +3120,10 @@ fn selected_files(lib: &Library, hashes: &[String]) -> anyhow::Result<Vec<std::p
 }
 
 #[cfg(target_os = "macos")]
-fn show_native_share(window: &tauri::WebviewWindow, files: Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+fn show_native_share(
+    window: &tauri::WebviewWindow,
+    files: Vec<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     use objc2::AnyThread;
     use objc2_app_kit::{NSSharingServicePicker, NSView};
     use objc2_foundation::{NSArray, NSRectEdge, NSString, NSURL};
@@ -2894,19 +3176,18 @@ async fn start_file_drag(
     {
         let (tx, rx) = std::sync::mpsc::channel();
         let app = window.app_handle().clone();
-        app
-            .run_on_main_thread(move || {
-                let result = drag::start_drag(
-                    &window,
-                    drag::DragItem::Files(files),
-                    drag::Image::Raw(include_bytes!("../icons/128x128.png").to_vec()),
-                    |_result, _position| {},
-                    drag::Options::default(),
-                )
-                .map_err(|e| e.to_string());
-                let _ = tx.send(result);
-            })
-            .map_err(err)?;
+        app.run_on_main_thread(move || {
+            let result = drag::start_drag(
+                &window,
+                drag::DragItem::Files(files),
+                drag::Image::Raw(include_bytes!("../icons/128x128.png").to_vec()),
+                |_result, _position| {},
+                drag::Options::default(),
+            )
+            .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        })
+        .map_err(err)?;
         rx.recv().map_err(err)?.map_err(err)
     }
     #[cfg(not(target_os = "macos"))]
@@ -2938,7 +3219,9 @@ fn release_url_is_safe(url: &str) -> bool {
         .is_some_and(|tag| {
             !tag.is_empty()
                 && tag.len() <= 80
-                && tag.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_'))
+                && tag
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_'))
         })
 }
 
@@ -2961,7 +3244,8 @@ async fn check_for_updates() -> R<UpdateInfo> {
         .header("User-Agent", format!("Blinkview/{}", *APP_VERSION))
         .call()
         .map_err(err)?;
-    let release: GithubRelease = serde_json::from_reader(response.body_mut().as_reader()).map_err(err)?;
+    let release: GithubRelease =
+        serde_json::from_reader(response.body_mut().as_reader()).map_err(err)?;
     if release.draft || release.prerelease || !release_url_is_safe(&release.html_url) {
         return Err("GitHub returned a release Blinkview will not offer".into());
     }
@@ -3035,12 +3319,13 @@ pub struct DuplicateReview {
     reclaimable: u64,
 }
 
-fn duplicate_batch(
-    taken_at: Option<i64>,
-    place: Option<String>,
-) -> (String, String, String) {
+fn duplicate_batch(taken_at: Option<i64>, place: Option<String>) -> (String, String, String) {
     let Some(at) = taken_at.and_then(|v| chrono::DateTime::<Utc>::from_timestamp(v, 0)) else {
-        return ("undated".into(), "Undated".into(), "Capture time missing".into());
+        return (
+            "undated".into(),
+            "Undated".into(),
+            "Capture time missing".into(),
+        );
     };
     let detail = at.format("%A, %-d %B %Y").to_string();
     match place {
@@ -3113,7 +3398,9 @@ async fn duplicate_review(
                     let quality = if max_sharpness <= f64::EPSILON {
                         100
                     } else {
-                        ((sharpness / max_sharpness).sqrt() * 100.0).round().clamp(0.0, 100.0) as u8
+                        ((sharpness / max_sharpness).sqrt() * 100.0)
+                            .round()
+                            .clamp(0.0, 100.0) as u8
                     };
                     let meta = user.get(&row.hash, folder_of(&row.path));
                     DuplicateReviewItem {
@@ -3143,7 +3430,10 @@ async fn duplicate_review(
             });
         }
         let reclaimable = out.iter().map(|g| g.reclaimable).sum();
-        Ok(DuplicateReview { groups: out, reclaimable })
+        Ok(DuplicateReview {
+            groups: out,
+            reclaimable,
+        })
     })
 }
 
@@ -3177,11 +3467,17 @@ async fn apply_duplicate_review(
             .collect();
         let mut plan = blinkview_core::Plan::new("duplicate review");
         for rejected in rejections {
-            let row = rows
-                .get(&rejected.path)
-                .ok_or_else(|| anyhow::anyhow!("{} moved since it was reviewed; run the review again", rejected.path))?;
+            let row = rows.get(&rejected.path).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} moved since it was reviewed; run the review again",
+                    rejected.path
+                )
+            })?;
             if row.hash != rejected.hash {
-                anyhow::bail!("{} changed since it was reviewed; run the review again", rejected.path);
+                anyhow::bail!(
+                    "{} changed since it was reviewed; run the review again",
+                    rejected.path
+                );
             }
             if in_folder(&row.path, TRASH) {
                 continue;
@@ -3214,14 +3510,22 @@ fn build_plan(
         "dedupe" => {
             dedupe::ensure_signatures_with_progress(lib, progress)?;
             let mut o = dedupe::Options::default();
-            if let Some(v) = param { o.rmse = v }
-            if mkdirs { std::fs::create_dir_all(lib.abs(&o.dest))?; }
+            if let Some(v) = param {
+                o.rmse = v
+            }
+            if mkdirs {
+                std::fs::create_dir_all(lib.abs(&o.dest))?;
+            }
             dedupe::plan(lib, &o)?
         }
         "scenery" => {
             let mut o = scenery::Options::default();
-            if let Some(v) = param { o.max_face = v }
-            if mkdirs { std::fs::create_dir_all(lib.abs(&o.dest))?; }
+            if let Some(v) = param {
+                o.max_face = v
+            }
+            if mkdirs {
+                std::fs::create_dir_all(lib.abs(&o.dest))?;
+            }
             scenery::plan(lib, &o)?
         }
         "rename" => rename::plan(lib, rename::DEFAULT_FORMAT)?,
@@ -3251,7 +3555,11 @@ async fn plan_op(
         let p = build_plan(lib, &op, param, false, &sink)?;
         Ok(PlanView {
             label: op.clone(),
-            moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
+            moves: p
+                .ops
+                .iter()
+                .map(|o| (o.from().to_string(), o.to().to_string()))
+                .collect(),
             skipped: p.skipped.clone(),
         })
     })
@@ -3294,7 +3602,11 @@ async fn plan_rename(
         let p = rename::plan_scoped(lib, &format, hashes.as_deref())?;
         Ok(PlanView {
             label: "rename".into(),
-            moves: p.ops.iter().map(|o| (o.from().to_string(), o.to().to_string())).collect(),
+            moves: p
+                .ops
+                .iter()
+                .map(|o| (o.from().to_string(), o.to().to_string()))
+                .collect(),
             skipped: p.skipped.clone(),
         })
     })
@@ -3339,7 +3651,8 @@ async fn history(state: tauri::State<'_, AppState>, path: String) -> R<Vec<(Stri
 async fn undo(state: tauri::State<'_, AppState>, path: String, id: Option<String>) -> R<String> {
     with(&state, &path, |lib| {
         let ids = Journal::list(lib)?;
-        let target = id.or_else(|| ids.last().cloned())
+        let target = id
+            .or_else(|| ids.last().cloned())
             .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
         let j = Journal::load(lib, &target)?;
         let n = j.undo(lib)?;
@@ -3367,9 +3680,15 @@ async fn undo(state: tauri::State<'_, AppState>, path: String, id: Option<String
 /// Nothing here is fatal. A build without the sidecar falls back to PATH exactly as
 /// before, which is what a `cargo run` during development does.
 fn export_bundled_ffmpeg(app: &tauri::App) {
-    let Ok(exe) = std::env::current_exe() else { return };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
     let Some(dir) = exe.parent() else { return };
-    let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let name = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
     let beside = dir.join(name);
     let candidate = if beside.is_file() {
         beside
@@ -3413,7 +3732,12 @@ struct ThumbCache {
 
 impl ThumbCache {
     fn new(budget: usize) -> Self {
-        Self { map: std::collections::HashMap::new(), bytes: 0, clock: 0, budget }
+        Self {
+            map: std::collections::HashMap::new(),
+            bytes: 0,
+            clock: 0,
+            budget,
+        }
     }
 
     /// The bytes for `path`, if cached. Reading counts as a use: the entry stays.
@@ -3475,7 +3799,10 @@ fn serve_cached(path: &std::path::Path) -> Option<http::Response<Vec<u8>>> {
 /// The value of one `?key=` parameter of a request URI, percent-decoding left to the
 /// path handling (hashes are hex, so they never arrive encoded).
 fn query_param(query: Option<&str>, key: &str) -> Option<String> {
-    query.and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix(key).map(str::to_string)))
+    query.and_then(|q| {
+        q.split('&')
+            .find_map(|kv| kv.strip_prefix(key).map(str::to_string))
+    })
 }
 
 #[derive(Clone)]
@@ -3494,7 +3821,9 @@ fn media_scope(app: &tauri::AppHandle, canon: &std::path::Path) -> Option<MediaS
             continue;
         };
         if canon.starts_with(&root) {
-            return Some(MediaScope { vault: blinkview_core::cache::vault_for(&root) });
+            return Some(MediaScope {
+                vault: blinkview_core::cache::vault_for(&root),
+            });
         }
     }
 
@@ -3503,7 +3832,9 @@ fn media_scope(app: &tauri::AppHandle, canon: &std::path::Path) -> Option<MediaS
     for peek in peeks.values() {
         let lib = peek.lock().ok()?;
         if peek_grants(lib.root(), canon) {
-            return Some(MediaScope { vault: lib.vault().to_path_buf() });
+            return Some(MediaScope {
+                vault: lib.vault().to_path_buf(),
+            });
         }
     }
     None
@@ -3521,12 +3852,16 @@ fn peek_grants(root: &std::path::Path, candidate: &std::path::Path) -> bool {
 /// poster" is a genuine miss; the render itself still happens inside `serve_photo`,
 /// which re-checks existence and would simply serve the file if we guessed wrong.
 fn needs_video_render(app: &tauri::AppHandle, request: &http::Request<Vec<u8>>) -> bool {
-    let Ok(decoded) = percent_decode(request.uri().path()) else { return false };
-    let Ok(path) = std::path::Path::new(&decoded).canonicalize() else { return false };
+    let Ok(decoded) = percent_decode(request.uri().path()) else {
+        return false;
+    };
+    let Ok(path) = std::path::Path::new(&decoded).canonicalize() else {
+        return false;
+    };
     let hash = query_param(request.uri().query(), "t=");
-    let thumb = hash
-        .as_deref()
-        .and_then(|hash| media_scope(app, &path).map(|scope| thumbs::thumb_path_in(&scope.vault, hash)));
+    let thumb = hash.as_deref().and_then(|hash| {
+        media_scope(app, &path).map(|scope| thumbs::thumb_path_in(&scope.vault, hash))
+    });
     video_thumb_miss(&path, hash.as_deref(), thumb.as_deref())
 }
 
@@ -3545,7 +3880,10 @@ fn video_thumb_miss(
     hash.is_some() && thumb.is_some_and(|path| !path.exists())
 }
 
-pub(crate) fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
+pub(crate) fn serve_photo(
+    app: &tauri::AppHandle,
+    request: http::Request<Vec<u8>>,
+) -> http::Response<Vec<u8>> {
     let deny = |code: u16| {
         http::Response::builder()
             .status(code)
@@ -3556,7 +3894,9 @@ pub(crate) fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>
     // The URI path *is* the absolute filesystem path — "photo://localhost/Users/..."
     // yields "/Users/...". Stripping the leading slash would make it relative and
     // nothing would ever resolve.
-    let Ok(decoded) = percent_decode(request.uri().path()) else { return deny(400) };
+    let Ok(decoded) = percent_decode(request.uri().path()) else {
+        return deny(400);
+    };
     let path = std::path::PathBuf::from(&decoded);
     // `?t=<hash>` asks for the thumbnail of this photo. Serving it from cache when
     // present and rendering it on demand when not is what makes the grid usable
@@ -3572,8 +3912,12 @@ pub(crate) fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>
     // `?preview=<hash>` asks for the lightbox preview — a derived 2000 px JPEG.
     let preview_hash = param("preview=");
 
-    let Ok(canon) = path.canonicalize() else { return deny(404) };
-    let Some(scope) = media_scope(app, &canon) else { return deny(403) };
+    let Ok(canon) = path.canonicalize() else {
+        return deny(404);
+    };
+    let Some(scope) = media_scope(app, &canon) else {
+        return deny(403);
+    };
 
     // The lightbox preview: a derived 2000 px JPEG, rendered on first request. This is
     // what makes the stepper quick — a step used to decode the full original every
@@ -3602,10 +3946,7 @@ pub(crate) fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>
     // Full-size request for a format the webview cannot decode: serve a cached JPEG.
     if thumb_hash.is_none() && blinkview_core::imageio::needs_conversion(&canon) {
         if let Some(hash) = full_hash {
-            let derived = scope
-                .vault
-                .join("derived")
-                .join(format!("{hash}.jpg"));
+            let derived = scope.vault.join("derived").join(format!("{hash}.jpg"));
             if !derived.exists()
                 && blinkview_core::imageio::convert_to_jpeg(&canon, &derived).is_err()
             {
@@ -3623,33 +3964,32 @@ pub(crate) fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>
         None => canon.clone(),
         Some(hash) => {
             {
-                    let t = blinkview_core::thumbs::thumb_path_in(&scope.vault, hash);
-                    if !t.exists() {
-                        let is_video = canon
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "m4v"));
-                        if blinkview_core::thumbs::render_to(&canon, &t, is_video).is_err() {
-                            // Falling back to the original is only sane for a still.
-                            // A video's "thumbnail" would be the whole clip — read
-                            // into memory in one piece, handed to an <img>, and held
-                            // there by the webview. On a phone backup with 507 clips
-                            // averaging 32 MB that is 15.7 GB of video in the render
-                            // process, which macOS answers by killing it: the window
-                            // goes black, reloads, asks for the same thumbnails and
-                            // does it again. A video with no poster frame is the
-                            // documented degradation, so serve nothing and let the
-                            // cell keep its play badge.
-                            if is_video {
-                                return deny(404);
-                            }
-                            return match std::fs::read(&canon) {
-                                Ok(b) => ok_response(b, &canon),
-                                Err(_) => deny(404),
-                            };
+                let t = blinkview_core::thumbs::thumb_path_in(&scope.vault, hash);
+                if !t.exists() {
+                    let is_video = canon.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                        matches!(e.to_ascii_lowercase().as_str(), "mp4" | "mov" | "m4v")
+                    });
+                    if blinkview_core::thumbs::render_to(&canon, &t, is_video).is_err() {
+                        // Falling back to the original is only sane for a still.
+                        // A video's "thumbnail" would be the whole clip — read
+                        // into memory in one piece, handed to an <img>, and held
+                        // there by the webview. On a phone backup with 507 clips
+                        // averaging 32 MB that is 15.7 GB of video in the render
+                        // process, which macOS answers by killing it: the window
+                        // goes black, reloads, asks for the same thumbnails and
+                        // does it again. A video with no poster frame is the
+                        // documented degradation, so serve nothing and let the
+                        // cell keep its play badge.
+                        if is_video {
+                            return deny(404);
                         }
+                        return match std::fs::read(&canon) {
+                            Ok(b) => ok_response(b, &canon),
+                            Err(_) => deny(404),
+                        };
                     }
-                    t
+                }
+                t
             }
         }
     };
@@ -3696,11 +4036,14 @@ fn serve_file(path: &std::path::Path, range: Option<&str>) -> Option<http::Respo
         let mut buf = Vec::with_capacity(len as usize);
         file.read_to_end(&mut buf).ok()?;
         let mut res = ok_response(buf, path);
-        res.headers_mut().insert("Accept-Ranges", "bytes".parse().ok()?);
+        res.headers_mut()
+            .insert("Accept-Ranges", "bytes".parse().ok()?);
         return Some(res);
     };
 
-    let end = end.min(start.saturating_add(RANGE_CHUNK - 1)).min(len.saturating_sub(1));
+    let end = end
+        .min(start.saturating_add(RANGE_CHUNK - 1))
+        .min(len.saturating_sub(1));
     let n = end.saturating_sub(start) + 1;
     file.seek(SeekFrom::Start(start)).ok()?;
     let mut buf = vec![0u8; n as usize];
@@ -3710,7 +4053,10 @@ fn serve_file(path: &std::path::Path, range: Option<&str>) -> Option<http::Respo
     *res.status_mut() = http::StatusCode::PARTIAL_CONTENT;
     let h = res.headers_mut();
     h.insert("Accept-Ranges", "bytes".parse().ok()?);
-    h.insert("Content-Range", format!("bytes {start}-{end}/{len}").parse().ok()?);
+    h.insert(
+        "Content-Range",
+        format!("bytes {start}-{end}/{len}").parse().ok()?,
+    );
     // A partial response must not be cached as if it were the whole file.
     h.insert("Cache-Control", "no-store".parse().ok()?);
     Some(res)
@@ -3733,12 +4079,21 @@ fn parse_range(header: &str, len: u64) -> Option<(u64, u64)> {
     if start >= len {
         return None;
     }
-    let end = if b.is_empty() { len - 1 } else { b.parse::<u64>().ok()?.min(len - 1) };
+    let end = if b.is_empty() {
+        len - 1
+    } else {
+        b.parse::<u64>().ok()?.min(len - 1)
+    };
     (start <= end).then_some((start, end))
 }
 
 fn ok_response(bytes: Vec<u8>, path: &std::path::Path) -> http::Response<Vec<u8>> {
-    let mime = match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+    let mime = match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("mp4") => "video/mp4",
         Some("mov") => "video/quicktime",
@@ -3751,7 +4106,10 @@ fn ok_response(bytes: Vec<u8>, path: &std::path::Path) -> http::Response<Vec<u8>
         .header("Access-Control-Allow-Origin", "*")
         // Without this the range headers are invisible to anything using fetch, which
         // makes a streaming problem impossible to diagnose from the page.
-        .header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
+        .header(
+            "Access-Control-Expose-Headers",
+            "Content-Range, Accept-Ranges, Content-Length",
+        )
         .body(bytes)
         .unwrap()
 }
@@ -3844,25 +4202,83 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(debug_assertions)]
             bench_payload,
-            list_sources, add_source, remove_source, rescan, create_folder, set_source_depth,
-            survey_folder, cancel_survey,
-            peek_folder, peek_photos, end_peek, promote_peek, open_path, take_open_paths,
-            photos, build_thumbs, analyze_faces,
-            clusters, name_clusters,
-            plan_op, apply_op, plan_rename, apply_rename, history, undo,
-            delete_photos, rename_photo, untag_person, restore_photos, empty_trash,
-            models_status, models_fetch,
-            people_overview, name_cluster, cluster_photos, autodetect_faces,
-            dismiss_cluster, restore_dismissed, merge_people,
-            edit_photo, edit_photos, strip_metadata, set_rating, set_label, set_album, list_albums, photo_detail,
-            semantic_status, semantic_index, semantic_search,
-            locate_photos, photo_places, place_search, set_photo_location, set_photo_datetime,
-            plan_album_migration, apply_album_migration, list_searches, save_search,
-            folder_view, set_folder_view,
-            plan_move, apply_move, duplicate_review, apply_duplicate_review,
-            share_photos, start_file_drag, check_for_updates, open_update,
-            forget_person, analyze_all, source_data, pending_work, analyze_resume,
-            remote::remote_start, remote::remote_stop, remote::remote_status
+            list_sources,
+            add_source,
+            remove_source,
+            rescan,
+            create_folder,
+            set_source_depth,
+            survey_folder,
+            cancel_survey,
+            peek_folder,
+            peek_photos,
+            end_peek,
+            promote_peek,
+            open_path,
+            take_open_paths,
+            photos,
+            build_thumbs,
+            analyze_faces,
+            clusters,
+            name_clusters,
+            plan_op,
+            apply_op,
+            plan_rename,
+            apply_rename,
+            history,
+            undo,
+            delete_photos,
+            rename_photo,
+            untag_person,
+            restore_photos,
+            empty_trash,
+            models_status,
+            models_fetch,
+            people_overview,
+            name_cluster,
+            cluster_photos,
+            autodetect_faces,
+            dismiss_cluster,
+            restore_dismissed,
+            merge_people,
+            edit_photo,
+            edit_photos,
+            strip_metadata,
+            set_rating,
+            set_label,
+            set_album,
+            list_albums,
+            photo_detail,
+            semantic_status,
+            semantic_index,
+            semantic_search,
+            locate_photos,
+            photo_places,
+            place_search,
+            set_photo_location,
+            set_photo_datetime,
+            plan_album_migration,
+            apply_album_migration,
+            list_searches,
+            save_search,
+            folder_view,
+            set_folder_view,
+            plan_move,
+            apply_move,
+            duplicate_review,
+            apply_duplicate_review,
+            share_photos,
+            start_file_drag,
+            check_for_updates,
+            open_update,
+            forget_person,
+            analyze_all,
+            source_data,
+            pending_work,
+            analyze_resume,
+            remote::remote_start,
+            remote::remote_stop,
+            remote::remote_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building blinkview")
@@ -3882,9 +4298,10 @@ mod tests {
 
     /// A cache beside the fixture, so a unit test never writes to the machine's.
     fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
-        dir.parent()
-            .unwrap()
-            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+        dir.parent().unwrap().join(format!(
+            "{}-cache",
+            dir.file_name().unwrap().to_string_lossy()
+        ))
     }
 
     #[test]
@@ -3895,8 +4312,7 @@ mod tests {
         assert!(!file.sources[0].skips_default_dirs());
 
         let current: SourcesFile =
-            serde_json::from_str(r#"{"sources":[{"path":"/Desktop","shallow":true}]}"#)
-                .unwrap();
+            serde_json::from_str(r#"{"sources":[{"path":"/Desktop","shallow":true}]}"#).unwrap();
         assert!(current.sources[0].shallow());
         assert!(current.sources[0].skips_default_dirs());
         assert_eq!(
@@ -3908,7 +4324,10 @@ mod tests {
     #[test]
     fn a_peek_grants_its_direct_files_but_never_its_subtree() {
         let root = std::path::Path::new("/Desktop/Trip");
-        assert!(peek_grants(root, std::path::Path::new("/Desktop/Trip/a.jpg")));
+        assert!(peek_grants(
+            root,
+            std::path::Path::new("/Desktop/Trip/a.jpg")
+        ));
         assert!(!peek_grants(
             root,
             std::path::Path::new("/Desktop/Trip/Private/a.jpg")
@@ -3932,7 +4351,11 @@ mod tests {
 
         let file = nested.join("a.jpg").canonicalize().unwrap();
         let (stored, file_rel, folder) = owning_source(&file, &entries).unwrap();
-        assert_eq!(stored, entries[0].path(), "the stored key, not a resolved copy");
+        assert_eq!(
+            stored,
+            entries[0].path(),
+            "the stored key, not a resolved copy"
+        );
         assert_eq!(file_rel.as_deref(), Some("Trip/a.jpg"));
         assert_eq!(folder, None);
 
@@ -3951,7 +4374,10 @@ mod tests {
         // Unrelated paths own nothing, so they become peeks.
         let outside = dir.join("Elsewhere");
         std::fs::create_dir_all(&outside).unwrap();
-        assert_eq!(owning_source(&outside.canonicalize().unwrap(), &entries), None);
+        assert_eq!(
+            owning_source(&outside.canonicalize().unwrap(), &entries),
+            None
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3959,8 +4385,7 @@ mod tests {
     /// path must still answer with the path the library was added under.
     #[test]
     fn open_routing_through_a_symlink_keeps_the_stored_key() {
-        let dir =
-            std::env::temp_dir().join(format!("blinkview-open-link-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("blinkview-open-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let real = dir.join("real");
         std::fs::create_dir_all(&real).unwrap();
@@ -4021,7 +4446,10 @@ mod tests {
 
     #[test]
     fn ancestors_walk_to_the_root() {
-        assert_eq!(ancestors("Trip/Greece Day3"), vec!["Trip".to_string(), String::new()]);
+        assert_eq!(
+            ancestors("Trip/Greece Day3"),
+            vec!["Trip".to_string(), String::new()]
+        );
         assert_eq!(ancestors("Trip"), vec![String::new()]);
         // The root has no ancestors, and must not report itself as one or counts
         // would be doubled at the top of the tree.
@@ -4036,7 +4464,10 @@ mod tests {
     fn a_cached_entry_serves_without_the_filesystem() {
         let mut c = cache(1000);
         c.put(std::path::Path::new("/t/a.jpg"), vec![1, 2, 3]);
-        assert_eq!(c.get(std::path::Path::new("/t/a.jpg")), Some(&[1, 2, 3][..]));
+        assert_eq!(
+            c.get(std::path::Path::new("/t/a.jpg")),
+            Some(&[1, 2, 3][..])
+        );
         assert_eq!(c.bytes, 3);
     }
 
@@ -4047,7 +4478,7 @@ mod tests {
         c.put(&p("/a"), vec![0; 4]);
         c.put(&p("/b"), vec![0; 4]);
         c.put(&p("/c"), vec![0; 4]); // 12 bytes > 10: one must go
-        // The oldest stamp is /a, which was never re-read.
+                                     // The oldest stamp is /a, which was never re-read.
         assert!(c.get(&p("/a")).is_none(), "/a should have been evicted");
         assert!(c.get(&p("/b")).is_some());
         assert!(c.get(&p("/c")).is_some());
@@ -4159,19 +4590,29 @@ mod tests {
         scan::scan(&mut lib, false).unwrap();
         let info = describe(&mut lib).unwrap();
 
-        assert_eq!(info.photos, 2, "a trashed photograph is not in the library total");
+        assert_eq!(
+            info.photos, 2,
+            "a trashed photograph is not in the library total"
+        );
         assert_eq!(info.videos, 0, "a trashed clip is not in the library total");
         let count = |p: &str| info.folders.iter().find(|f| f.path == p).map(|f| f.count);
-        assert_eq!(count(TRASH), Some(2), "the Trash row counts what is in the Trash");
-        assert_eq!(count(""), Some(2), "the library root does not roll up its Trash");
+        assert_eq!(
+            count(TRASH),
+            Some(2),
+            "the Trash row counts what is in the Trash"
+        );
+        assert_eq!(
+            count(""),
+            Some(2),
+            "the library root does not roll up its Trash"
+        );
         assert_eq!(count("Day1"), Some(1));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn emptying_the_trash_moves_the_file_and_removes_the_original() {
-        let dir =
-            std::env::temp_dir().join(format!("blinkview-sys-trash-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("blinkview-sys-trash-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let from = dir.join("a.jpg");
         std::fs::create_dir_all(&dir).unwrap();
@@ -4182,7 +4623,10 @@ mod tests {
         let dest = dir.join("system").join("a.jpg");
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         move_to_system_trash(&from, &dest).unwrap();
-        assert!(!from.exists(), "the original must not linger in the library Trash");
+        assert!(
+            !from.exists(),
+            "the original must not linger in the library Trash"
+        );
         assert_eq!(std::fs::read(&dest).unwrap(), b"photo");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4216,7 +4660,10 @@ mod tests {
     #[test]
     fn capture_time_input_is_strict_but_accepts_picker_precision() {
         let with_seconds = parse_capture_datetime("2026-08-19T14:03:27").unwrap();
-        assert_eq!(with_seconds.format("%Y-%m-%d %H:%M:%S").to_string(), "2026-08-19 14:03:27");
+        assert_eq!(
+            with_seconds.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-08-19 14:03:27"
+        );
         let minute = parse_capture_datetime("2026-08-19T14:03").unwrap();
         assert_eq!(minute.format("%S").to_string(), "00");
         assert!(parse_capture_datetime("next Tuesday").is_err());
@@ -4225,7 +4672,9 @@ mod tests {
 
     #[test]
     fn duplicate_batches_are_days_or_conservative_trip_weeks() {
-        let at = chrono::DateTime::parse_from_rfc3339("2026-08-19T14:03:27Z").unwrap().timestamp();
+        let at = chrono::DateTime::parse_from_rfc3339("2026-08-19T14:03:27Z")
+            .unwrap()
+            .timestamp();
         let (id, title, detail) = duplicate_batch(Some(at), None);
         assert_eq!(id, "day:2026-08-19");
         assert_eq!(title, "19 August");
@@ -4241,7 +4690,9 @@ mod tests {
         assert!(release_url_is_safe(
             "https://github.com/notdefined-inc/blinkview/releases/tag/v0.1.0"
         ));
-        assert!(!release_url_is_safe("https://example.com/releases/tag/v0.1.0"));
+        assert!(!release_url_is_safe(
+            "https://example.com/releases/tag/v0.1.0"
+        ));
         assert!(!release_url_is_safe(
             "https://github.com/notdefined-inc/blinkview/releases/../../other"
         ));

@@ -39,14 +39,22 @@ pub fn thumb_path_in(vault: &std::path::Path, hash: &str) -> std::path::PathBuf 
 /// Render a single thumbnail. Public so the desktop app can produce one on demand
 /// when the grid asks for it, rather than requiring a full pre-pass first.
 pub fn render_to(src: &std::path::Path, dst: &std::path::Path, is_video: bool) -> Result<()> {
-    if is_video { render_video(src, dst) } else { render_one(src, dst) }
+    if is_video {
+        render_video(src, dst)
+    } else {
+        render_one(src, dst)
+    }
 }
 
 /// Write a thumbnail from pixels already decoded, applying the rotation still owed.
 ///
 /// The shared-decode entry point (ADR-0013): the analysis pass has the frame in hand
 /// and must not open the file again to get it.
-pub fn render_from_rgb(img: &image::RgbImage, orientation: u16, dst: &std::path::Path) -> Result<()> {
+pub fn render_from_rgb(
+    img: &image::RgbImage,
+    orientation: u16,
+    dst: &std::path::Path,
+) -> Result<()> {
     let (w, h) = (img.width(), img.height());
     let scale = THUMB_LONG as f32 / w.max(h) as f32;
     let shrunk = if scale < 1.0 {
@@ -153,7 +161,11 @@ pub fn render_preview(src: &std::path::Path, dst: &std::path::Path) -> Result<bo
             Err(_) => (imageio::load_rgb(src)?, 1, true),
         },
         None if imageio::needs_conversion(src) => (imageio::load_rgb(src)?, 1, true),
-        None => (imageio::load_rgb_unrotated(src)?, imageio::orientation(src), true),
+        None => (
+            imageio::load_rgb_unrotated(src)?,
+            imageio::orientation(src),
+            true,
+        ),
     };
     let (w, h) = (img.width(), img.height());
     // Only a full decode knows the source is small; an embedded preview said to be
@@ -185,8 +197,11 @@ pub fn render_preview(src: &std::path::Path, dst: &std::path::Path) -> Result<bo
 /// installed .app, which is where the packaged build silently produced no video
 /// thumbnails at all. These are the usual install prefixes for Homebrew on Apple
 /// silicon, Homebrew on Intel, and MacPorts or hand-built copies.
-const FFMPEG_FALLBACKS: &[&str] =
-    &["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"];
+const FFMPEG_FALLBACKS: &[&str] = &[
+    "/opt/homebrew/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+    "/opt/local/bin/ffmpeg",
+];
 
 /// The environment variable naming an exact ffmpeg to use.
 ///
@@ -262,7 +277,12 @@ pub fn render_video_with(
     let out = std::process::Command::new(bin)
         .args(["-loglevel", "error", "-y", "-ss", "00:00:01", "-i"])
         .arg(src)
-        .args(["-frames:v", "1", "-vf", &format!("scale='min({THUMB_LONG},iw)':-2")])
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale='min({THUMB_LONG},iw)':-2"),
+        ])
         .arg(dst)
         .output()
         .context("running ffmpeg")?;
@@ -299,7 +319,13 @@ pub fn build_with_progress(
     let todo: Vec<(bool, std::path::PathBuf, std::path::PathBuf)> = rows
         .iter()
         .filter(|r| r.kind == "photo" || (r.kind == "video" && ffmpeg.is_some()))
-        .map(|r| (r.kind == "video", lib.abs(&r.path), thumb_path(lib, &r.hash)))
+        .map(|r| {
+            (
+                r.kind == "video",
+                lib.abs(&r.path),
+                thumb_path(lib, &r.hash),
+            )
+        })
         .filter(|(_, _, dst)| !dst.exists())
         .collect();
 
@@ -412,7 +438,10 @@ mod tests {
         .save(&big)
         .unwrap();
         let dst = d.join("p-big.jpg");
-        assert!(render_preview(&big, &dst).unwrap(), "a large source makes a preview");
+        assert!(
+            render_preview(&big, &dst).unwrap(),
+            "a large source makes a preview"
+        );
         let (w, h) = image::image_dimensions(&dst).unwrap();
         assert_eq!(w.max(h), PREVIEW_LONG);
 
@@ -452,7 +481,11 @@ mod tests {
             image::Rgb([10, 20, 30]),
         ));
         let mut bytes = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg).unwrap();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Jpeg,
+        )
+        .unwrap();
         let src = d.join("small.arw");
         std::fs::write(&src, &bytes).unwrap();
 
