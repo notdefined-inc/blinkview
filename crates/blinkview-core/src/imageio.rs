@@ -227,24 +227,35 @@ pub fn load_rgb(path: &Path) -> Result<RgbImage> {
         }
     }
     if needs_conversion(path) {
-        let tmp = std::env::temp_dir().join(format!(
-            "blinkview-convert-{}-{}.jpg",
-            std::process::id(),
-            path.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
-        ));
-        convert_to_jpeg(path, &tmp)?;
-        let img: DynamicImage = image::ImageReader::open(&tmp)?.with_guessed_format()?.decode()?;
-        // `sips` *carries the EXIF orientation tag across* rather than baking the
-        // rotation into the pixels — verified: a 4032x3024 HEIC with tag 6 converts to
-        // a 4032x3024 JPEG still tagged 6. Browsers honour the tag, so the full-size
-        // view looked right while our thumbnails came out rotated. Read it from the
-        // converted file and apply it ourselves.
-        let o = orientation(&tmp);
-        let _ = std::fs::remove_file(&tmp);
-        return Ok(apply_rgb(img.to_rgb8(), o));
+        return load_rgb_converted(path);
     }
     let img: DynamicImage = image::ImageReader::open(path)?.with_guessed_format()?.decode()?;
     Ok(apply_rgb(img.to_rgb8(), orientation(path)))
+}
+
+/// Decode by having macOS transcode the file first.
+///
+/// `sips` renders HEIC and every RAW format we claim — and for RAW it renders the
+/// sensor at full resolution, where the embedded preview can be far smaller than the
+/// photograph (ARW 1616px, RAF 1920px). It fails where `sips` does not exist, which
+/// is everywhere but macOS, so callers wanting a cross-platform answer fall back to
+/// the embedded preview.
+pub(crate) fn load_rgb_converted(path: &Path) -> Result<RgbImage> {
+    let tmp = std::env::temp_dir().join(format!(
+        "blinkview-convert-{}-{}.jpg",
+        std::process::id(),
+        path.file_stem().and_then(|s| s.to_str()).unwrap_or("x")
+    ));
+    convert_to_jpeg(path, &tmp)?;
+    let img: DynamicImage = image::ImageReader::open(&tmp)?.with_guessed_format()?.decode()?;
+    // `sips` *carries the EXIF orientation tag across* rather than baking the
+    // rotation into the pixels — verified: a 4032x3024 HEIC with tag 6 converts to
+    // a 4032x3024 JPEG still tagged 6. Browsers honour the tag, so the full-size
+    // view looked right while our thumbnails came out rotated. Read it from the
+    // converted file and apply it ourselves.
+    let o = orientation(&tmp);
+    let _ = std::fs::remove_file(&tmp);
+    Ok(apply_rgb(img.to_rgb8(), o))
 }
 
 /// As [`load_rgb`], but without applying EXIF orientation.

@@ -136,20 +136,30 @@ fn vault_preview_in(vault: &std::path::Path, hash: &str) -> std::path::PathBuf {
 /// Render the lightbox preview: a [`PREVIEW_LONG`] JPEG derived once, on first view.
 ///
 /// Returns `false` when no derived file was written because the source is already at
-/// or below [`PREVIEW_LONG`] and the webview can decode it as-is — the original is
-/// then the same view for none of the cost. HEIC always converts (the webview cannot
-/// decode it at any size), and an embedded camera preview of 2,000 px or more is used
-/// in preference to a full decode, exactly as thumbnails do.
+/// or below [`PREVIEW_LONG`] *and the webview can decode it as-is* — the original is
+/// then the same view for none of the cost. A format the webview cannot decode (HEIC,
+/// camera RAW) is never its own preview at any size: it always converts. An embedded
+/// camera preview of 2,000 px or more is used in preference to a full decode, exactly
+/// as thumbnails do; a RAW whose embedded preview is smaller (ARW 1616px, RAF 1920px)
+/// goes through `sips` instead, which renders the sensor at full resolution rather
+/// than stretching the small preview.
 pub fn render_preview(src: &std::path::Path, dst: &std::path::Path) -> Result<bool> {
     let (img, o, full_decode) = match imageio::camera_preview(src, PREVIEW_LONG) {
         Some(preview) => (preview, imageio::orientation(src), false),
+        // A RAW whose embedded preview is under PREVIEW_LONG is better served by a
+        // full conversion where one exists; elsewhere the small preview stands.
+        None if crate::raw::is_raw(src) => match imageio::load_rgb_converted(src) {
+            Ok(img) => (img, 1, true),
+            Err(_) => (imageio::load_rgb(src)?, 1, true),
+        },
         None if imageio::needs_conversion(src) => (imageio::load_rgb(src)?, 1, true),
         None => (imageio::load_rgb_unrotated(src)?, imageio::orientation(src), true),
     };
     let (w, h) = (img.width(), img.height());
     // Only a full decode knows the source is small; an embedded preview said to be
-    // at least PREVIEW_LONG may still stand in for a much larger original.
-    if full_decode && w.max(h) <= PREVIEW_LONG && o == 1 {
+    // at least PREVIEW_LONG may still stand in for a much larger original. A source
+    // the webview cannot decode is never its own preview, whatever its size.
+    if full_decode && w.max(h) <= PREVIEW_LONG && o == 1 && !imageio::needs_conversion(src) {
         return Ok(false);
     }
     let scale = PREVIEW_LONG as f32 / w.max(h) as f32;
@@ -420,6 +430,38 @@ mod tests {
             "a small source needs no derived file"
         );
         assert!(!dst2.exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ARW and RAF showed a broken image in the lightbox: their embedded previews
+    /// (1616px, 1920px) are under `PREVIEW_LONG`, so the "already small enough" shortcut
+    /// fired and served the raw bytes straight to a webview that cannot decode them. The
+    /// shortcut must never fire for a format `needs_conversion`, whatever its size.
+    ///
+    /// Real RAW sensor data isn't available to a unit test, so this stands a plain JPEG
+    /// under a `.arw` name: `raw::preview` won't recognise it as a RAW container (wrong
+    /// header) and falls through to the same `sips`-conversion path a genuine small-preview
+    /// RAW takes, exercising the exact branch and shortcut condition that was fixed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_raw_extension_never_takes_the_small_source_shortcut() {
+        let d = tmpdir("raw-shortcut");
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            800,
+            600,
+            image::Rgb([10, 20, 30]),
+        ));
+        let mut bytes = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg).unwrap();
+        let src = d.join("small.arw");
+        std::fs::write(&src, &bytes).unwrap();
+
+        let dst = d.join("p-small-arw.jpg");
+        assert!(
+            render_preview(&src, &dst).unwrap(),
+            "a RAW-named source must always get a derived, webview-decodable preview"
+        );
+        assert!(dst.exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
