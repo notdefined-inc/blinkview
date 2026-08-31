@@ -35,7 +35,7 @@ fi
 # and is not one.
 preflight() {
   local missing=()
-  for tool in curl tar make cc; do
+  for tool in curl tar make cc git; do
     command -v "$tool" >/dev/null || missing+=("$tool")
   done
   # ffmpeg locates libx264 only through pkg-config; there is no --with-x264 escape.
@@ -60,25 +60,60 @@ sha256() { if command -v shasum >/dev/null; then shasum -a 256 "$1" | cut -d' ' 
 
 # A source whose checksum does not match is never unpacked, let alone built and signed
 # into the bundle. This is the whole reason the sources are pinned.
+#
+# `--retry` only covers curl's own transport failures (timeouts, 5xx, resets), not a
+# checksum mismatch — retried here too, in case a CDN edge served one bad copy of an
+# otherwise-static file.
 fetch() {
   local url="$1" want="$2" dest="$3"
-  [[ -f "$dest" ]] || curl -fsSL --retry 3 -o "$dest" "$url"
-  local got; got="$(sha256 "$dest")"
-  if [[ "$got" != "$want" ]]; then
-    echo "checksum mismatch for $url" >&2
+  local attempt got
+  for attempt in 1 2 3; do
+    [[ -f "$dest" ]] || curl -fsSL --retry 3 -o "$dest" "$url"
+    got="$(sha256 "$dest")"
+    if [[ "$got" == "$want" ]]; then
+      echo "verified $(basename "$dest")"
+      return 0
+    fi
+    echo "checksum mismatch for $url (attempt $attempt/3)" >&2
     echo "  expected $want" >&2
     echo "  actual   $got" >&2
     rm -f "$dest"
+    (( attempt < 3 )) && sleep 3
+  done
+  echo "giving up on $url after 3 attempts" >&2
+  exit 1
+}
+
+# x264 is not a `fetch`: see the note in ffmpeg.lock. GitLab's commit-archive endpoint
+# regenerates the tarball per request rather than serving a fixed file — three fetches
+# of the same URL, seconds apart, returned three different SHA-256s — so no checksum
+# of *that* is trustworthy at any retry count. `git fetch` of the exact commit sidesteps
+# the archive step entirely: git's transfer protocol verifies the received objects hash
+# to the commit requested, or the fetch fails outright.
+fetch_x264_commit() {
+  local url="$1" commit="$2" dest="$3"
+  if [[ -d "$dest/.git" ]] && [[ "$(git -C "$dest" rev-parse HEAD 2>/dev/null)" == "$commit" ]]; then
+    echo "verified x264 @ $commit (already checked out)"
+    return 0
+  fi
+  rm -rf "$dest"
+  git init -q "$dest"
+  git -C "$dest" fetch -q --depth 1 "$url" "$commit"
+  git -C "$dest" checkout -q FETCH_HEAD
+  local got; got="$(git -C "$dest" rev-parse HEAD)"
+  if [[ "$got" != "$commit" ]]; then
+    echo "x264 checkout landed on $got, expected $commit" >&2
+    rm -rf "$dest"
     exit 1
   fi
-  echo "verified $(basename "$dest")"
+  echo "verified x264 @ $commit"
 }
 
 mkdir -p "$WORK" "$OUT_DIR"
 cd "$WORK"
 
 fetch "$FFMPEG_URL" "$FFMPEG_SHA256" "ffmpeg-$FFMPEG_VERSION.tar.xz"
-fetch "$X264_URL"   "$X264_SHA256"   "x264-$X264_COMMIT.tar.bz2"
+fetch_x264_commit "$X264_GIT" "$X264_COMMIT" x264-src
 
 # Upstream also signs the release. Checked when gpg and the key are available; absence
 # of gpg is not fatal because the pinned checksum is the primary guarantee.
@@ -93,8 +128,6 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 JOBS="$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu || echo 4)"
 
 if [[ ! -f "$PREFIX/lib/libx264.a" ]]; then
-  rm -rf x264-src && mkdir x264-src
-  tar xf "x264-$X264_COMMIT.tar.bz2" -C x264-src --strip-components=1
   ( cd x264-src && ./configure --prefix="$PREFIX" --enable-static --enable-pic \
       --disable-cli --disable-opencl && make -j"$JOBS" && make install )
 fi

@@ -6,7 +6,7 @@
 # publishes two different SHA-256 values for the file it serves, neither matching it.
 # A binary that is code-signed into our bundle has to be one we can account for.
 #
-# Checksums were taken from a download verified to be byte-identical across two
+# FFMPEG_SHA256 was taken from a download verified to be byte-identical across two
 # independent fetches. ffmpeg.org publishes a GPG signature but no checksum sidecar;
 # build-ffmpeg.sh verifies that signature too when gpg is available.
 
@@ -18,9 +18,17 @@ FFMPEG_SIG=https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz.asc
 # The only external library. Everything in criterion 7 decodes natively; x264 is here
 # solely to *encode* H.264 for hover previews and the playback transcode.
 # Pinned to a commit: `stable` is a branch and moves.
+#
+# Fetched by `git fetch <commit>`, not as a checksummed archive download like ffmpeg
+# above — verified live on 2026-08-31 that GitLab's `/-/archive/<ref>/….tar.bz2`
+# endpoint is not a fixed file: three fetches of the identical URL, seconds apart,
+# returned three different SHA-256s (one of which happened to be what a prior fetch
+# had pinned here, which is how a release build failed a checksum that was never
+# actually wrong). Git's own object model doesn't have that problem: asking for one
+# exact commit hash either returns a tree that hashes to it or the fetch fails, with
+# no separate checksum needed.
 X264_COMMIT=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
-X264_URL=https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2
-X264_SHA256=6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224
+X264_GIT=https://code.videolan.org/videolan/x264.git
 
 # Licence position, recorded so it is auditable rather than assumed:
 # ffmpeg configured --enable-gpl with libx264 produces a GPLv2-or-later binary, which is

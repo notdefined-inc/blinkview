@@ -774,7 +774,23 @@ face alone, which is the intended bias. Reproduce with
   Verified live: a 4000x1848 JPEG went from a 2000x924 preview to its true 1848x4000 on
   zoom, and `sample.cr3`/`sample.arw` in `rawlib` went from the 2000px derived preview to
   the full 6000x4000 `sips` render, all with no console errors. Stepping to the next
-  photo still resets to the fast preview.
+  photo still resets to the fast preview. Follow-up: the only loading cue was a 0.4px
+  blur invisible against an already-upscaled zoomed image, and RAW/HEIC's `sips` step
+  measured ~0.8s on a real CR2 — long enough with no visible change to read as broken.
+  The zoom label now says "349% · loading full quality…" while it's in flight, and a
+  failed one-shot fetch resets so the next zoom past 1x retries instead of being stuck.
+- 2026-08-31 The release build's macOS job was failing `Build ffmpeg` with a x264
+  checksum mismatch. Root cause verified live, not assumed: three fetches of the
+  identical GitLab commit-archive URL, seconds apart, returned three different SHA-256s
+  — GitLab generates that endpoint per request rather than serving a fixed file, so no
+  checksum of it can be trusted at any retry count, and the pin itself was never wrong.
+  x264 is now fetched by `git fetch <commit>` instead (`tools/ffmpeg.lock`,
+  `tools/build-ffmpeg.sh`) — git's transfer protocol verifies the received objects hash
+  to the exact commit requested or fails outright, which is a stronger guarantee than a
+  downloaded archive's checksum and sidesteps GitLab's archive generation entirely.
+  `FFMPEG_URL`'s fetch also now retries on a checksum mismatch (not just curl's own
+  transport failures), as a generic safety net against a bad CDN edge. Verified with a
+  full local rebuild (`FORCE=1 tools/build-ffmpeg.sh`) and `tools/check-ffmpeg.sh`.
 - 2026-08-31 Peeking and knowing a folder's size before adding it. A folder dropped on
   the window — or a photograph opened from Finder — opens a **read-only peek**: the
   files directly inside it, ordered by filename, with no marker, no watcher, no
