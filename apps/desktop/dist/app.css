@@ -1113,3 +1113,82 @@ body.dropping::after{
 .remote-qr svg{display:block;width:216px;height:216px}
 .remote-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
   word-break:break-all;text-align:center;color:var(--ink-dim)}
+
+/* ---------------- mobile & touch (spec 2026-08-31-mobile-responsive) ----------------
+   One layout breakpoint at 760px, one pointer query for touch. Nothing above the
+   breakpoint changes: every rule here is inside a media query or a coarse-pointer
+   guard. Tokens only, per DESIGN.md. */
+html, body { overscroll-behavior: none; }
+button, .row, .cell, .mini, .icon-btn, .s-tool, input, select, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* --- drawer: the sidebar slides, it never disappears from the DOM --- */
+#btn-nav{ display:none; }   /* desktop never sees the hamburger */
+#nav-scrim{
+  position:fixed;inset:var(--tb) 0 0 0;z-index:44;display:block;
+  background:rgba(4,4,8,.5);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+}
+#nav-scrim[hidden]{display:none}
+body.nav-open #nav-scrim{animation:navfade .18s var(--ease)}
+@keyframes navfade{from{opacity:0}}
+
+/* --- phone layout --- */
+@media (max-width:760px){
+  :root{ --tb:52px; --side:100vw; }
+  .titlebar{ grid-template-columns:auto 1fr auto; gap:var(--s2); padding:0 var(--s2); }
+  .titlebar[data-tauri-drag-region]{ -webkit-app-region:no-drag; }
+
+  /* hamburger: hidden on desktop by [hidden]; shown only here */
+  #btn-nav{ display:grid !important; width:40px;height:40px; }
+  #btn-nav svg{ width:18px;height:18px }
+  .wordmark{ display:none }
+  .logowrap{ display:none }          /* the hamburger carries the corner now */
+  .searchwrap, .searchwrap input{ min-width:0; flex:1; }
+  .tb-right{ gap:var(--s2); }
+  .askbtn span, .askbtn kbd{ display:none }
+  .askbtn{ padding:0 var(--s3); }
+  .tb-left{ gap:var(--s2); padding-left:calc(var(--s2) + env(safe-area-inset-left)); }
+  .titlebar{ padding-right:calc(var(--s2) + env(safe-area-inset-right)); }
+
+  /* sidebar becomes an off-canvas drawer under the titlebar */
+  .shell{ grid-template-columns:1fr; }
+  .sidebar{
+    position:fixed; top:var(--tb); bottom:0; left:0; z-index:45;
+    width:min(320px,86vw); border-right:1px solid var(--stroke);
+    transform:translateX(-102%); transition:transform .22s var(--ease);
+    padding-bottom:calc(var(--s8) + env(safe-area-inset-bottom));
+    will-change:transform;
+  }
+  body.nav-open .sidebar{ transform:none; box-shadow:0 0 48px rgba(0,0,0,.45); }
+
+  /* the grid takes every pixel */
+  #main, .stage, .content, .pgrid-wrap { width:100%; }
+  .libhead{ padding:var(--s3) var(--s4) var(--s2); min-height:46px; }
+
+  /* duplicate review's day column stacks above the compare panes */
+  .dup-body{ grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); }
+  .dup-days{ display:flex; overflow-x:auto; gap:var(--s2); padding:var(--s2) var(--s3); }
+  .dup-review{ grid-template-rows:56px minmax(0,1fr); }
+
+  /* sheets breathe on a narrow screen */
+  .sheet{ padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0; }
+  .sheet-panel{ max-height:86dvh; overflow:auto; }
+
+  /* lightbox chrome stays reachable with a thumb; viewer stays dark per DESIGN.md */
+  .lb-top{ padding-top:env(safe-area-inset-top); }
+  .lb-bar, .lb-actions{ flex-wrap:wrap; }
+}
+
+/* --- touch affordances, independent of width --- */
+@media (pointer:coarse){
+  .icon-btn{ width:40px;height:40px; }
+  .icon-btn svg{ width:18px;height:18px }
+  .mini{ min-width:36px;min-height:36px; }
+  .row{ padding:10px var(--s2); }
+  /* arrows are for mice; phones swipe */
+  .lb-nav{ display:none; }
+  .s-tool{ min-height:38px; }
+  ::-webkit-scrollbar{ width:0;height:0 }
+}

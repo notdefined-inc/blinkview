@@ -4192,6 +4192,118 @@ if (REMOTE) {
     if (b) b.hidden = true;
   }
 }
+
+/* ---------------- touch (spec 2026-08-31-mobile-responsive) ----------------
+   Drawer, long-press menus and lightbox gestures. Everything here is inert on the
+   desktop: the drawer button only exists under the width breakpoint, the long-press
+   timer only arms on coarse pointers, and the lightbox already had no touch story
+   to conflict with. */
+
+// --- the drawer ---
+{
+  const btn = $("#btn-nav"), scrim = $("#nav-scrim");
+  if (btn && scrim) {
+    const setNav = open => {
+      document.body.classList.toggle("nav-open", open);
+      btn.setAttribute("aria-expanded", String(open));
+      scrim.hidden = !open;
+    };
+    btn.onclick = () => setNav(!document.body.classList.contains("nav-open"));
+    scrim.onclick = () => setNav(false);
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && document.body.classList.contains("nav-open")) setNav(false);
+    });
+    // Choosing something in the drawer means the drawer's job is done.
+    $("#sidebar").addEventListener("click", e => {
+      if (e.target.closest(".row, .srcopen, .mini")) setNav(false);
+    });
+  }
+}
+
+// --- long-press is the touch's right-click ---
+{
+  // Platforms that also fire a native contextmenu on the same hold would open the
+  // menu twice, so a menu opened by the timer silences that path for a beat.
+  let lastSynthetic = 0;
+  const openPhotoCtx = (hash, x, y) => {
+    const p = S.view.find(x => x.hash === hash);
+    if (!p) return;
+    if (!S.sel.has(p.hash)) { S.sel.clear(); toggleSel(p); }
+    showCtx(x, y);
+  };
+  let timer = null, sx = 0, sy = 0, target = null, kind = null;
+  document.addEventListener("touchstart", e => {
+    if (!matchMedia("(pointer: coarse)").matches || e.touches.length !== 1) return;
+    const cell = e.target.closest?.(".cell");
+    const srcrow = e.target.closest?.(".srcrow");
+    if (!cell && !srcrow) return;
+    const t = e.touches[0];
+    sx = t.clientX; sy = t.clientY; target = cell ?? srcrow; kind = cell ? "photo" : "source";
+    timer = setTimeout(() => {
+      timer = null;
+      lastSynthetic = Date.now();
+      if (kind === "photo") openPhotoCtx(target.dataset.hash, sx, sy);
+      else {
+        const s = S.sources.find(x => x.path === target.dataset.src);
+        if (s) showSourceCtx({ clientX: sx, clientY: sy, preventDefault() {}, stopPropagation() {} }, s);
+      }
+    }, 500);
+  }, { passive: true });
+  const cancel = e => {
+    if (!timer) return;
+    if (e?.touches?.[0]) {
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - sx, t.clientY - sy) > 12) { clearTimeout(timer); timer = null; }
+    } else { clearTimeout(timer); timer = null; }
+  };
+  document.addEventListener("touchmove", cancel, { passive: true });
+  document.addEventListener("touchend", () => cancel(), { passive: true });
+  document.addEventListener("touchcancel", () => cancel(), { passive: true });
+  document.addEventListener("contextmenu", e => {
+    if (Date.now() - lastSynthetic < 800) { e.preventDefault(); lastSynthetic = 0; }
+  });
+}
+
+// --- lightbox: swipe navigates, pinch zooms, double-tap toggles 1x ---
+{
+  const stage = document.querySelector(".lb-stage");
+  if (stage) {
+    let mode = null, sx = 0, sy = 0, dx = 0, startDist = 0, lastTap = 0;
+    const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    stage.addEventListener("touchstart", e => {
+      if (e.touches.length === 1) {
+        mode = "pending"; sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0;
+      } else if (e.touches.length === 2) {
+        mode = "pinch"; startDist = dist(e.touches[0], e.touches[1]);
+        e.preventDefault();
+      }
+    }, { passive: false });
+    stage.addEventListener("touchmove", e => {
+      if (mode === "pinch" && e.touches.length === 2) {
+        e.preventDefault();
+        const f = dist(e.touches[0], e.touches[1]) / startDist;
+        zoomAt(f, (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                 (e.touches[0].clientY + e.touches[1].clientY) / 2);
+        startDist = dist(e.touches[0], e.touches[1]);
+      } else if (mode === "pending" && e.touches.length === 1) {
+        dx = e.touches[0].clientX - sx;
+        if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(e.touches[0].clientY - sy) * 1.4) mode = "swipe";
+      }
+    }, { passive: false });
+    stage.addEventListener("touchend", e => {
+      if (mode === "swipe" && S.zoom <= 1) {
+        if (dx < -48) step(1); else if (dx > 48) step(-1);
+      } else if (mode === "pending") {
+        const now = Date.now(), t = e.changedTouches[0];
+        if (now - lastTap < 320) {
+          zoomAt(S.zoom > 1 ? 1 / S.zoom : 2.5 / S.zoom, t.clientX, t.clientY);
+          lastTap = 0;
+        } else lastTap = now;
+      }
+      mode = null;
+    }, { passive: true });
+  }
+}
 $("#sheet-close").onclick = () => ($("#sheet").hidden = true);
 $("#sheet").onclick = e => { if (e.target.id === "sheet") $("#sheet").hidden = true; };
 $("#lb-close").onclick = closeLightbox;

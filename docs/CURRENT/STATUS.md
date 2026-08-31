@@ -2,7 +2,23 @@
 
 _Last updated: 2026-08-31 · shipping version 0.1.4_
 
-## Remote control (new)
+## The phone gets the real UI (new)
+
+**Responsive, not a second app.** One breakpoint (760px) turns the sidebar into an
+off-canvas drawer behind a hamburger, drops the titlebar to 52px, and lets the
+justified grid — already width-agnostic — take every pixel; a coarse-pointer query
+bumps touch targets to 40px, hides the lightbox arrows in favour of swipe, and adds
+pinch-zoom, double-tap-to-zoom and long-press context menus. Desktop above the
+breakpoint is unchanged pixel for pixel (screenshot-compared, not assumed). Verified
+through the bridge at 390×844 with rendered screenshots, two critique passes — pass 1
+caught the logo crowding the search pill and the theme button clipping. The
+lightbox gestures and long-press are wired behind `pointer: coarse` and await
+hands-on phone confirmation; everything else was seen working. Spec:
+docs/SPECS/done/2026-08-31-mobile-responsive.md. `BLINKVIEW_DIST_DIR` lets the bridge
+serve the frontend from a directory, so frontend work over the bridge is
+edit-and-reload instead of a rebuild.
+
+## Remote control
 
 **Control from your phone.** The titlebar's QR button starts the remote bridge
 (ADR-0021, spec docs/SPECS/done/2026-08-31-remote-control.md): a QR code the phone's

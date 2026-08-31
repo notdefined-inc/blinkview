@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Blinkview</title>
 <script>
 /* Theme must be on <html> before first paint, or the wrong theme flashes. The
@@ -14,6 +14,11 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
 <body>
 <header class="titlebar" data-tauri-drag-region>
   <div class="tb-left">
+    <button class="icon-btn" id="btn-nav" title="Library" aria-label="Show sources, people and folders" aria-expanded="false">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
     <span class="logowrap" aria-hidden="true">
       <img class="logomark" src="logo.png" alt="" width="26" height="26" decoding="async">
     </span>
@@ -91,6 +96,7 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
 </div>
 
 <div class="shell">
+  <div id="nav-scrim" hidden></div>
   <aside class="sidebar" id="sidebar">
     <section class="nav-block">
       <div class="nav-head"><span>Sources</span><button class="mini" id="btn-add" title="Add a folder">＋</button></div>

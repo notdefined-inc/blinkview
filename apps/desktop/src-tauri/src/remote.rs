@@ -427,16 +427,47 @@ static DIST: LazyLock<HashMap<&'static str, (&'static str, &'static [u8])>> = La
 
 /// The served index, with the shim loaded ahead of app.js so `window.__TAURI__`
 /// exists before the frontend dereferences it.
-fn index_page() -> std::borrow::Cow<'static, str> {
-    const MARKER: &str = r#"<script src="app.js""#;
-    const SHIM: &str = r#"<script src="remote.js"></script>"#;
-    if INDEX_HTML.contains(MARKER) {
-        std::borrow::Cow::Owned(INDEX_HTML.replacen(MARKER, &format!("{SHIM}{MARKER}"), 1))
+const MARKER: &str = r#"<script src="app.js""#;
+const SHIM: &str = r#"<script src="remote.js"></script>"#;
+
+fn inject_shim(html: &str) -> String {
+    if html.contains(MARKER) {
+        html.replacen(MARKER, &format!("{SHIM}{MARKER}"), 1)
     } else {
         // The marker moved: inject at the end of <head> rather than serve a shimless
         // page that cannot reach the bridge.
-        std::borrow::Cow::Owned(INDEX_HTML.replacen("</head>", &format!("{SHIM}</head>"), 1))
+        html.replacen("</head>", &format!("{SHIM}</head>"), 1)
     }
+}
+
+fn index_page() -> std::borrow::Cow<'static, str> {
+    match dist_from_disk("index.html") {
+        Some((_, bytes)) => std::borrow::Cow::Owned(inject_shim(&String::from_utf8_lossy(&bytes))),
+        None => std::borrow::Cow::Owned(inject_shim(INDEX_HTML)),
+    }
+}
+
+/// Frontend files served from a directory instead of the compile-time embed.
+///
+/// `BLINKVIEW_DIST_DIR` is read per request and never persisted: it exists so
+/// frontend work over the bridge is an edit + reload instead of a rebuild, and it
+/// is whoever launched the process who points it somewhere. Only plain names inside
+/// that directory are served — no separators, no escapes.
+fn dist_from_disk(name: &str) -> Option<(String, Vec<u8>)> {
+    let dir = std::env::var_os("BLINKVIEW_DIST_DIR")?;
+    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+        return None;
+    }
+    let bytes = std::fs::read(std::path::Path::new(&dir).join(name)).ok()?;
+    let mime = match name.rsplit('.').next()? {
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "png" => "image/png",
+        "html" => "text/html; charset=utf-8",
+        _ => return None,
+    };
+    Some((mime.to_owned(), bytes))
 }
 
 use axum::extract::{Request, State};
@@ -518,6 +549,9 @@ async fn static_file(State(bs): State<BridgeState>, headers: HeaderMap, req: Req
         return forbid("Not paired.");
     }
     let path = req.uri().path().trim_start_matches('/');
+    if let Some((mime, bytes)) = dist_from_disk(path) {
+        return ([(header::CONTENT_TYPE, mime)], bytes).into_response();
+    }
     let Some((mime, bytes)) = DIST.get(path) else {
         if path == "favicon.ico" {
             let (_, png) = DIST.get("logo.png").expect("logo.png is embedded");
