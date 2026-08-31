@@ -3,8 +3,22 @@
 use blinkview_core::{journal::Journal, rename, scan, Library};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// Minimal library of files with camera-style names. No EXIF, so capture time comes
 /// from the filename — which keeps these tests independent of image fixtures.
+/// An isolated cache for a fixture library, beside rather than inside it.
+///
+/// `Library::open` would use the machine's cache root; a test suite that littered
+/// `~/Library/Caches` would be a bug of its own. Beside the fixture keeps it out of
+/// the library tree, where `scan` would index its thumbnails as photographs.
+fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.parent()
+        .unwrap()
+        .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+}
+
 fn fixture(name: &str, files: &[&str]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("blinkview-it-{}-{}", std::process::id(), name));
     let _ = std::fs::remove_dir_all(&dir);
@@ -40,7 +54,7 @@ fn scan_rename_undo_round_trips() {
     let dir = fixture("roundtrip", &["20260816_151256.jpg", "Me/20260818_170334.jpg"]);
     let before = names(&dir);
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     let st = scan::scan(&mut lib, false).unwrap();
     assert_eq!(st.seen, 2);
     assert_eq!(st.hashed, 2);
@@ -66,7 +80,7 @@ fn scan_rename_undo_round_trips() {
 #[test]
 fn rename_preserves_the_year() {
     let dir = fixture("year", &["20260819_131351.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let plan = rename::plan(&lib, rename::DEFAULT_FORMAT).unwrap();
     plan.apply(&mut lib).unwrap();
@@ -82,7 +96,7 @@ fn names_are_unique_across_folders() {
         "unique",
         &["A/20260816_151256.jpg", "B/20260816_151256.jpg", "C/20260816_151256.jpg"],
     );
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let plan = rename::plan(&lib, rename::DEFAULT_FORMAT).unwrap();
     plan.apply(&mut lib).unwrap();
@@ -97,7 +111,7 @@ fn names_are_unique_across_folders() {
 #[test]
 fn survives_a_folder_renamed_externally() {
     let dir = fixture("extmove", &["Person1/20260816_151256.jpg", "Person1/20260816_151257.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
 
     std::fs::rename(dir.join("Person1"), dir.join("Alex")).unwrap();
@@ -114,7 +128,7 @@ fn survives_a_folder_renamed_externally() {
 #[test]
 fn aborts_when_destination_is_missing() {
     let dir = fixture("missingdst", &["a/20260816_151256.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
 
     let mut plan = blinkview_core::Plan::new("move");
@@ -134,13 +148,14 @@ fn aborts_when_destination_is_missing() {
 #[test]
 fn vault_is_disposable() {
     let dir = fixture("disposable", &["20260816_151256.jpg", "Me/20260818_170334.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let before: Vec<_> = lib.index.all().unwrap().iter().map(|r| (r.hash.clone(), r.path.clone())).collect();
+    let vault = lib.vault().to_path_buf();
     drop(lib);
 
-    std::fs::remove_dir_all(dir.join(".blinkview")).unwrap();
-    let mut lib = Library::open(&dir).unwrap();
+    std::fs::remove_dir_all(&vault).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let after: Vec<_> = lib.index.all().unwrap().iter().map(|r| (r.hash.clone(), r.path.clone())).collect();
     assert_eq!(before, after);
@@ -162,7 +177,7 @@ fn editing_keeps_the_original_in_a_visible_folder() {
         .save(dir.join("20260101_120000.jpg"))
         .unwrap();
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let before = std::fs::read(dir.join("20260101_120000.jpg")).unwrap();
 
@@ -206,7 +221,7 @@ fn destructive_editing_keeps_nothing() {
         .save(dir.join("20260101_130000.jpg"))
         .unwrap();
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let e = Edit {
         rotate: Rotate::Cw180,
@@ -231,27 +246,29 @@ fn deleting_the_cache_preserves_names_and_ratings() {
     use blinkview_core::userdata::UserData;
 
     let dir = fixture("disposable-userdata", &["20260101_100000.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let hash = lib.index.all().unwrap()[0].hash.clone();
 
     let mut people = People::default();
     people.add_references("Alex", vec![vec![1.0, 0.0, 0.0]]);
-    people.save(lib.root()).unwrap();
+    lib.save_people(&people).unwrap();
 
     let mut user = UserData::default();
     user.set_rating(&hash, 5);
     user.set_label(&hash, Some("red".into()));
     user.save(lib.root()).unwrap();
+    let vault = lib.vault().to_path_buf();
     drop(lib);
 
-    // The thing the documentation invites the user to do.
-    std::fs::remove_dir_all(dir.join(".blinkview")).unwrap();
+    // The thing the documentation invites the user to do. Deleting it now also takes
+    // the faces the names point at, which is exactly the loss the file must survive.
+    std::fs::remove_dir_all(&vault).unwrap();
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     assert_eq!(
-        People::load(lib.root()).unwrap().people[0].name,
+        lib.people().unwrap().people[0].name,
         "Alex",
         "names must survive deleting the cache"
     );
@@ -270,13 +287,10 @@ fn user_data_is_rescued_from_the_old_location() {
     std::fs::write(vault.join("people.json"),
         br#"{"people":[{"name":"Old","references":[[1.0]]}]}"#).unwrap();
 
-    let lib = Library::open(&dir).unwrap();
+    let lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     assert!(dir.join("blinkview-people.json").exists(), "moved to the root on open");
     assert!(!vault.join("people.json").exists(), "no stale copy left behind");
-    assert_eq!(
-        blinkview_core::faces::people::People::load(lib.root()).unwrap().people[0].name,
-        "Old"
-    );
+    assert_eq!(lib.people().unwrap().people[0].name, "Old");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -286,12 +300,17 @@ fn user_data_is_rescued_from_the_old_location() {
 #[test]
 fn neither_the_current_nor_the_former_cache_is_indexed() {
     let dir = fixture("caches", &["20260101_110000.jpg"]);
+    // Open once, so the library is of the current era: a marker, a cache outside the
+    // photographs, and therefore nothing in-folder for a relocation to claim.
+    drop(Library::open_in(&dir, cache_for(&dir)).unwrap());
+    // Then leave a vault of each name beside the photographs — an older version run
+    // after the move, or a copy of a library that carried one along.
     for cache in [".blinkview", ".openfoto"] {
         std::fs::create_dir_all(dir.join(cache).join("thumbs")).unwrap();
         std::fs::write(dir.join(cache).join("thumbs/deadbeef.jpg"), b"thumbnail").unwrap();
     }
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     let st = scan::scan(&mut lib, false).unwrap();
     assert_eq!(st.seen, 1, "only the photograph is a photograph");
     assert!(
@@ -308,7 +327,7 @@ fn a_library_from_before_the_rename_is_adopted_whole() {
     use blinkview_core::userdata::UserData;
 
     let dir = fixture("rename", &["20260101_110000.jpg", "Day1/20260102_120000.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let hash = lib.index.all().unwrap()[0].hash.clone();
     let mut u = UserData::load(&dir).unwrap();
@@ -317,10 +336,13 @@ fn a_library_from_before_the_rename_is_adopted_whole() {
     std::fs::write(dir.join("blinkview-people.json"),
         br#"{"people":[{"name":"Alex","references":[[1.0]]}]}"#).unwrap();
     std::fs::write(dir.join("Day1/blinkview.json"), br#"{"albums":{},"photos":{}}"#).unwrap();
+    let vault = lib.vault().to_path_buf();
     drop(lib);
 
-    // Put the library back the way the previous name left it.
-    std::fs::rename(dir.join(".blinkview"), dir.join(".openfoto")).unwrap();
+    // Put the library back the way the previous name left it: the cache beside the
+    // photographs, under the old name, with no marker claiming it.
+    std::fs::remove_file(dir.join(blinkview_core::cache::MARKER)).unwrap();
+    std::fs::rename(&vault, dir.join(".openfoto")).unwrap();
     for (from, to) in [
         ("blinkview.json", "openfoto.json"),
         ("blinkview-people.json", "openfoto-people.json"),
@@ -329,24 +351,150 @@ fn a_library_from_before_the_rename_is_adopted_whole() {
         std::fs::rename(dir.join(from), dir.join(to)).unwrap();
     }
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     assert!(!dir.join(".openfoto").exists(), "the old cache is adopted, not left behind");
-    assert!(dir.join(".blinkview/index.sqlite").is_file());
+    // Adopted, then relocated: nothing of blinkview's stays beside the photographs
+    // except the marker.
+    assert!(!dir.join(".blinkview").exists());
+    assert!(lib.vault().join("index.sqlite").is_file());
+    assert!(dir.join(blinkview_core::cache::MARKER).is_file());
     assert_eq!(
         lib.index.all().unwrap().len(),
         2,
         "adopting the cache keeps the index — a rename must not cost a rescan"
     );
     assert_eq!(UserData::load(&dir).unwrap().get(&hash).rating, 5);
-    assert_eq!(
-        blinkview_core::faces::people::People::load(lib.root()).unwrap().people[0].name,
-        "Alex"
-    );
+    assert_eq!(lib.people().unwrap().people[0].name, "Alex");
     // The cascade renames what it reads, so the second open sees one name only.
     lib.user_data().unwrap();
     assert!(dir.join("Day1/blinkview.json").exists());
     assert!(!dir.join("Day1/openfoto.json").exists());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// ADR-0019: the derived cache moves out of the photograph folder, and what it held
+/// arrives intact — index, journal and all — rather than being rebuilt.
+#[test]
+fn the_cache_moves_out_of_the_photographs() {
+    let dir = fixture("adr19-move", &["20260101_090000.jpg", "Trip/20260102_100000.jpg"]);
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let before: Vec<_> = lib.index.all().unwrap().iter().map(|r| r.hash.clone()).collect();
+    // Something only a moved cache could carry: an undo entry, which no rescan
+    // reproduces (ADR-0019's amendment to ADR-0001 — the journal is not derivable).
+    std::fs::create_dir_all(lib.journal_dir()).unwrap();
+    std::fs::write(lib.journal_dir().join("20260101-090000.json"), b"{}").unwrap();
+    let vault = lib.vault().to_path_buf();
+    drop(lib);
+
+    // Put the library back the way a pre-ADR-0019 version left it: its cache beside
+    // the photographs, and no marker claiming it.
+    std::fs::remove_file(dir.join(blinkview_core::cache::MARKER)).unwrap();
+    std::fs::rename(&vault, dir.join(".blinkview")).unwrap();
+
+    let lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
+    assert!(dir.join(blinkview_core::cache::MARKER).is_file(), "the folder is named");
+    assert!(!dir.join(".blinkview").exists(), "nothing of the cache stays behind");
+    assert_eq!(
+        lib.index.all().unwrap().iter().map(|r| r.hash.clone()).collect::<Vec<_>>(),
+        before,
+        "the index arrived — a rename, not a rescan"
+    );
+    assert!(lib.journal_dir().join("20260101-090000.json").is_file(), "the journal arrived");
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(cache_for(&dir)).ok();
+}
+
+/// Renaming a library folder in Finder keeps its cache: the marker travels with it.
+#[test]
+fn a_renamed_folder_keeps_its_cache() {
+    let dir = fixture("adr19-rename", &["20260101_090000.jpg"]);
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let before: Vec<_> = lib.index.all().unwrap().iter().map(|r| r.hash.clone()).collect();
+    let vault = lib.vault().to_path_buf();
+    drop(lib);
+
+    let moved = dir.parent().unwrap().join("adr19-rename-moved");
+    let _ = std::fs::remove_dir_all(&moved);
+    std::fs::rename(&dir, &moved).unwrap();
+
+    let lib = Library::open_in(&moved, cache_for(&dir)).unwrap();
+    assert_eq!(lib.vault(), vault, "the same cache, found by marker not by path");
+    assert_eq!(
+        lib.index.all().unwrap().iter().map(|r| r.hash.clone()).collect::<Vec<_>>(),
+        before,
+        "no rescan for a folder that only changed name"
+    );
+    std::fs::remove_dir_all(&moved).ok();
+    std::fs::remove_dir_all(cache_for(&dir)).ok();
+}
+
+/// A library duplicated in Finder re-indexes, and never touches the original's cache.
+#[test]
+fn a_copied_folder_re_indexes_rather_than_shares() {
+    let dir = fixture("adr19-copy", &["20260101_090000.jpg"]);
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let original = lib.vault().to_path_buf();
+    drop(lib);
+
+    // A Finder-style duplicate: the whole folder, marker and all.
+    let copy = dir.parent().unwrap().join("adr19-copy-dup");
+    let _ = std::fs::remove_dir_all(&copy);
+    copy_dir(&dir, &copy);
+
+    let lib2 = Library::open_in(&copy, cache_for(&dir)).unwrap();
+    assert_ne!(lib2.vault(), original, "the copy must not share the original's cache");
+    assert!(
+        lib2.index.all().unwrap().is_empty(),
+        "the copy starts fresh rather than inheriting photographs it has not scanned"
+    );
+    // And the original still has what it had.
+    let lib1 = Library::open_in(&dir, cache_for(&dir)).unwrap();
+    assert_eq!(lib1.vault(), original);
+    assert_eq!(lib1.index.all().unwrap().len(), 1);
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&copy).ok();
+    std::fs::remove_dir_all(cache_for(&dir)).ok();
+}
+
+/// A library on read-only media opens — it used to be impossible, because opening one
+/// created a directory beside the photographs.
+#[cfg(unix)]
+#[test]
+fn a_read_only_library_opens() {
+    let dir = fixture("adr19-ro", &["20260101_090000.jpg"]);
+    // Everything blinkview needs to write now lives outside the folder.
+    assert!(std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).is_ok());
+    // Both opens happen read-only, which is the situation being tested; restoring
+    // writability in between would let the second open mint a marker and legitimately
+    // claim a different cache.
+    let lib = Library::open_in(&dir, cache_for(&dir)).expect("a read-only folder is a library");
+    assert!(
+        !dir.join(blinkview_core::cache::MARKER).is_file(),
+        "no marker could be written, and that is survivable"
+    );
+    // With no marker the cache is keyed by where the folder is — which must be stable,
+    // or a read-only library starts from scratch on every open.
+    let again = Library::open_in(&dir, cache_for(&dir)).unwrap();
+    assert_eq!(lib.vault(), again.vault(), "the path-derived key is stable across opens");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(cache_for(&dir)).ok();
+}
+
+/// `std::fs::copy`, recursively — what Finder does when someone duplicates a folder.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let dst = to.join(e.file_name());
+        if e.path().is_dir() {
+            copy_dir(&e.path(), &dst);
+        } else {
+            std::fs::copy(e.path(), dst).unwrap();
+        }
+    }
 }
 
 /// ADR-0010: a rating lives beside its photograph, so moving the photograph has to
@@ -360,7 +508,7 @@ fn a_move_carries_metadata_and_undo_brings_it_back() {
     use blinkview_core::userdata::UserDataSet;
 
     let dir = fixture("meta-move", &["Day1/a.jpg", "Day3/keep.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
 
     let hash = lib
@@ -417,24 +565,24 @@ fn a_corrupt_index_is_rebuilt_without_losing_user_data() {
     use blinkview_core::userdata::UserDataSet;
 
     let dir = fixture("corrupt", &["Day1/a.jpg", "Day1/b.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let hash = lib.index.all().unwrap()[0].hash.clone();
 
     let mut set = UserDataSet::load(&dir).unwrap();
     set.edit(&hash, "Day1", |u| u.set_rating(&hash, 5));
     set.save(&dir).unwrap();
+    let db = lib.vault().join("index.sqlite");
     drop(lib);
 
     // Damage the header, which is what a truncated or conflicted sync copy looks like.
     // Scribbling over a page body is *not* enough: quick_check reports "ok" for that,
     // because it validates b-tree structure rather than page contents.
-    let db = dir.join(".blinkview/index.sqlite");
     let mut bytes = std::fs::read(&db).unwrap();
     bytes[..16].copy_from_slice(b"NotADatabase\0\0\0\0");
     std::fs::write(&db, &bytes).unwrap();
 
-    let mut lib = Library::open(&dir).expect("a corrupt index must not be fatal");
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).expect("a corrupt index must not be fatal");
     // Proves the rebuild actually happened rather than the damage going unnoticed:
     // a rebuilt index is empty until it is scanned again.
     assert!(
@@ -457,7 +605,7 @@ fn move_into_plans_only_the_chosen_photographs() {
     use blinkview_core::plan;
 
     let dir = fixture("move-into", &["a.jpg", "b.jpg", "Trip/c.jpg", "Trip/a.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let rows = lib.index.all().unwrap();
     let by_path = |p: &str| rows.iter().find(|r| r.path == p).unwrap().hash.clone();
@@ -481,7 +629,7 @@ fn move_into_plans_only_the_chosen_photographs() {
 fn move_into_refuses_a_destination_the_filesystem_would_reject() {
     use blinkview_core::plan;
     let dir = fixture("move-bad-dest", &["a.jpg"]);
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let h = vec![lib.index.all().unwrap()[0].hash.clone()];
 
@@ -509,12 +657,12 @@ fn a_move_that_cannot_be_journalled_is_rolled_back() {
 
     let dir = fixture("journal-fail", &["Day1/a.jpg", "Day1/b.jpg"]);
     std::fs::create_dir_all(dir.join("Day3")).unwrap();
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     let rows = lib.index.all().unwrap();
 
     // Make the journal directory unwritable by replacing it with a file.
-    let jdir = dir.join(".blinkview/journal");
+    let jdir = lib.journal_dir();
     std::fs::remove_dir_all(&jdir).unwrap();
     std::fs::write(&jdir, b"not a directory").unwrap();
 

@@ -153,6 +153,13 @@ pub fn plan_scoped(lib: &Library, format: &str, only: Option<&[String]>) -> Resu
 mod tests {
     use super::*;
 
+    /// A cache beside the fixture, so a unit test never writes to the machine's.
+    fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.parent()
+            .unwrap()
+            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    }
+
     #[test]
     fn does_not_mistake_a_year_for_a_counter() {
         // The exact bug the dry run caught.
@@ -175,7 +182,7 @@ mod tests {
         for (i, f) in files.iter().enumerate() {
             std::fs::write(d.join(f), format!("file {i}")).unwrap();
         }
-        let mut lib = Library::open(&d).unwrap();
+        let mut lib = Library::open_in(&d, cache_for(&d)).unwrap();
         crate::scan::scan(&mut lib, false).unwrap();
         (d, lib)
     }

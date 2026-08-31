@@ -311,6 +311,13 @@ pub fn apply(lib: &Library, rel_path: &str, edit: &Edit) -> Result<Applied> {
 mod tests {
     use super::*;
 
+    /// A cache beside the fixture, so a unit test never writes to the machine's.
+    fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.parent()
+            .unwrap()
+            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    }
+
     /// The window carries the same five presets, in the units its sliders use
     /// (-100..100 against the core's -1..1). Drift between the two would mean "Warm"
     /// did one thing in the editor and another in a batch, so the two lists are
@@ -343,7 +350,7 @@ mod tests {
         std::fs::write(&raw, b"not really a CR3, and it must survive anyway").unwrap();
         let before = std::fs::read(&raw).unwrap();
 
-        let lib = Library::open(&dir).unwrap();
+        let lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
         let err = match apply(&lib, "IMG_0001.CR3", &edit(Rotate::Cw90)) {
             Err(e) => e.to_string(),
             Ok(_) => panic!("a camera RAW must never be rewritten"),
@@ -472,7 +479,7 @@ mod tests {
         let path = dir.join("20260101_000000.jpg");
         img.save(&path).unwrap();
 
-        let lib = crate::Library::open(&dir).unwrap();
+        let lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
         let mut e = edit(Rotate::Cw90);
         e.keep_original = false;
         // Left half of the rotated (10x40) image.

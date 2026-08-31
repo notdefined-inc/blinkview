@@ -3,6 +3,8 @@
 Date: 2026-08-28
 Status: Accepted (supersedes the first draft of this ADR, see Correction)
 
+Status note (2026-08-31): amended by ADR-0019 — the people file keeps its place at the root and its purpose, but stores face pointers rather than the vectors themselves, which the cache already held.
+
 ## Context
 
 Two things in this project cannot be recomputed from the photographs:

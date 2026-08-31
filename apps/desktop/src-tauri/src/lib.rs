@@ -479,12 +479,12 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         .count();
     // One directory read, not one `stat` per photograph. At 200k photos the old form
     // was 200k syscalls every time the sidebar refreshed.
-    let ready = std::fs::read_dir(lib.root().join(blinkview_core::library::VAULT_DIR).join("thumbs"))
+    let ready = std::fs::read_dir(lib.vault().join("thumbs"))
         .map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "jpg")).count())
         .unwrap_or(0)
         .min(photos);
 
-    let people_file = People::load(lib.root())?;
+    let people_file = lib.people()?;
     let opt = assign::Options::default();
     let mut claimed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for f in lib.all_faces()? {
@@ -736,7 +736,7 @@ fn dir_bytes(p: &std::path::Path) -> u64 {
 async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<SourceData> {
     let root = std::path::PathBuf::from(&path);
     let mut d = SourceData {
-        cache_bytes: dir_bytes(&root.join(blinkview_core::library::VAULT_DIR)),
+        cache_bytes: dir_bytes(&blinkview_core::cache::vault_for(&root)),
         ..Default::default()
     };
     // The metadata is read through the library so the cascade is counted the same way
@@ -757,9 +757,7 @@ async fn source_data(state: tauri::State<'_, AppState>, path: String) -> R<Sourc
             }
         }
     }
-    if let Ok(people) = People::load(&root) {
-        d.people = people.people.len();
-    }
+    d.people = People::named_in(&root);
     Ok(d)
 }
 
@@ -843,7 +841,13 @@ fn remove_source(
 
     let root = std::path::PathBuf::from(&path);
     let mut removed = 0usize;
-    if std::fs::remove_dir_all(root.join(blinkview_core::library::VAULT_DIR)).is_ok() {
+    // The cache left with the photographs (ADR-0019); the marker is blinkview's too,
+    // so it goes as well — there is nothing left for it to name.
+    if std::fs::remove_dir_all(blinkview_core::cache::vault_for(&root)).is_ok() {
+        blinkview_core::cache::forget(&root);
+        removed += 1;
+    }
+    if std::fs::remove_file(root.join(blinkview_core::cache::MARKER)).is_ok() {
         removed += 1;
     }
     for f in walk_metadata(&root) {
@@ -905,7 +909,7 @@ async fn photos(
     person: Option<String>,
 ) -> R<Vec<PhotoInfo>> {
     with_readable(&state, &path, |lib| {
-        let people_file = People::load(lib.root())?;
+        let people_file = lib.people()?;
         let user = lib.user_data()?.clone();
         let opt = assign::Options::default();
         let mut who: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1401,7 +1405,7 @@ async fn clusters(
 ) -> R<Vec<ClusterView>> {
     let sink = emitter(&app, "clusters", &path);
     with(&state, &path, |lib| {
-        let people = People::load(lib.root())?;
+        let people = lib.people()?;
         let p = review::build_with_progress(lib, &people, &assign::Options::default(), distance, &sink)?;
         Ok(p.clusters
             .into_iter()
@@ -1426,7 +1430,7 @@ async fn name_clusters(
     assignments: BTreeMap<usize, String>,
 ) -> R<usize> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         let mut learned = 0;
         for (id, name) in &assignments {
@@ -1436,7 +1440,7 @@ async fn name_clusters(
                 people.add_references(name, refs);
             }
         }
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
         Ok(learned)
     })
 }
@@ -1476,7 +1480,7 @@ async fn people_overview(
     distance: f32,
 ) -> R<PeopleView> {
     with(&state, &path, |lib| {
-        let people = People::load(lib.root())?;
+        let people = lib.people()?;
         let opt = assign::Options::default();
         let root = lib.root().to_path_buf();
 
@@ -1557,13 +1561,13 @@ async fn dismiss_cluster(
     cluster: usize,
 ) -> R<String> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
         let faces: Vec<(String, i64)> = g.iter().map(|f| (f.hash.clone(), f.idx)).collect();
         let photos = g.iter().map(|f| &f.hash).collect::<BTreeSet<_>>().len();
         let n = people.dismiss(&faces);
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
         Ok(format!(
             "Set aside {n} face{} from {photos} photograph{}",
             if n == 1 { "" } else { "s" },
@@ -1576,9 +1580,9 @@ async fn dismiss_cluster(
 #[tauri::command]
 async fn restore_dismissed(state: tauri::State<'_, AppState>, path: String) -> R<String> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         let n = people.restore_dismissed();
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
         Ok(match n {
             0 => "Nothing was set aside".to_string(),
             n => format!("{n} face{} back for naming", if n == 1 { "" } else { "s" }),
@@ -1598,9 +1602,9 @@ async fn merge_people(
     into: String,
 ) -> R<String> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         let moved = people.merge(&from, &into)?;
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
         Ok(format!("{from} is now {into} · {moved} more reference faces for {into}"))
     })
 }
@@ -1615,13 +1619,13 @@ async fn name_cluster(
     name: String,
 ) -> R<usize> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         let g = groups.get(cluster).ok_or_else(|| anyhow::anyhow!("no such group"))?;
         let refs: Vec<Vec<f32>> = g.iter().filter_map(|f| f.embedding.clone()).collect();
         let n = refs.len();
         people.add_references(name.trim(), refs);
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
         Ok(n)
     })
 }
@@ -1635,7 +1639,7 @@ async fn cluster_photos(
     cluster: usize,
 ) -> R<Vec<String>> {
     with(&state, &path, |lib| {
-        let people = People::load(lib.root())?;
+        let people = lib.people()?;
         let groups = pipeline::cluster_unassigned(lib, &people, &assign::Options::default(), distance)?;
         Ok(groups
             .get(cluster)
@@ -1970,7 +1974,7 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             .find(|r| r.hash == hash)
             .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
         let sig = lib.index.get_signature(&hash)?;
-        let people_file = People::load(lib.root())?;
+        let people_file = lib.people()?;
         let opt = assign::Options::default();
         let mut people = Vec::new();
         let mut faces = 0;
@@ -2248,11 +2252,11 @@ async fn rename_photo(
 #[tauri::command]
 async fn forget_person(state: tauri::State<'_, AppState>, path: String, person: String) -> R<String> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         if !people.remove(&person) {
             return Ok(format!("{person} was not a known person"));
         }
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
         Ok(format!("Forgot {person}"))
     })
 }
@@ -2265,9 +2269,9 @@ async fn untag_person(
     hashes: Vec<String>,
 ) -> R<String> {
     with(&state, &path, |lib| {
-        let mut people = People::load(lib.root())?;
+        let mut people = lib.people()?;
         people.exclude(&person, &hashes);
-        people.save(lib.root())?;
+        lib.save_people(&people)?;
 
         // Anything sitting in that person's folder goes back to the library root.
         let want: BTreeSet<String> = hashes.iter().cloned().collect();
@@ -2305,7 +2309,7 @@ async fn untag_person(
         } else {
             let removed = people.remove(&person);
             if removed {
-                people.save(lib.root())?;
+                lib.save_people(&people)?;
             }
             removed
         };
@@ -2811,7 +2815,7 @@ fn build_plan(
         }
         "rename" => rename::plan(lib, rename::DEFAULT_FORMAT)?,
         "file" => {
-            let people = People::load(lib.root())?;
+            let people = lib.people()?;
             if mkdirs {
                 for n in people.people.iter().map(|p| &p.name) {
                     std::fs::create_dir_all(lib.abs(n))?;
@@ -3161,8 +3165,7 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     // Full-size request for a format the webview cannot decode: serve a cached JPEG.
     if thumb_hash.is_none() && blinkview_core::imageio::needs_conversion(&canon) {
         if let (Some(hash), Some(root)) = (full_hash, source_root(&canon)) {
-            let derived = root
-                .join(blinkview_core::library::VAULT_DIR)
+            let derived = blinkview_core::cache::vault_for(&root)
                 .join("derived")
                 .join(format!("{hash}.jpg"));
             if !derived.exists()
@@ -3405,6 +3408,13 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    /// A cache beside the fixture, so a unit test never writes to the machine's.
+    fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.parent()
+            .unwrap()
+            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    }
+
     #[test]
     fn ranges_are_parsed_the_way_a_player_sends_them() {
         // The common opening move: "send me what you have from the start".
@@ -3582,7 +3592,7 @@ mod tests {
         ] {
             std::fs::write(dir.join(rel), bytes).unwrap();
         }
-        let mut lib = Library::open(&dir).unwrap();
+        let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
         scan::scan(&mut lib, false).unwrap();
         let info = describe(&mut lib).unwrap();
 
@@ -3633,6 +3643,11 @@ mod tests {
         // Stills never route to ffmpeg; neither does a video without a thumb request.
         assert!(!video_thumb_miss(&still, Some("abc"), &sources));
         assert!(!video_thumb_miss(&clip, None, &sources));
+        // The routing helper resolves through the machine's cache root; take back what
+        // the test just put there, or a unit test litters the real thing.
+        blinkview_core::cache::forget(&dir);
+        let _ = std::fs::remove_dir_all(t.ancestors().nth(2).unwrap());
+        let _ = std::fs::remove_file(dir.join(blinkview_core::cache::MARKER));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

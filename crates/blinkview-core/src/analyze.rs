@@ -172,6 +172,9 @@ pub fn run_cancellable(
     let want_semantic = stages.semantic && semantic::ImageEncoder::available();
 
     let root = lib.root().to_path_buf();
+    // Workers carry the vault rather than the root: the cache is not under the root
+    // any more (ADR-0019), and resolving it per job would re-read the marker per job.
+    let vault = lib.vault().to_path_buf();
     let rows: Vec<_> = lib.index.all()?.into_iter().filter(|r| r.kind == "photo").collect();
 
     // Videos cannot join the one-decode pass — their pixels belong to ffmpeg, not
@@ -247,7 +250,7 @@ pub fn run_cancellable(
                     return;
                 }
                 counter.tick();
-                let out = process(&root, job, want_faces);
+                let out = process(&vault, job, want_faces);
                 let _ = tx.send(out);
             });
         });
@@ -260,7 +263,7 @@ pub fn run_cancellable(
 
     if !video_todo.is_empty() {
         let (made, first_error) =
-            build_video_thumbs(&root, &video_todo, ffmpeg.as_deref().expect("checked above"), &counter, stop);
+            build_video_thumbs(&root, &vault, &video_todo, ffmpeg.as_deref().expect("checked above"), &counter, stop);
         st.thumbs += made;
         if let Some((rel, e)) = first_error {
             st.errors.push(format!("{rel}: thumbnail: {e}"));
@@ -295,7 +298,7 @@ fn video_thumb_todo(
         .into_iter()
         .filter(|r| r.kind == "video")
         .map(|r| (r.hash, lib.abs(&r.path)))
-        .filter(|(hash, _)| !thumbs::thumb_path_at(lib.root(), hash).exists())
+        .filter(|(hash, _)| !thumbs::thumb_path_in(lib.vault(), hash).exists())
         .collect())
 }
 
@@ -305,6 +308,7 @@ fn video_thumb_todo(
 /// relative to the library root — the same shape the photograph pass reports errors in.
 fn build_video_thumbs(
     root: &std::path::Path,
+    vault: &std::path::Path,
     todo: &[(String, std::path::PathBuf)],
     bin: &std::ffi::OsStr,
     counter: &crate::progress::Counter,
@@ -321,7 +325,7 @@ fn build_video_thumbs(
             if stop() {
                 return;
             }
-            let dst = thumbs::thumb_path_at(root, hash);
+            let dst = thumbs::thumb_path_in(vault, hash);
             match thumbs::render_video_with(bin, src, &dst) {
                 Ok(()) => {
                     made.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -358,7 +362,7 @@ thread_local! {
 }
 
 /// Everything one photograph needs, from at most one decode.
-fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
+fn process(vault: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
     let mut st = Stats::default();
     let mut out = Outcome {
         hash: job.hash.clone(),
@@ -371,7 +375,7 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
     // A thumbnail on its own can often come from the preview the camera embedded,
     // which is the whole reason not to decode unless something else needs it.
     if job.thumb && !job.faces && !job.clip {
-        let dst = thumbs::thumb_path_at(root, &job.hash);
+        let dst = thumbs::thumb_path_in(vault, &job.hash);
         match thumbs::render_to(&job.path, &dst, false) {
             Ok(()) => {
                 st.thumbs += 1;
@@ -411,7 +415,7 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
     // Each stage is attempted on its own: a detector that throws must not cost this
     // photograph its thumbnail.
     if job.thumb {
-        let dst = thumbs::thumb_path_at(root, &job.hash);
+        let dst = thumbs::thumb_path_in(vault, &job.hash);
         match thumbs::render_from_rgb(&full, owed, &dst) {
             Ok(()) => st.thumbs += 1,
             Err(e) => st.errors.push(format!("{}: thumbnail: {e}", job.rel)),
@@ -433,7 +437,7 @@ fn process(root: &std::path::Path, job: &Job, want_faces: bool) -> Outcome {
             let Kit { det, emb, .. } = &mut *kit;
             match (det.as_mut(), emb.as_mut()) {
                 (Some(det), Some(emb)) => {
-                    match faces_from(root, job, &upright, det, emb, &mut st) {
+                    match faces_from(vault, job, &upright, det, emb, &mut st) {
                         Ok(f) => out.faces = Some(f),
                         Err(e) => st.errors.push(format!("{}: faces: {e}", job.rel)),
                     }
@@ -480,7 +484,7 @@ fn fit_dimensions(w: u32, h: u32, nw: u32, nh: u32) -> (u32, u32) {
 /// Detect and embed faces, writing the crops. Mirrors `faces::pipeline` exactly, so the
 /// two produce the same rows for the same photograph.
 fn faces_from(
-    root: &std::path::Path,
+    vault: &std::path::Path,
     job: &Job,
     upright: &image::RgbImage,
     det: &mut detect::Detector,
@@ -537,7 +541,7 @@ fn faces_from(
             pipeline::FACE_CROP,
             image::imageops::FilterType::Triangle,
         );
-        let dst = pipeline::face_crop_path(root, &job.hash, i as i64);
+        let dst = pipeline::face_crop_in(vault, &job.hash, i as i64);
         if let Some(parent) = dst.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -562,6 +566,13 @@ fn faces_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cache beside the fixture, so a unit test never writes to the machine's.
+    fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.parent()
+            .unwrap()
+            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    }
 
     /// `fit_dimensions` must agree with `DynamicImage::resize` on every shape.
     ///
@@ -650,11 +661,14 @@ mod tests {
                 .collect();
         let sink = crate::progress::silent;
         let counter = crate::progress::Counter::new(todo.len(), &sink);
-        let (made, err) = build_video_thumbs(&dir, &todo, ff.as_os_str(), &counter, &|| false);
+        let vault = dir.join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let (made, err) =
+            build_video_thumbs(&dir, &vault, &todo, ff.as_os_str(), &counter, &|| false);
         assert_eq!(made, 2, "both posters written");
         assert!(err.is_none(), "unexpected failure: {err:?}");
         for (hash, _) in &todo {
-            assert!(thumbs::thumb_path_at(&dir, hash).exists(), "{hash} has no poster");
+            assert!(thumbs::thumb_path_in(&vault, hash).exists(), "{hash} has no poster");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -664,7 +678,7 @@ mod tests {
     #[test]
     fn video_todo_is_videos_owed_a_poster() {
         let dir = scratch("todo");
-        let lib = Library::open(&dir).unwrap();
+        let lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
         for (hash, name, kind) in [
             ("aaaa", "done.mp4", "video"),
             ("bbbb", "owed.mp4", "video"),
@@ -684,7 +698,7 @@ mod tests {
                 .unwrap();
         }
         // The poster `aaaa` already has.
-        let done = thumbs::thumb_path_at(&dir, "aaaa");
+        let done = thumbs::thumb_path_in(lib.vault(), "aaaa");
         std::fs::create_dir_all(done.parent().unwrap()).unwrap();
         std::fs::write(&done, b"poster").unwrap();
 

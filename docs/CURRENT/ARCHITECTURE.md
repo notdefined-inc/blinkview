@@ -23,7 +23,7 @@ legacy interface.
 ## Sources
 
 The desktop app holds a list of *source folders*, each an independent library with its
-own disposable `.blinkview/`. The list lives in the app config directory and is the only
+own cache. The list lives in the app config directory and is the only
 app-level state; losing it costs nothing but re-adding folders. There is deliberately no
 global database — that is the whole premise (ADR-0001).
 
@@ -34,24 +34,37 @@ global database — that is the whole premise (ADR-0001).
                              folder is arranged           user-authored
       blinkview-people.json   names + reference faces      user-authored
       Trash/  Originals/     deleted and pre-edit photos  visible, journalled
-      .blinkview/             index, thumbs, faces, …      100% derived, disposable
+      .blinkview-id           40 bytes naming the cache (ADR-0019)
 
 The split is the point. Only the two JSON files and the two folders hold anything a
 machine cannot reproduce, and all four are visible in Finder and travel with the folder
-when it is copied. `.blinkview/` can be deleted at any time and costs only recomputation —
-without qualification. See ADR-0007.
+when it is copied. The cache can be deleted at any time and costs only recomputation —
+without qualification. See ADR-0007; the cache's location is ADR-0019.
 
-## The vault
+## The cache
+
+Since ADR-0019 the derived cache is not inside the library at all. A library holds its
+photographs, a `.blinkview-id` marker, and the two JSON files below — nothing else.
 
     <library>/              any folder; photos live in ordinary subfolders
-      .blinkview/            entirely derived — safe to delete, rebuilt by `scan`
+      .blinkview-id          32 hex characters naming this library's cache
+      blinkview.json         ratings, labels, saved searches (ADR-0007)
+      blinkview-people.json  names, exclusions, dismissals — as face pointers
+
+    ~/Library/Caches/dev.notdefined.blinkview/     the machine's cache root
+      libraries/<id>/       everything the marker names — entirely derived
         index.sqlite        hash -> path, EXIF, phash, face embeddings
         thumbs/             content-addressed thumbnail cache
         derived/            lightbox previews and HEIC transcodes, by hash
+        faces/              face crops for sidebars and review
         journal/            one entry per applied operation; the undo history
-        people.json         identity names + reference embeddings
+        path                the breadcrumb: the folder this cache last served
 
-Rationale in docs/DECISIONS/ADR-0001-vault-format.md.
+The marker, not the path, is the key: a folder renamed in Finder keeps its cache, a
+folder copied in Finder starts fresh, and read-only media opens with a path-derived key.
+Migration of an in-folder `.blinkview/` is a rename when the filesystems allow it and a
+fresh start when they do not — the old directory is never deleted from inside the
+photographs. Rationale in ADR-0019, which supersedes the placement half of ADR-0001.
 
 ## Rewriting a photograph
 
@@ -101,7 +114,7 @@ touches the filesystem. Cells ask for their `src` only as they approach the view
 (IntersectionObserver), so a fast flick no longer queues rows the user never sees.
 Videos render their poster frames on a dedicated two-thread pool, dispatched at scheme
 dispatch time, so an ffmpeg spawn can never occupy a photograph-decode thread. The
-lightbox steps through `.blinkview/derived/p-<hash>.jpg` — a 2000 px JPEG derived on
+lightbox steps through a `derived/p-<hash>.jpg` in the library's cache — a 2000 px JPEG derived on
 first view — instead of decoding the 12–48 MP original per keypress.
 
 ## Places, without a network

@@ -12,6 +12,17 @@ use std::path::PathBuf;
 /// Detection finds nothing in synthetic images, so these tests need real ones. Point
 /// `BLINKVIEW_TEST_PHOTOS` at a folder of JPEGs to run them; without it they skip, which
 /// is what happens on a machine that has no such folder.
+/// An isolated cache for a fixture library, beside rather than inside it.
+///
+/// `Library::open` would use the machine's cache root; a test suite that littered
+/// `~/Library/Caches` would be a bug of its own. Beside the fixture keeps it out of
+/// the library tree, where `scan` would index its thumbnails as photographs.
+fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.parent()
+        .unwrap()
+        .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+}
+
 fn fixture(name: &str) -> Option<PathBuf> {
     let src = PathBuf::from(std::env::var("BLINKVIEW_TEST_PHOTOS").ok()?);
     if !src.is_dir() {
@@ -48,18 +59,19 @@ fn the_combined_pass_finds_the_same_faces_and_embeddings() {
     }
 
     // Reference: the passes as they were, each decoding for itself.
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
     blinkview_core::faces::pipeline::analyze(&lib, blinkview_core::faces::pipeline::DEFAULT_SCORE)
         .unwrap();
     semantic::analyze(&lib, &blinkview_core::progress::silent).unwrap();
     let want_faces = lib.all_faces().unwrap();
     let want_clip = lib.index.all_clip().unwrap();
+    let vault = lib.vault().to_path_buf();
     drop(lib);
 
     // Same library, cache discarded, run through the combined pass instead.
-    std::fs::remove_dir_all(dir.join(".blinkview")).unwrap();
-    let mut lib = Library::open(&dir).unwrap();
+    std::fs::remove_dir_all(&vault).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
     let st = analyze::run(&mut lib, analyze::Stages::default()).unwrap();
     let got_faces = lib.all_faces().unwrap();
@@ -106,7 +118,7 @@ fn nothing_is_opened_when_nothing_is_missing() {
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
     let first = analyze::run(&mut lib, analyze::Stages::default()).unwrap();
     assert!(first.decoded > 0);
@@ -123,7 +135,7 @@ fn nothing_is_opened_when_nothing_is_missing() {
 #[test]
 fn a_thumbnail_alone_does_not_force_a_full_decode() {
     let Some(dir) = fixture("preview") else { return };
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
     // Thumbnails only, so the camera's embedded preview is enough where there is one.
     let st = analyze::run(&mut lib, analyze::Stages::only_thumbs()).unwrap();
@@ -140,7 +152,7 @@ fn a_second_run_finishes_what_the_first_started() {
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
 
     // Stand in for an interruption: do the thumbnails, then everything.
@@ -171,7 +183,7 @@ fn an_unreadable_file_is_not_retried_for_ever() {
     std::fs::write(dir.join("corrupt.jpg"), b"\xff\xd8\xffnot really a jpeg at all").unwrap();
     std::fs::write(dir.join("nonsense.png"), b"definitely not a png").unwrap();
 
-    let mut lib = Library::open(&dir).unwrap();
+    let mut lib = Library::open_in(&dir, cache_for(&dir)).unwrap();
     blinkview_core::scan::scan(&mut lib, false).unwrap();
 
     let first = analyze::run(&mut lib, analyze::Stages::only_thumbs()).unwrap();

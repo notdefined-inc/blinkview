@@ -7,8 +7,35 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 mod web;
 
-use blinkview_core::faces::{assign, people::People, pipeline, review};
+use blinkview_core::faces::{assign, pipeline, review};
 use blinkview_core::{dedupe, journal::Journal, rename, scan, scenery, Library};
+
+/// Human-readable size of a cache directory, for `cache list`.
+///
+/// One level deep, which is where a cache keeps its bulk (`thumbs/`, `derived/`,
+/// `faces/`); deeper traversal would make `list` walk every thumbnail.
+fn dir_size(dir: &std::path::Path) -> String {
+    let bytes = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| match e.metadata() {
+                    Ok(m) if m.is_dir() => std::fs::read_dir(e.path())
+                        .map(|sub| sub.flatten().filter_map(|s| s.metadata().ok()).map(|m| m.len()).sum::<u64>())
+                        .unwrap_or(0),
+                    Ok(m) => m.len(),
+                    Err(_) => 0,
+                })
+                .sum::<u64>()
+        })
+        .unwrap_or(0);
+    for (unit, factor) in [("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)] {
+        if bytes >= factor {
+            return format!("{:.1} {unit}", bytes as f64 / factor as f64);
+        }
+    }
+    format!("{bytes} B")
+}
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -102,6 +129,22 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ModelsCmd,
     },
+    /// The derived caches, held outside your photo folders since ADR-0019.
+    Cache {
+        #[command(subcommand)]
+        cmd: CacheCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheCmd {
+    /// Every cached library: its id, the folder it last served, and its size.
+    List,
+    /// Delete caches whose library folder no longer exists. Prints what it removed.
+    ///
+    /// Removing a source in the app already takes its cache with it; this catches the
+    /// rest — a folder deleted in Finder, a library renamed while the app was closed.
+    Prune,
 }
 
 #[derive(Subcommand)]
@@ -221,7 +264,7 @@ fn main() -> Result<()> {
             }
             FacesCmd::People => {
                 let lib = open(&cli)?;
-                let people = People::load(lib.root())?;
+                let people = lib.people()?;
                 if people.is_empty() {
                     println!("no people yet — run `blinkview faces review`");
                 }
@@ -231,7 +274,7 @@ fn main() -> Result<()> {
             }
             FacesCmd::File { apply } => {
                 let mut lib = open(&cli)?;
-                let people = People::load(lib.root())?;
+                let people = lib.people()?;
                 if people.is_empty() {
                     println!("no people known yet — run `blinkview faces review` first.");
                     return Ok(());
@@ -260,7 +303,7 @@ fn main() -> Result<()> {
             }
             FacesCmd::Review { distance, dump } => {
                 let lib = open(&cli)?;
-                let mut people = People::load(lib.root())?;
+                let mut people = lib.people()?;
                 let opt = assign::Options::default();
                 println!("building review…");
                 let payload = review::build(&lib, &people, &opt, *distance)?;
@@ -293,7 +336,7 @@ fn main() -> Result<()> {
                         people.add_references(name, refs);
                     }
                 }
-                people.save(lib.root())?;
+                lib.save_people(&people)?;
                 println!(
                     "\nlearned {learned} reference faces across {} people.",
                     result.assignments.len()
@@ -509,6 +552,45 @@ fn main() -> Result<()> {
             let n = j.undo(&mut lib)?;
             println!("reversed {n} ops.");
         }
+        Cmd::Cache { cmd } => match cmd {
+            CacheCmd::List => {
+                let known = blinkview_core::cache::known();
+                if known.is_empty() {
+                    println!("no caches at {}", blinkview_core::cache::root().display());
+                    return Ok(());
+                }
+                for (vault, path) in &known {
+                    let size = dir_size(vault);
+                    let where_ = match path {
+                        Some(p) if p.exists() => p.display().to_string(),
+                        Some(p) => format!("{} (gone — `blinkview cache prune`)", p.display()),
+                        None => "unknown".to_string(),
+                    };
+                    let id = vault.file_name().unwrap().to_string_lossy();
+                    println!("  {:<8} {:>9}  {}", &id[..8], size, where_);
+                }
+                println!("\ncache root: {}", blinkview_core::cache::root().display());
+            }
+            CacheCmd::Prune => {
+                let mut removed = 0usize;
+                for (vault, path) in blinkview_core::cache::known() {
+                    // Only a cache naming a *vanished* folder is junk. One with no
+                    // breadcrumb is left alone: unknown is not the same as gone.
+                    let Some(gone) = path.filter(|p| !p.exists()) else { continue };
+                    if std::fs::remove_dir_all(&vault).is_ok() {
+                        println!(
+                            "  removed {}  (was {})",
+                            &vault.file_name().unwrap().to_string_lossy()[..8],
+                            gone.display()
+                        );
+                        removed += 1;
+                    }
+                }
+                if removed == 0 {
+                    println!("nothing to prune");
+                }
+            }
+        },
     }
     Ok(())
 }

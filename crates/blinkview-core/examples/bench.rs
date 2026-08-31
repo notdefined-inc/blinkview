@@ -137,7 +137,7 @@ fn main() -> Result<()> {
     println!("{:<34} {:>8.1} ms   ({} rows)", "index.all()", all_ms, rows.len());
 
     let t = Instant::now();
-    let people = blinkview_core::faces::people::People::load(lib.root())?;
+    let people = lib.people()?;
     println!("{:<34} {:>8.1} ms   ({} people)", "People::load", ms(t.elapsed()), people.people.len());
 
     let t = Instant::now();

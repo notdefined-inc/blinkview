@@ -9,8 +9,9 @@
 //! - **Debounced.** Copying 400 files produces hundreds of events. Rescanning on each
 //!   would be far more expensive than the copy itself, so events are collected and a
 //!   single rescan runs once the burst has been quiet for a moment.
-//! - **Ignores our own writes.** Every thumbnail, index write and journal entry lands
-//!   inside `.blinkview/`, and reacting to those would rescan forever.
+//! - **Ignores our own writes.** The cache lives outside the library now (ADR-0019),
+//!   so the only thing blinkview writes into a watched folder is the `.blinkview-id`
+//!   marker — and reacting to *that* would rescan on the very first open, forever.
 
 use notify::{Event, RecursiveMode, Watcher};
 use std::collections::HashMap;
@@ -52,8 +53,8 @@ impl Watchers {
         let mut watcher = notify::recommended_watcher(tx)?;
         watcher.watch(Path::new(root), RecursiveMode::Recursive)?;
 
-        let vault = PathBuf::from(root).join(blinkview_core::library::VAULT_DIR);
-        std::thread::spawn(move || debounce(rx, vault, on_change));
+        let marker = PathBuf::from(root).join(blinkview_core::cache::MARKER);
+        std::thread::spawn(move || debounce(rx, marker, on_change));
         map.insert(root.to_string(), watcher);
         Ok(())
     }
@@ -66,7 +67,7 @@ impl Watchers {
 }
 
 /// Collect events until the filesystem has been quiet for `QUIET`, then fire once.
-fn debounce(rx: mpsc::Receiver<notify::Result<Event>>, vault: PathBuf, on_change: impl Fn()) {
+fn debounce(rx: mpsc::Receiver<notify::Result<Event>>, marker: PathBuf, on_change: impl Fn()) {
     let mut pending: Option<Instant> = None;
     loop {
         // Wait indefinitely when idle; only poll while a burst is in flight.
@@ -81,7 +82,7 @@ fn debounce(rx: mpsc::Receiver<notify::Result<Event>>, vault: PathBuf, on_change
         let Some(msg) = msg else { return };  // the watcher was dropped
 
         match msg {
-            Some(Ok(ev)) if interesting(&ev, &vault) => pending = Some(Instant::now()),
+            Some(Ok(ev)) if interesting(&ev, &marker) => pending = Some(Instant::now()),
             Some(_) => {}
             None => {
                 pending = None;
@@ -93,14 +94,25 @@ fn debounce(rx: mpsc::Receiver<notify::Result<Event>>, vault: PathBuf, on_change
 
 /// Whether an event is worth a rescan.
 ///
-/// Anything inside `.blinkview/` is our own doing — thumbnails, the index, journal
-/// entries — and reacting to it would rescan in a loop.
-fn interesting(ev: &Event, vault: &Path) -> bool {
+/// Writing the marker is blinkview naming a library, not a photograph arriving, and
+/// reacting to it would rescan on first open and then never stop. The cache itself is
+/// outside the watched tree since ADR-0019, so there is nothing else of ours in here —
+/// but a leftover `.blinkview/` from before the move still is, and rescanning on its
+/// thumbnails would be the same loop.
+fn interesting(ev: &Event, marker: &Path) -> bool {
     use notify::EventKind;
     if matches!(ev.kind, EventKind::Access(_)) {
         return false;
     }
-    ev.paths.iter().any(|p| !p.starts_with(vault))
+    ev.paths.iter().any(|p| {
+        if p == marker {
+            return false;
+        }
+        !p.iter().any(|c| {
+            c == std::ffi::OsStr::new(blinkview_core::library::VAULT_DIR)
+                || c == std::ffi::OsStr::new(blinkview_core::library::LEGACY_VAULT_DIR)
+        })
+    })
 }
 
 #[cfg(test)]
@@ -113,36 +125,38 @@ mod tests {
     }
 
     #[test]
-    fn our_own_cache_writes_are_ignored() {
-        let vault = PathBuf::from("/lib/.blinkview");
-        // Thumbnails and index writes must never trigger a rescan, or the rescan they
-        // trigger writes more of them and it never stops.
+    fn our_own_writes_are_ignored() {
+        let marker = PathBuf::from("/lib/.blinkview-id");
+        // Naming a library is not a photograph arriving, or the rescan it triggers
+        // rewrites the marker and it never stops.
+        assert!(!interesting(
+            &ev(EventKind::Create(CreateKind::File), "/lib/.blinkview-id"),
+            &marker
+        ));
+        // A cache left beside the photographs by a version before ADR-0019, still
+        // being written by nothing at all — but ignored all the same if touched.
         assert!(!interesting(
             &ev(EventKind::Create(CreateKind::File), "/lib/.blinkview/thumbs/ab.jpg"),
-            &vault
-        ));
-        assert!(!interesting(
-            &ev(EventKind::Create(CreateKind::File), "/lib/.blinkview/index.sqlite-wal"),
-            &vault
+            &marker
         ));
     }
 
     #[test]
     fn photographs_arriving_are_interesting() {
-        let vault = PathBuf::from("/lib/.blinkview");
+        let marker = PathBuf::from("/lib/.blinkview-id");
         assert!(interesting(
             &ev(EventKind::Create(CreateKind::File), "/lib/Trip/new.jpg"),
-            &vault
+            &marker
         ));
     }
 
     #[test]
     fn merely_reading_a_file_is_not_a_change() {
-        let vault = PathBuf::from("/lib/.blinkview");
+        let marker = PathBuf::from("/lib/.blinkview-id");
         // Serving a photograph to the grid opens it; that must not look like an edit.
         assert!(!interesting(
             &ev(EventKind::Access(notify::event::AccessKind::Read), "/lib/Trip/a.jpg"),
-            &vault
+            &marker
         ));
     }
 }

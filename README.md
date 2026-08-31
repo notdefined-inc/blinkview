@@ -38,7 +38,7 @@ What Obsidian is to Markdown, Blinkview is to your photo library.
 
 Delete Blinkview tomorrow and you lose *nothing*. Your folders sit exactly where they were, named exactly what you named them — plus a small readable `blinkview.json` beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.
 
-Everything else — thumbnails, the index, face embeddings — lives in a `.blinkview/` folder that is **safe to delete**. Delete it and it rebuilds. That's not a caveat; it's the promise the whole design is built to keep.
+Everything else — thumbnails, the index, face embeddings — lives in your machine's cache directory, **not in your folders** (a forty-byte `.blinkview-id` is all that marks a library). Delete the cache and it rebuilds. That's not a caveat; it's the promise the whole design is built to keep.
 
 ## What it actually does
 

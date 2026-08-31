@@ -187,7 +187,7 @@ pub fn build_with_progress(
                 Some((i, f.clone(), path, if i == 0 { HERO_CROP } else { CROP }))
             })
             .collect();
-        let root = lib.root().to_path_buf();
+        let (root, vault) = (lib.root().to_path_buf(), lib.vault().to_path_buf());
         let mut made: Vec<(usize, ReviewFace)> = jobs
             .par_iter()
             .filter_map(|(i, f, path, side)| {
@@ -196,7 +196,7 @@ pub fn build_with_progress(
                     ReviewFace {
                         hash: f.hash.clone(),
                         idx: f.idx,
-                        crop: crop_data_uri(&root, f, path, *side, Some(&crate::thumbs::thumb_path_at(&root, &f.hash)))?,
+                        crop: crop_data_uri(&root, f, path, *side, Some(&crate::thumbs::thumb_path_in(&vault, &f.hash)))?,
                         score: f.score,
                     },
                 ))

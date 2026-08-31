@@ -3,6 +3,8 @@
 Date: 2026-08-27
 Status: Accepted
 
+Status note (2026-08-31): the *disposability* below stands; the *placement* — beside the photographs — was superseded by ADR-0019. The journal's move to non-derivable is also ADR-0019's amendment.
+
 ## Context
 
 Every free photo manager surveyed owns the library through a database. digiKam, Immich,

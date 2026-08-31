@@ -25,9 +25,12 @@ pub const FACE_CROP: u32 = 160;
 /// in lists and sidebars: producing them lazily would mean decoding a full photo to
 /// draw a 28px avatar.
 pub fn face_crop_path(root: &std::path::Path, hash: &str, idx: i64) -> std::path::PathBuf {
-    root.join(crate::library::VAULT_DIR)
-        .join("faces")
-        .join(format!("{hash}-{idx}.jpg"))
+    face_crop_in(&crate::cache::vault_for(root), hash, idx)
+}
+
+/// As [`face_crop_path`], from a cache directory already in hand.
+pub fn face_crop_in(vault: &std::path::Path, hash: &str, idx: i64) -> std::path::PathBuf {
+    vault.join("faces").join(format!("{hash}-{idx}.jpg"))
 }
 
 #[derive(Debug, Default)]

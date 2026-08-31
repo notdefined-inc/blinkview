@@ -33,6 +33,17 @@ fn write(dir: &Path, name: &str, img: &ImageBuffer<Rgb<u8>, Vec<u8>>) {
     img.save(dir.join(name)).unwrap();
 }
 
+/// An isolated cache for a fixture library, beside rather than inside it.
+///
+/// `Library::open` would use the machine's cache root; a test suite that littered
+/// `~/Library/Caches` would be a bug of its own. Beside the fixture keeps it out of
+/// the library tree, where `scan` would index its thumbnails as photographs.
+fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.parent()
+        .unwrap()
+        .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+}
+
 fn fixture(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("blinkview-dd-{}-{}", std::process::id(), name));
     let _ = std::fs::remove_dir_all(&d);
@@ -49,7 +60,7 @@ fn groups_a_burst_and_keeps_the_sharpest() {
     write(&d, "20260816_151203.jpg", &scene(1, 2, true)); // blurred member
     write(&d, "20260816_151204.jpg", &scene(9, 0, false)); // unrelated scene
 
-    let mut lib = Library::open(&d).unwrap();
+    let mut lib = Library::open_in(&d, cache_for(&d)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     dedupe::ensure_signatures(&lib).unwrap();
 
@@ -72,7 +83,7 @@ fn leaves_distinct_scenes_alone() {
     for i in 0..6u32 {
         write(&d, &format!("2026081{}_15120{}.jpg", i % 9, i), &scene(i * 13 + 1, 0, false));
     }
-    let mut lib = Library::open(&d).unwrap();
+    let mut lib = Library::open_in(&d, cache_for(&d)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     dedupe::ensure_signatures(&lib).unwrap();
     let groups = dedupe::find_groups(&lib, &dedupe::Options::default()).unwrap();
@@ -86,7 +97,7 @@ fn leaves_distinct_scenes_alone() {
 fn signature_cache_survives_a_rename() {
     let d = fixture("cache");
     write(&d, "20260816_151201.jpg", &scene(3, 0, false));
-    let mut lib = Library::open(&d).unwrap();
+    let mut lib = Library::open_in(&d, cache_for(&d)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     assert_eq!(dedupe::ensure_signatures(&lib).unwrap(), 1);
 
@@ -108,7 +119,7 @@ fn dedupe_is_undoable() {
     write(&d, "20260816_151202.jpg", &scene(2, 1, false));
     std::fs::create_dir_all(d.join("Duplicates")).unwrap();
 
-    let mut lib = Library::open(&d).unwrap();
+    let mut lib = Library::open_in(&d, cache_for(&d)).unwrap();
     scan::scan(&mut lib, false).unwrap();
     dedupe::ensure_signatures(&lib).unwrap();
     let plan = dedupe::plan(&lib, &dedupe::Options::default()).unwrap();

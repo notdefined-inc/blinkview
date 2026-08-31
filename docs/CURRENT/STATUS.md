@@ -78,17 +78,34 @@ Videos are indexed, get poster frames via ffmpeg when it is installed, and play 
 lightbox. Without ffmpeg they simply have no thumbnail rather than failing the pass.
 
 ### Where your data lives
+
+**The derived cache left the photograph folders (ADR-0019).** The index, thumbnails,
+face crops, derived previews and the undo journal live in
+`~/Library/Caches/dev.notdefined.blinkview/libraries/<id>/`, found through a
+`.blinkview-id` marker at the library root — about forty bytes where 1.9 GB used to sit
+inside the reference phone backup. Renaming a folder in Finder keeps its cache; a folder
+copied in Finder re-indexes rather than sharing one; read-only media opens, keyed by
+path. Migration was verified live on all three reference libraries: three vaults renamed
+in, and the cross-device one started fresh with the old directory left in place and then
+deleted by hand. A before/after diff of each library showed four changed lines, all
+blinkview's own files. `blinkview cache list` names each cache with its library and size;
+`cache prune` removes those whose folder is gone.
+
 `blinkview.json` (ratings, labels, saved searches) and `blinkview-people.json` (names) sit
-at the library root, not in `.blinkview/` — and since ADR-0010 an `blinkview.json` may
+at the library root, not in any cache — and since ADR-0010 an `blinkview.json` may
 also sit in **any folder**, with the nearest one winning. Writes land in the folder that
 holds the photograph, which is what makes copying a folder in Finder carry its ratings
 with it. Deleting the cache loses nothing you authored — there
-is a test that writes a name and a rating, deletes `.blinkview/` outright, and asserts
-both survive. Libraries written by an earlier version are migrated when opened.
+is a test that writes a name and a rating, deletes the cache outright, and asserts
+both survive. Since ADR-0019 the people file stores `"<hash>:<idx>"` pointers to faces
+rather than the vectors themselves — the index already had them — with an unplaceable
+vector kept inline so nothing is lost. The reference library's file went from 172,177
+bytes to 5,010, and the person it names is still recognised across all 66 photographs. Libraries written by an earlier version are migrated when opened.
 
 A library written before the rename from OpenFoto is adopted whole on first open
-(ADR-0017): `.openfoto/` becomes `.blinkview/` so the index is inherited rather than
-rebuilt, `openfoto.json` and `openfoto-people.json` are renamed as they are read, and
+(ADR-0017): `.openfoto/` is adopted as the current cache name so the index is inherited
+rather than rebuilt, `openfoto.json` and `openfoto-people.json` are renamed as they are
+read, and
 the source list is copied over from the old bundle identifier's directory. Nothing in a
 photo folder changes but those two filenames — `Trash/`, `Originals/`, `Duplicates/`
 and `Scenery/` were never brand-named.
@@ -124,7 +141,7 @@ membership, and had done since editing existed. ADR-0015 has the account.
 ### Formats
 JPEG, PNG and **HEIC** for photos; MP4/MOV/M4V for video. HEIC is transcoded by macOS
 `sips` and cached — thumbnails to the usual cache, full-size views to
-`.blinkview/derived/<hash>.jpg` on first open. Verified against 12 real iPhone files:
+a `derived/p-<hash>.jpg` in the cache on first open. Verified against 12 real iPhone files:
 they scan, thumbnail and display. WKWebView genuinely cannot show HEIC (an `<img>`
 reports `naturalWidth: 0`), which is why the transcode exists. See ADR-0005 — this is
 the project's only macOS-only dependency.
@@ -304,13 +321,14 @@ Person names are matched as whole phrases before the query is tokenised, so a pe
 called "Anna Maria" is one name rather than two stray words.
 
 ### The cache looks after itself
-`.blinkview/` is disposable *and* self-correcting (ADR-0011). Libraries scan on open, so
+The cache is disposable *and* self-correcting (ADR-0011). Libraries scan on open, so
 photographs added or reorganised in Finder appear without anyone pressing anything — the
 size and mtime fast path keeps that cheap.
 
 Open libraries are also **watched** (FSEvents via `notify`), so photographs arriving
 while the window is open show up on their own. Events are debounced: pasting 40 files
-produces one rescan, not forty. Anything inside `.blinkview/` is ignored, since reacting
+produces one rescan, not forty. The cache is outside the watched tree since ADR-0019, and
+a leftover in-folder vault is ignored, since reacting
 to our own thumbnail and index writes would rescan in a loop. A corrupt index is detected and rebuilt
 silently, because nothing user-authored is in it.
 
@@ -330,7 +348,7 @@ minutes and waiting for it before even showing the folder is what made adding on
 like a hang.
 
 A folder is refused if it overlaps a source you already have — in either direction.
-Every source is an independent library with its own `.blinkview/`, so a subfolder added
+Every source is an independent library with its own cache, so a subfolder added
 as its own source would be indexed twice, analysed twice, and removing either copy
 could delete `blinkview.json` metadata the other still reads; adding the parent of an
 existing source has the same problems in reverse. Re-adding a folder that is already a

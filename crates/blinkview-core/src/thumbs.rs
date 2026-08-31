@@ -17,13 +17,23 @@ use rayon::prelude::*;
 pub const THUMB_LONG: u32 = 512;
 
 pub fn thumb_path(lib: &Library, hash: &str) -> std::path::PathBuf {
-    thumb_path_at(lib.root(), hash)
+    lib.vault().join("thumbs").join(format!("{hash}.jpg"))
 }
 
-/// Thumbnail path from a library root, for callers that cannot hold a `Library`
-/// (rayon workers, since it owns a non-Sync SQLite connection).
+/// Thumbnail path from a library root, for callers that hold no `Library` — the
+/// `photo://` handler, which has only the path it is serving.
+///
+/// Resolves the library's cache, which is not under the root any more (ADR-0019);
+/// `vault_for` memoizes, so asking per thumbnail is one map lookup after the first.
 pub fn thumb_path_at(root: &std::path::Path, hash: &str) -> std::path::PathBuf {
-    root.join(crate::library::VAULT_DIR).join("thumbs").join(format!("{hash}.jpg"))
+    thumb_path_in(&crate::cache::vault_for(root), hash)
+}
+
+/// Thumbnail path from a cache directory. For code that already knows where the
+/// library's cache is — everything holding a `Library`, or a rayon worker carrying
+/// its vault because the `Library` itself is not `Sync`.
+pub fn thumb_path_in(vault: &std::path::Path, hash: &str) -> std::path::PathBuf {
+    vault.join("thumbs").join(format!("{hash}.jpg"))
 }
 
 /// Render a single thumbnail. Public so the desktop app can produce one on demand
@@ -111,7 +121,16 @@ pub const PREVIEW_LONG: u32 = 2000;
 
 /// Where a photograph's preview lives, from the library root.
 pub fn preview_path_at(root: &std::path::Path, hash: &str) -> std::path::PathBuf {
-    root.join(crate::library::VAULT_DIR).join("derived").join(format!("p-{hash}.jpg"))
+    vault_preview_in(&crate::cache::vault_for(root), hash)
+}
+
+/// As [`preview_path_at`], from a cache directory already in hand.
+pub fn preview_path_in(vault: &std::path::Path, hash: &str) -> std::path::PathBuf {
+    vault_preview_in(vault, hash)
+}
+
+fn vault_preview_in(vault: &std::path::Path, hash: &str) -> std::path::PathBuf {
+    vault.join("derived").join(format!("p-{hash}.jpg"))
 }
 
 /// Render the lightbox preview: a [`PREVIEW_LONG`] JPEG derived once, on first view.

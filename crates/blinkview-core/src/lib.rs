@@ -11,6 +11,7 @@
 
 pub mod albums;
 pub mod analyze;
+pub mod cache;
 pub mod cluster;
 pub mod dedupe;
 pub mod edit;

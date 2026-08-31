@@ -1,10 +1,19 @@
 //! Named identities and their reference faces.
 //!
-//! Lives at the **library root**, not in `.blinkview/`. Clustering is recomputable;
-//! knowing a cluster is called "Alex" is not. Keeping the names inside a cache the
-//! documentation calls disposable would mean `rm -rf .blinkview` throws away work no
-//! machine can reproduce. At the root it survives that, and travels with the folder.
-//! See ADR-0007.
+//! Lives at the **library root** — clustering is recomputable, but knowing a cluster
+//! is called "Alex" is not, and a cache the documentation calls disposable is no place
+//! for the one thing no machine can reproduce (ADR-0007).
+//!
+//! What the file *carries* changed, though. It used to hold the reference embedding
+//! vectors themselves: 172 KB on the reference library, of which all but a rounding
+//! error was vectors the index already had. Since ADR-0019's amendment it stores
+//! pointers — `"<hash>:<idx>"`, the same idiom [`People::dismissed`] uses — and the
+//! vectors are read back out of the index on load. The file is a few kilobytes, and
+//! deleting the cache now costs re-embedding a handful of known faces rather than
+//! forgetting a person.
+//!
+//! A vector nothing points at is kept inline rather than dropped, so a v1 file whose
+//! cache has been deleted loses no identity by being upgraded.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -48,9 +57,51 @@ pub struct People {
     pub dismissed: Vec<String>,
 }
 
-/// How one face is addressed in [`People::dismissed`].
+/// How one face is addressed, in [`People::dismissed`] and in a record's `faces`.
 fn face_key(hash: &str, idx: i64) -> String {
     format!("{hash}:{idx}")
+}
+
+/// The `"<hash>:<idx>"` pair a record stores, split back apart. Hashes are hex and
+/// contain no colon, so the last one is the divider.
+fn split_face_key(key: &str) -> Option<(String, i64)> {
+    let (hash, idx) = key.rsplit_once(':')?;
+    Some((hash.to_string(), idx.parse().ok()?))
+}
+
+/// One person as the file stores them: pointers to faces, with a vector only when no
+/// face could be found to point at.
+///
+/// A serde shape of its own rather than `Person` with new fields, so that the
+/// in-memory type can stay what matching wants — vectors, ready to compare — while
+/// the disk stays what a person would want to find beside their photographs.
+#[derive(Serialize, Deserialize)]
+struct PersonRecord {
+    name: String,
+    /// `"<hash>:<idx>"`, resolved against the index on load.
+    #[serde(default)]
+    faces: Vec<String>,
+    /// Vectors with nowhere to point. Normally empty; written for a v1 file whose
+    /// cache had already been deleted, where dropping them would forget a person.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    references: Vec<Vec<f32>>,
+    #[serde(default)]
+    excluded: Vec<String>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub(crate) struct PeopleRecord {
+    #[serde(default)]
+    people: Vec<PersonRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dismissed: Vec<String>,
+}
+
+impl PeopleRecord {
+    /// Vectors still stored as bytes rather than pointers.
+    pub(crate) fn inline_vectors(&self) -> usize {
+        self.people.iter().map(|p| p.references.len()).sum()
+    }
 }
 
 impl People {
@@ -64,14 +115,17 @@ impl People {
         root.join(crate::library::VAULT_DIR).join("people.json")
     }
 
-    pub fn load(root: &Path) -> Result<Self> {
+    /// Read the file at a library root, expanding nothing. The index is not touched,
+    /// so a record's `faces` stay pointers — for tests, and for anyone inspecting the
+    /// file's shape rather than matching against it.
+    pub(crate) fn read_records(root: &Path) -> Result<PeopleRecord> {
         let p = Self::path(root);
         let from = if p.exists() {
             p
         } else {
             let legacy = Self::legacy_path(root);
             if !legacy.exists() {
-                return Ok(Self::default());
+                return Ok(PeopleRecord::default());
             }
             legacy
         };
@@ -79,12 +133,61 @@ impl People {
         serde_json::from_slice(&data).with_context(|| format!("parsing {}", from.display()))
     }
 
-    pub fn save(&self, root: &Path) -> Result<()> {
-        let p = Self::path(root);
-        std::fs::write(&p, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("writing {}", p.display()))?;
-        let _ = std::fs::remove_file(Self::legacy_path(root));
-        Ok(())
+    /// How many people the file at `root` names.
+    ///
+    /// For listings that will never match a face and so need no vectors expanded.
+    pub fn named_in(root: &Path) -> usize {
+        Self::read_records(root).map(|r| r.people.len()).unwrap_or(0)
+    }
+
+    /// Records against a library: every pointer becomes the vector it names.
+    ///
+    /// A pointer whose face is gone contributes nothing — there is nothing to compare
+    /// against — and the pointer itself stays in the file rather than being pruned,
+    /// because the face may be back on the next scan and a name is not the index's
+    /// to forget.
+    pub(crate) fn from_records(lib: &crate::Library, records: PeopleRecord) -> Self {
+        let people = records
+            .people
+            .into_iter()
+            .map(|r| {
+                let mut references = r.references;
+                for key in &r.faces {
+                    if let Some((hash, idx)) = split_face_key(key) {
+                        if let Ok(Some(v)) = lib.face_embedding(&hash, idx) {
+                            references.push(v);
+                        }
+                    }
+                }
+                Person { name: r.name, references, excluded: r.excluded }
+            })
+            .collect();
+        Self { people, dismissed: records.dismissed }
+    }
+
+    /// The file's shape for this library: vectors that name a face become pointers,
+    /// and only the unplaceable stay as bytes.
+    pub(crate) fn to_records(&self, lib: &crate::Library) -> Result<PeopleRecord> {
+        let mut blobs: std::collections::HashMap<Vec<u8>, String> =
+            lib.face_blobs()?.into_iter().collect();
+        let people = self
+            .people
+            .iter()
+            .map(|p| {
+                let mut faces = Vec::new();
+                let mut references = Vec::new();
+                for v in &p.references {
+                    match blobs.remove(&crate::faces::store::to_blob(v)) {
+                        // `remove`, so two identical vectors cannot both point at one
+                        // face: the second is kept inline rather than aliased.
+                        Some(key) => faces.push(key),
+                        None => references.push(v.clone()),
+                    }
+                }
+                PersonRecord { name: p.name.clone(), faces, references, excluded: p.excluded.clone() }
+            })
+            .collect();
+        Ok(PeopleRecord { people, dismissed: self.dismissed.clone() })
     }
 
     pub fn get(&self, name: &str) -> Option<&Person> {
@@ -264,17 +367,25 @@ mod tests {
         assert_eq!(p.people.len(), 2);
     }
 
+    fn cache_for(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.parent()
+            .unwrap()
+            .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    }
+
     #[test]
     fn a_dismissal_survives_the_disk() {
         let dir = std::env::temp_dir().join(format!("of-dismiss-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        let lib = crate::Library::open_in(&dir, cache_for(&dir)).unwrap();
         let mut p = people();
         p.dismiss(&[("photo-a".into(), 3)]);
-        p.save(&dir).unwrap();
+        lib.save_people(&p).unwrap();
         // The file is the one at the library root, not in the disposable cache.
-        assert!(People::load(&dir).unwrap().is_dismissed("photo-a", 3));
+        assert!(lib.people().unwrap().is_dismissed("photo-a", 3));
         std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(cache_for(&dir)).ok();
     }
 
     #[test]
@@ -321,13 +432,90 @@ mod tests {
     #[test]
     fn round_trips_through_disk() {
         let dir = std::env::temp_dir().join(format!("of-people-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        let lib = crate::Library::open_in(&dir, cache_for(&dir)).unwrap();
         let mut p = people();
         p.exclude("Sam", &["x".into()]);
-        p.save(&dir).unwrap();
-        let back = People::load(&dir).unwrap();
+        lib.save_people(&p).unwrap();
+        let back = lib.people().unwrap();
         assert!(back.is_excluded("Sam", "x"));
         assert_eq!(back.people.len(), 2);
         std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(cache_for(&dir)).ok();
+    }
+
+    /// The file names faces, not vectors. A reference the index holds becomes a
+    /// pointer; only one with no face to name stays as bytes.
+    #[test]
+    fn the_file_points_at_the_faces_it_names() {
+        use crate::faces::store::StoredFace;
+
+        let dir = std::env::temp_dir().join(format!("of-people2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lib = crate::Library::open_in(&dir, cache_for(&dir)).unwrap();
+
+        let mut known = vec![0.01f32; crate::faces::embed::DIM];
+        known[0] = 1.0;
+        lib.put_face(&StoredFace {
+            hash: "photo-a".into(),
+            idx: 4,
+            x: 0.1, y: 0.1, w: 0.2, h: 0.2,
+            score: 0.9,
+            ratio: 0.2,
+            embedding: Some(known.clone()),
+        })
+        .unwrap();
+
+        let mut p = People::default();
+        // One vector the index has, and one it does not — an old file whose cache
+        // was deleted, or a face merged in from elsewhere.
+        let orphan = vec![0.5f32; crate::faces::embed::DIM];
+        p.add_references("Sam", vec![known.clone(), orphan.clone()]);
+        lib.save_people(&p).unwrap();
+
+        let raw = std::fs::read(People::path(&dir)).unwrap();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("\"faces\""), "the pointer field is what gets written");
+        assert!(text.contains("photo-a:4"), "the known face is named, not copied");
+        assert!(
+            raw.len() < 6 * 1024,
+            "one pointer and one orphan cost {} bytes; vectors would be kilobytes each",
+            raw.len()
+        );
+
+        let back = lib.people().unwrap();
+        let refs = &back.get("Sam").unwrap().references;
+        assert_eq!(refs.len(), 2, "both vectors come back");
+        assert!(refs.iter().any(|v| v == &known));
+        assert!(refs.iter().any(|v| v == &orphan));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(cache_for(&dir)).ok();
+    }
+
+    /// A v1 file — vectors, no pointers — whose cache is already gone must not lose
+    /// the person it names when this version reads it.
+    #[test]
+    fn a_file_without_faces_keeps_its_vectors() {
+        let dir = std::env::temp_dir().join(format!("of-people1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let v1 = r#"{"people":[{"name":"Sam","references":[[0.5,0.5]],"excluded":[]}]}"#;
+        std::fs::write(dir.join("blinkview-people.json"), v1).unwrap();
+
+        let lib = crate::Library::open_in(&dir, cache_for(&dir)).unwrap();
+        let people = lib.people().unwrap();
+        assert_eq!(people.people[0].name, "Sam");
+        assert_eq!(people.people[0].references, vec![vec![0.5, 0.5]]);
+
+        // And writing it back keeps the vector, because there is still nothing to
+        // point at.
+        lib.save_people(&people).unwrap();
+        let text = std::fs::read_to_string(People::path(&dir)).unwrap();
+        assert!(text.contains("\"references\""), "an unplaceable vector is kept, not dropped");
+        assert_eq!(lib.people().unwrap().people[0].references, vec![vec![0.5, 0.5]]);
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(cache_for(&dir)).ok();
     }
 }

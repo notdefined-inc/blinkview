@@ -1,6 +1,6 @@
 # The cache moves out of your photo folders
 
-Status: Agreed   Owner: somesh   Date: 2026-08-31
+Status: Shipped   Owner: somesh   Date: 2026-08-31
 
 ## Problem
 
@@ -125,14 +125,43 @@ photo folder: an abandoned `.blinkview/` is reported, not removed.
 11. `blinkview cache list` names every cached library with its last-known path and size;
     `blinkview cache prune` removes those whose folder is gone.
 12. Nothing in a photo folder is written except `.blinkview-id`, `blinkview.json` and
-    `blinkview-people.json`.
+    `blinkview-people.json` — plus `Trash/`, `Originals/`, `Duplicates/` and `Scenery/`
+    when an operation the user asked for puts things there. (Refined at ship time: the
+    original criterion forgot the four operational folders, which are features, not
+    cache.)
 
 ## Tasks
 
-- [ ] 1. `cache.rs`: root resolution, id minting, `.blinkview-id` read/write, path-derived fallback (touches: new `cache.rs`)
-- [ ] 2. `Library::open` resolves the cache through it; `VAULT_DIR` stops being a path fragment (touches: `library.rs`, every `VAULT_DIR` caller)
-- [ ] 3. Migration: rename an existing vault into the cache root, or start fresh and report the one left behind (touches: `library.rs`)
-- [ ] 4. People v2: `faces` pointers, v1 conversion, inline fallback for unmatched vectors (touches: `faces/people.rs`, `faces/assign.rs`)
-- [ ] 5. `purge` and `cache list` / `cache prune` (touches: `lib.rs`, `blinkview-cli`)
-- [ ] 6. Tests: migration keeps the journal, rename still works, copy does not collide, read-only opens, people round-trip (touches: `tests/lifecycle.rs`, `faces`)
-- [ ] 7. ADR-0019 superseding ADR-0001's placement and amending ADR-0007; STATUS, ARCHITECTURE, README, landing page
+- [x] 1. `cache.rs`: root resolution, id minting, `.blinkview-id` read/write, path-derived fallback (touches: new `cache.rs`)
+- [x] 2. `Library::open` resolves the cache through it; `VAULT_DIR` stops being a path fragment (touches: `library.rs`, every `VAULT_DIR` caller)
+- [x] 3. Migration: rename an existing vault into the cache root, or start fresh and report the one left behind (touches: `library.rs`)
+- [x] 4. People v2: `faces` pointers, v1 conversion, inline fallback for unmatched vectors (touches: `faces/people.rs`, `faces/assign.rs`)
+- [x] 5. `purge` and `cache list` / `cache prune` (touches: `lib.rs`, `blinkview-cli`)
+- [x] 6. Tests: migration keeps the journal, rename still works, copy does not collide, read-only opens, people round-trip (touches: `tests/lifecycle.rs`, `faces`)
+- [x] 7. ADR-0019 superseding ADR-0001's placement and amending ADR-0007; STATUS, ARCHITECTURE, README, landing page
+
+
+## Verified
+
+Against the three real libraries, on 2026-08-31, before the code shipped:
+
+* **Criteria 1, 2, 3** — `Photos` (53 MB) and `Phone backup` (13 MB) migrated by rename,
+  instantly, index and journal intact; `samsung backup` (1.9 GB, another filesystem)
+  started fresh with the old vault left in place and named in the log
+  (`Cross-device link (os error 18)`), then deleted by hand as the owner directed.
+* **Criterion 12** — a `find | stat` diff of each library before and after: **exactly
+  four changed lines per library, every one a blinkview file**. Not one photograph
+  touched.
+* **Criterion 7** — `Phone backup/blinkview-people.json`: **172,177 → 5,010 bytes**, and
+  the person it names is still recognised across all 66 of their photographs.
+  `Photos`: 47,482 → 1,348.
+* **Criterion 10** — a throwaway source removed with `purge`: cache and marker gone, the
+  folder back to its single photograph.
+* **Criterion 11** — `blinkview cache list` names all four caches with path and size.
+* **Criteria 4, 5, 6, 8, 9** — covered by `lifecycle.rs`: `a_renamed_folder_keeps_its_cache`,
+  `a_copied_folder_re_indexes_rather_than_shares`, `a_read_only_library_opens`,
+  `a_file_without_faces_keeps_its_vectors`, `the_cache_moves_out_of_the_photographs`.
+
+One criterion refined rather than met as written — see 12. One design note: the
+planned "convert on save" became "convert on first load", because a file that is only
+ever read would have stayed 172 KB forever.
