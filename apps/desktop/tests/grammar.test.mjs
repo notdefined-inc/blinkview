@@ -7,7 +7,20 @@
 import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 
-const src = readFileSync(new URL("../dist/app.js", import.meta.url), "utf8");
+// Import the shipping module before using the legacy browser sandbox. Concatenating
+// files cannot catch a name that app.js imports but core.js forgot to export.
+const coreModule = await import(new URL("../dist/core.js", import.meta.url));
+for (const name of ["hydrate", "computeLayout", "parseQuery", "matchesStructured", "loadGuard"])
+  assert.equal(typeof coreModule[name], "function", `core.js exports ${name}`);
+
+// The pure layer moved to core.js (2026-08-31), which app.js imports. Evaluating
+// the concatenation keeps the module-free sandbox: export keywords stripped from
+// core and import lines dropped from app.js. The combined source exercises the
+// command layer without launching a browser.
+const core = readFileSync(new URL("../dist/core.js", import.meta.url), "utf8")
+  .replace(/^export /gm, "");
+const src = core + "\n" + readFileSync(new URL("../dist/app.js", import.meta.url), "utf8")
+  .replace(/^import [^;]+;$/gm, "");
 
 // Everything app.js reaches for at load time. It registers handlers on elements and
 // listens for Tauri events; none of that is needed to parse a sentence.
@@ -38,7 +51,7 @@ const sandbox = {
 
 const exported = ["parseClause", "splitClauses", "verbOf", "nearestVerb", "isCommand",
                   "parseQuery", "inFolder", "sectionFor", "stripFiller", "hydrate", "bytesLabel",
-                  "DUP", "firstUndecided"];
+                  "photoUrl", "io", "DUP", "firstUndecided"];
 const fn = new Function(
   ...Object.keys(sandbox),
   `${src}\n;return { ${exported.join(", ")} };`
@@ -156,6 +169,10 @@ const q = G.parseQuery("august 2026 4stars+", [], []);
 assert.equal(q.want.month, 8);
 assert.equal(q.want.year, 2026);
 assert.equal(q.want.minRating, 4);
+assert.equal(coreModule.matchesStructured({
+  taken_at: Date.UTC(2026, 7, 23) / 1000, people: [], albums: [], kind: "photo",
+  ext: "JPG", rating: 4,
+}, q.want), true, "the shared structured matcher accepts all parsed constraints");
 
 // --- filler words are grammar, not selection -------------------------------
 

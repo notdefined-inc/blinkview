@@ -41,7 +41,7 @@ so `ort` has no prebuilt binary to fetch for `x86_64-apple-darwin` and the relea
 fails there. Reviving it means compiling ONNX Runtime from source in CI — possible, but
 upstream itself has abandoned that platform.
 
-**Now: phone apps as *clients* (spec docs/SPECS/active/2026-08-31-remote-control.md,
+**Now: phone apps as *clients* (spec docs/SPECS/active/2026-08-31-mobile-ui.md,
 ADR-0021).** The phone does not run the library — it connects to the desktop app over
 the network, the way Immich and Ente do. That matters because it leaves ADR-0009 and
 ADR-0010 untouched: folders and `blinkview.json` stay on a real filesystem on the

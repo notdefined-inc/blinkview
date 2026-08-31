@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#08090d">
+<title>Blinkview</title>
+<script>
+try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark")}catch(e){document.documentElement.dataset.theme="dark"}
+</script>
+<link rel="stylesheet" href="mobile.css">
+</head>
+<body>
+<div class="app" id="app" aria-busy="true">
+  <header class="topbar">
+    <div class="brand"><img src="logo.png" alt="" width="28" height="28"><span>Blinkview</span></div>
+    <button class="source-pill" id="source-pill" type="button" aria-label="Choose library">
+      <span id="source-name">Opening…</span><span aria-hidden="true">⌄</span>
+    </button>
+  </header>
+  <div class="connection" id="connection" role="status" hidden><span></span><b>Desktop offline</b><small>Trying to reconnect…</small></div>
+  <main class="panels">
+    <section class="panel active" id="panel-photos" data-panel="photos" aria-labelledby="tab-photos">
+      <div class="view-head"><div><p class="eyebrow" id="photos-kicker">Your library</p><h1 id="photos-title">Photos</h1></div><button class="round-btn" id="sort-btn" type="button" aria-label="Change photo order">⇅</button></div>
+      <div class="grid-scroll" id="photos-scroll"><div class="grid-stage" id="photos-stage"></div></div>
+    </section>
+    <section class="panel" id="panel-search" data-panel="search" aria-labelledby="tab-search" hidden>
+      <div class="search-head"><p class="eyebrow">Find a moment</p><h1>Search</h1>
+        <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" autocomplete="off" placeholder="Sam · August · 4 stars" aria-label="Search your photos"><button id="search-clear" type="button" aria-label="Clear search" hidden>×</button></label>
+        <div class="chips" id="search-chips" aria-live="polite"></div>
+      </div>
+      <div class="grid-scroll search-scroll" id="search-scroll"><div class="grid-stage" id="search-stage"></div></div>
+    </section>
+    <section class="panel" id="panel-people" data-panel="people" aria-labelledby="tab-people" hidden>
+      <div class="section-head"><p class="eyebrow">Recognised locally</p><h1>People</h1><p>Faces stay on your desktop.</p></div><div class="people-grid" id="people-list"></div>
+    </section>
+    <section class="panel" id="panel-library" data-panel="library" aria-labelledby="tab-library" hidden>
+      <div class="section-head"><p class="eyebrow">Folders are the truth</p><h1>Library</h1></div><div class="library-list" id="library-list"></div><a class="full-link" href="/?full=1">Open desktop interface <span aria-hidden="true">↗</span></a>
+    </section>
+  </main>
+  <nav class="tabbar" aria-label="Main navigation">
+    <button class="active" id="tab-photos" data-tab="photos" type="button"><span aria-hidden="true">▧</span><b>Photos</b></button>
+    <button id="tab-search" data-tab="search" type="button"><span aria-hidden="true">⌕</span><b>Search</b></button>
+    <button id="tab-people" data-tab="people" type="button"><span aria-hidden="true">◉</span><b>People</b></button>
+    <button id="tab-library" data-tab="library" type="button"><span aria-hidden="true">▤</span><b>Library</b></button>
+  </nav>
+</div>
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+  <header><button id="lb-close" type="button" aria-label="Close photo">‹</button><div><b id="lb-name"></b><small id="lb-count"></small></div><button id="lb-more" type="button" aria-label="Photo actions">•••</button></header>
+  <div class="lb-stage" id="lb-stage"><img id="lb-image" alt=""><video id="lb-video" controls playsinline hidden></video><div class="zoom-note" id="zoom-note" hidden></div></div>
+  <footer><button id="lb-prev" type="button" aria-label="Previous photo">‹</button><div><b id="lb-date"></b><small id="lb-meta"></small></div><button id="lb-next" type="button" aria-label="Next photo">›</button></footer>
+</div>
+<div class="scrim" id="sheet-scrim" hidden></div>
+<section class="sheet" id="action-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+  <div class="grab" aria-hidden="true"></div><div class="sheet-head"><div><p class="eyebrow">Photo actions</p><h2 id="sheet-title">Details</h2></div><button id="sheet-close" type="button" aria-label="Close actions">×</button></div>
+  <div class="stars" id="rating-actions" role="group" aria-label="Rating"></div><div class="labels" id="label-actions" role="group" aria-label="Colour label"></div><dl class="details" id="photo-details"></dl>
+  <div class="sheet-actions"><button id="rename-action" type="button">Rename</button><button class="danger" id="delete-action" type="button">Move to Trash</button></div>
+</section>
+<div class="scrim" id="source-scrim" hidden></div>
+<section class="sheet source-sheet" id="source-sheet" role="dialog" aria-modal="true" aria-labelledby="source-title" hidden>
+  <div class="grab" aria-hidden="true"></div><div class="sheet-head"><div><p class="eyebrow">Browse another folder</p><h2 id="source-title">Libraries</h2></div><button id="source-close" type="button" aria-label="Close libraries">×</button></div><div id="source-options"></div>
+</section>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="mobile.js" type="module"></script>
+</body>
+</html>

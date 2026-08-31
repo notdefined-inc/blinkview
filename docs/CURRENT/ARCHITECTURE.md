@@ -137,14 +137,16 @@ starts an axum HTTP+WebSocket server on an ephemeral port; the QR it shows encod
 frontend, `/photo`, `/ws` — requires the session cookie that route plants; ten wrong
 pair attempts lock pairing until the bridge is toggled again.
 
-The phone's browser loads the *same* `dist/` frontend, with a shim (`remote.js`)
-injected ahead of `app.js` that redefines `window.__TAURI__`: `invoke` becomes a
-WebSocket round-trip, `listen` a subscription, and the pixel routes map onto the same
+The phone's browser loads `dist/mobile.html` (mobile user-agent; `?full=1` selects the
+desktop view and `?m=1` previews mobile). Desktop `app.js` and phone `mobile.js` are
+separate view layers over pure query/layout helpers in `dist/core.js`. A shim
+(`remote.js`) is injected ahead of either view and defines `window.__TAURI__`:
+`invoke` becomes a WebSocket round-trip, `listen` a subscription, and the pixel routes map onto the same
 `serve_photo` (encoded path passed through untouched — the scheme handler owns
 decoding and the boundary). Dispatch is a registry macro that names each command with
 its exact parameters and calls the real command function, so an adapter cannot drift
-from a signature, and a test compares the registry against what `app.js` invokes and
-what `generate_handler!` registers — the parity rule. Events reach the device because
+from a signature, and a test compares the registry against what both view layers
+invoke and what `generate_handler!` registers — the parity rule. Events reach the device because
 every `app.emit` is funnelled through `remote::emit_all`, which also broadcasts a
 frame to a channel each connection subscribes to; new event channels push with no
 bridge change. Native services (share, drag-out, folder pickers) are the one

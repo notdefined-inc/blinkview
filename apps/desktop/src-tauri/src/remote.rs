@@ -405,6 +405,7 @@ fn qr_svg(text: &str) -> String {
 }
 
 const INDEX_HTML: &str = include_str!("../../dist/index.html");
+const MOBILE_HTML: &str = include_str!("../../dist/mobile.html");
 const REMOTE_JS: &str = include_str!("remote.js");
 
 macro_rules! dist_file {
@@ -419,6 +420,10 @@ static DIST: LazyLock<HashMap<&'static str, (&'static str, &'static [u8])>> = La
     HashMap::from([
         dist_file!("app.js", "text/javascript; charset=utf-8"),
         dist_file!("app.css", "text/css; charset=utf-8"),
+        dist_file!("core.js", "text/javascript; charset=utf-8"),
+        dist_file!("mobile.html", "text/html; charset=utf-8"),
+        dist_file!("mobile.css", "text/css; charset=utf-8"),
+        dist_file!("mobile.js", "text/javascript; charset=utf-8"),
         dist_file!("logo.png", "image/png"),
         dist_file!("world110.json", "application/json"),
         dist_file!("world50.json", "application/json"),
@@ -427,23 +432,27 @@ static DIST: LazyLock<HashMap<&'static str, (&'static str, &'static [u8])>> = La
 
 /// The served index, with the shim loaded ahead of app.js so `window.__TAURI__`
 /// exists before the frontend dereferences it.
-const MARKER: &str = r#"<script src="app.js""#;
+const MARKERS: [&str; 2] = [r#"<script src="app.js""#, r#"<script src="mobile.js""#];
 const SHIM: &str = r#"<script src="remote.js"></script>"#;
 
 fn inject_shim(html: &str) -> String {
-    if html.contains(MARKER) {
-        html.replacen(MARKER, &format!("{SHIM}{MARKER}"), 1)
-    } else {
-        // The marker moved: inject at the end of <head> rather than serve a shimless
-        // page that cannot reach the bridge.
-        html.replacen("</head>", &format!("{SHIM}</head>"), 1)
+    for marker in MARKERS {
+        if html.contains(marker) {
+            return html.replacen(marker, &format!("{SHIM}{marker}"), 1);
+        }
     }
+    // The marker moved: inject at the end of <head> rather than serve a shimless
+    // page that cannot reach the bridge.
+    html.replacen("</head>", &format!("{SHIM}</head>"), 1)
 }
 
-fn index_page() -> std::borrow::Cow<'static, str> {
-    match dist_from_disk("index.html") {
+/// The page for one request. `mobile` selects the mobile view layer; the caller
+/// decides from the query (?m=1 today, the UA flip landing with the mobile shell).
+fn index_page_for(mobile: bool) -> std::borrow::Cow<'static, str> {
+    let (file, fallback) = if mobile { ("mobile.html", MOBILE_HTML) } else { ("index.html", INDEX_HTML) };
+    match dist_from_disk(file) {
         Some((_, bytes)) => std::borrow::Cow::Owned(inject_shim(&String::from_utf8_lossy(&bytes))),
-        None => std::borrow::Cow::Owned(inject_shim(INDEX_HTML)),
+        None => std::borrow::Cow::Owned(inject_shim(fallback)),
     }
 }
 
@@ -530,11 +539,33 @@ async fn pair(
     res
 }
 
-async fn index(State(bs): State<BridgeState>, headers: HeaderMap) -> Response {
+async fn index(State(bs): State<BridgeState>, headers: HeaderMap, req: Request) -> Response {
     if !authed(&headers, &bs.shared.token) {
         return forbid("Not paired.");
     }
-    axum::response::Html(index_page().into_owned()).into_response()
+    let mobile = wants_mobile(&headers, req.uri().query());
+    axum::response::Html(index_page_for(mobile).into_owned()).into_response()
+}
+
+/// Phones get the dedicated view by default. Explicit query flags win so a phone can
+/// request the full interface and a desktop browser can preview the mobile one.
+fn wants_mobile(headers: &HeaderMap, query: Option<&str>) -> bool {
+    let flags: std::collections::HashSet<&str> = query
+        .unwrap_or_default()
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter_map(|(key, value)| (value == "1").then_some(key))
+        .collect();
+    if flags.contains("full") {
+        return false;
+    }
+    if flags.contains("m") {
+        return true;
+    }
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|ua| ua.contains("Mobile"))
 }
 
 async fn remote_js(State(bs): State<BridgeState>, headers: HeaderMap) -> Response {
@@ -819,6 +850,22 @@ mod tests {
         out
     }
 
+    /// Command names invoked by the dedicated mobile view layer.
+    fn mobile_commands() -> Vec<String> {
+        let src = include_str!("../../dist/mobile.js");
+        let mut out = Vec::new();
+        let mut rest = src;
+        while let Some(i) = rest.find("invoke(\"") {
+            rest = &rest[i + 8..];
+            if let Some(end) = rest.find('"') {
+                out.push(rest[..end].to_owned());
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Command names registered with the window, scanned from `generate_handler![..]`
     /// in `lib.rs`. Idents arrive as bare names or `module::name`; `#[cfg(...)]`
     /// attributes inside the list are stripped, not parsed.
@@ -860,6 +907,13 @@ mod tests {
         let handlers: std::collections::HashSet<String> =
             handler_commands().into_iter().collect();
 
+        for cmd in mobile_commands() {
+            assert!(
+                REGISTRY.contains_key(cmd.as_str()) || exempt.contains(cmd.as_str()),
+                "mobile.js invokes {cmd:?}, which the bridge cannot dispatch and which \
+                 is on neither exemption list"
+            );
+        }
         for cmd in frontend_commands() {
             assert!(
                 REGISTRY.contains_key(cmd.as_str()) || exempt.contains(cmd.as_str()),
@@ -916,10 +970,28 @@ mod tests {
     /// dereferenced by the frontend before it exists.
     #[test]
     fn the_served_index_loads_the_shim_ahead_of_app_js() {
-        let page = index_page();
+        let page = index_page_for(false);
         let shim = page.find("remote.js").expect("shim injected");
         let app = page.find("app.js").expect("frontend present");
         assert!(shim < app, "remote.js must load before app.js");
+    }
+
+    #[test]
+    fn phones_get_mobile_and_explicit_view_flags_win() {
+        let mut phone = HeaderMap::new();
+        phone.insert(header::USER_AGENT, "Mozilla/5.0 (iPhone) Mobile/15E148".parse().unwrap());
+        assert!(wants_mobile(&phone, None));
+        assert!(!wants_mobile(&phone, Some("full=1")));
+
+        let desktop = HeaderMap::new();
+        assert!(!wants_mobile(&desktop, None));
+        assert!(wants_mobile(&desktop, Some("m=1")));
+        assert!(!wants_mobile(&phone, Some("m=1&full=1")), "full view wins when both flags are present");
+
+        let page = index_page_for(true);
+        let shim = page.find("remote.js").expect("shim injected");
+        let app = page.find("mobile.js").expect("mobile frontend present");
+        assert!(shim < app, "remote.js must load before mobile.js");
     }
 
     #[test]

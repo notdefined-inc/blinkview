@@ -1,36 +1,34 @@
 # Status
 
-_Last updated: 2026-08-31 · shipping version 0.1.4_
+_Last updated: 2026-09-01 · shipping version 0.1.4_
 
-## The phone gets the real UI (new)
+## Dedicated phone UI (in progress)
 
-**Responsive, not a second app.** One breakpoint (760px) turns the sidebar into an
-off-canvas drawer behind a hamburger, drops the titlebar to 52px, and lets the
-justified grid — already width-agnostic — take every pixel; a coarse-pointer query
-bumps touch targets to 40px, hides the lightbox arrows in favour of swipe, and adds
-pinch-zoom, double-tap-to-zoom and long-press context menus. Desktop above the
-breakpoint is unchanged pixel for pixel (screenshot-compared, not assumed). Verified
-through the bridge at 390×844 with rendered screenshots, two critique passes — pass 1
-caught the logo crowding the search pill and the theme button clipping. The
-lightbox gestures and long-press are wired behind `pointer: coarse` and await
-hands-on phone confirmation; everything else was seen working. Spec:
-docs/SPECS/done/2026-08-31-mobile-responsive.md. `BLINKVIEW_DIST_DIR` lets the bridge
-serve the frontend from a directory, so frontend work over the bridge is
-edit-and-reload instead of a rebuild.
+Paired phones now receive `mobile.html` by user-agent, with `?full=1` retaining access
+to the responsive desktop interface and `?m=1` previewing mobile on a desktop browser.
+The dedicated view has working Photos, Search, People and Library tabs, virtualised
+justified grids, folder/source navigation, a swipe/pinch/double-tap lightbox, video,
+and a bottom sheet for ratings, labels, info, rename and delete-to-Trash. It shares the
+pure query/layout helpers in `dist/core.js` and sends every read and write through the
+same bridge commands as desktop. Source management, semantic search, person editing,
+Trash management, editing, map/Ask and duplicate review remain in the sequenced mobile
+spec rather than being represented as finished parity. Desktop and mobile were
+screenshot-verified at 1440×900 and 390×844; real-phone gesture confirmation remains a
+release gate. Spec: `docs/SPECS/active/2026-08-31-mobile-ui.md`.
 
 ## Remote control
 
 **Control from your phone.** The titlebar's QR button starts the remote bridge
 (ADR-0021, spec docs/SPECS/done/2026-08-31-remote-control.md): a QR code the phone's
-camera opens, loading the *same* frontend in the phone's browser over an axum
+camera opens, loading the dedicated mobile view in the phone's browser over an axum
 HTTP+WebSocket server inside the app. A fresh 128-bit token gates every route; ten
 wrong pair attempts lock pairing until the bridge is toggled again; Disconnect stops
-the listener outright. The phone gets full control — browse, search (semantic too),
-lightbox, video seeking (Range), and every writing action through the same Plan →
-preview → journal discipline, so a move made on the phone is ⌘Z-undoable on the
-desktop. Dispatch is one registry shared with the Tauri window (the `bridge!` macro in
+the listener outright. The bridge can dispatch the full engine contract, but the
+dedicated mobile surface currently exposes the v1 slice listed above; its writing
+actions use the same journal discipline, so a delete or rename made on the phone is
+undoable on the desktop. Dispatch is one registry shared with both view layers (the `bridge!` macro in
 `src-tauri/src/remote.rs` names each command with its exact parameters), and a test
-scans the shipped `app.js` + `generate_handler!` to enforce parity, so future features
+scans the shipped `app.js`, `mobile.js` and `generate_handler!` to enforce command parity, so future features
 reach the phone with no bridge change unless they lean on a macOS-native service
 (share, drag-out, folder pickers — the sanctioned exemptions, gated in the frontend on
 `__BLINKVIEW_REMOTE__`). `BLINKVIEW_REMOTE_START=1` in the environment starts the
