@@ -1,6 +1,6 @@
 # Status
 
-_Last updated: 2026-09-01 · shipping version 0.1.4_
+_Last updated: 2026-09-01 · shipping version 0.1.5_
 
 ## Dedicated phone UI (in progress)
 
@@ -13,8 +13,9 @@ pure query/layout helpers in `dist/core.js` and sends every read and write throu
 same bridge commands as desktop. Source management, semantic search, person editing,
 Trash management, editing, map/Ask and duplicate review remain in the sequenced mobile
 spec rather than being represented as finished parity. Desktop and mobile were
-screenshot-verified at 1440×900 and 390×844; real-phone gesture confirmation remains a
-release gate. Spec: `docs/SPECS/active/2026-08-31-mobile-ui.md`.
+screenshot-verified at 1440×900 and 390×844, and swipe, pinch and double-tap were
+confirmed on a real phone before the 0.1.5 release. Spec:
+`docs/SPECS/active/2026-08-31-mobile-ui.md`.
 
 ## Remote control
 
