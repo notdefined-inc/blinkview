@@ -10,9 +10,32 @@ use crate::{
     timesource, Library,
 };
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use walkdir::WalkDir;
+
+/// Directory names that are application or operating-system internals rather than
+/// photograph collections. The chosen root is always exempt: explicitly adding
+/// `~/Library/Photos` must work even though a `Library` encountered while walking a
+/// home directory is skipped.
+pub const SKIP_DIRS: &[&str] = &[
+    "Library",
+    "Applications",
+    "System",
+    "Volumes",
+    "private",
+    "node_modules",
+    ".git",
+    ".Trash",
+    "$RECYCLE.BIN",
+    "Windows",
+    "Program Files",
+];
+
+/// Stop a survey before an accidentally selected disk can keep the dialog waiting
+/// indefinitely. The result says "more than" this limit rather than inventing an
+/// exact count from an incomplete walk.
+pub const SURVEY_LIMIT: usize = 200_000;
 
 /// Extensions blinkview will index as photographs.
 ///
@@ -44,6 +67,16 @@ pub struct ScanStats {
     pub errors: Vec<String>,
 }
 
+/// The inexpensive, pre-commit description of a folder. A survey reads directory
+/// entries only: files are never opened, hashed, decoded or inspected for metadata.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Survey {
+    pub here: usize,
+    pub below: Option<usize>,
+    pub subfolders: usize,
+    pub excluded: Vec<String>,
+}
+
 pub fn kind_of(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     if is_photo_ext(ext.as_str()) {
@@ -66,6 +99,11 @@ pub fn scan(lib: &mut Library, rehash: bool) -> Result<ScanStats> {
     scan_with_progress(lib, rehash, &crate::progress::silent)
 }
 
+/// Scan only files directly inside the library root.
+pub fn scan_shallow(lib: &mut Library, rehash: bool) -> Result<ScanStats> {
+    scan_shallow_with_progress(lib, rehash, &crate::progress::silent)
+}
+
 /// As [`scan`], reporting `(done, total)`.
 ///
 /// Two passes: the first only reads directory entries to learn how many files there
@@ -77,17 +115,44 @@ pub fn scan_with_progress(
     rehash: bool,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<ScanStats> {
+    let shallow = lib.is_shallow();
+    let skip_default_dirs = lib.skips_default_dirs();
+    scan_with_options(lib, rehash, shallow, skip_default_dirs, progress)
+}
+
+/// As [`scan_shallow`], reporting `(done, total)`.
+pub fn scan_shallow_with_progress(
+    lib: &mut Library,
+    rehash: bool,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<ScanStats> {
+    let skip_default_dirs = lib.skips_default_dirs();
+    scan_with_options(lib, rehash, true, skip_default_dirs, progress)
+}
+
+fn scan_with_options(
+    lib: &mut Library,
+    rehash: bool,
+    shallow: bool,
+    skip_default_dirs: bool,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<ScanStats> {
     let mut st = ScanStats::default();
     let mut on_disk: HashSet<String> = HashSet::new();
     let root = lib.root().to_path_buf();
 
-    let files: Vec<std::path::PathBuf> = WalkDir::new(&root)
+    let walk = if shallow {
+        WalkDir::new(&root).max_depth(1)
+    } else {
+        WalkDir::new(&root)
+    };
+    let files: Vec<std::path::PathBuf> = walk
         .into_iter()
         // The pre-rename cache is skipped too. A library can still hold one — an older
         // install left it, or a copy of the folder carried it along — and a directory
         // of thumbnails indexed as photographs is a folder of duplicates appearing out
         // of nowhere.
-        .filter_entry(|e| e.file_name() != VAULT_DIR && e.file_name() != LEGACY_VAULT_DIR)
+        .filter_entry(|e| should_descend(e, skip_default_dirs))
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file() && !fsops::is_sidecar(e.path()))
         .filter(|e| kind_of(e.path()).is_some())
@@ -172,4 +237,81 @@ pub fn scan_with_progress(
         }
     }
     Ok(st)
+}
+
+fn should_descend(entry: &walkdir::DirEntry, skip_default_dirs: bool) -> bool {
+    if entry.depth() == 0 || !entry.file_type().is_dir() {
+        return true;
+    }
+    let name = entry.file_name().to_string_lossy();
+    if name == VAULT_DIR || name == LEGACY_VAULT_DIR {
+        return false;
+    }
+    !skip_default_dirs || !SKIP_DIRS.iter().any(|skip| name.eq_ignore_ascii_case(skip))
+}
+
+/// Count media and subfolders before a folder becomes a source.
+pub fn survey_folder(root: impl AsRef<Path>) -> Result<Survey> {
+    survey_folder_cancellable(root, &|| false)
+}
+
+/// [`survey_folder`] with a cancellation predicate for UI callers.
+pub fn survey_folder_cancellable(
+    root: impl AsRef<Path>,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<Survey> {
+    let root = root.as_ref();
+    if !root.is_dir() {
+        anyhow::bail!("not a directory: {}", root.display());
+    }
+
+    let mut survey = Survey { below: Some(0), ..Default::default() };
+    let mut excluded = BTreeSet::new();
+    let mut entries_seen = 0usize;
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+
+    while let Some((dir, depth)) = stack.pop() {
+        if cancelled() {
+            anyhow::bail!("folder survey cancelled");
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            // A directory that cannot be read contributes nothing. The eventual scan
+            // reports individual failures; the survey remains a cheap size warning.
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            entries_seen += 1;
+            if entries_seen > SURVEY_LIMIT {
+                survey.below = None;
+                survey.excluded = excluded.into_iter().collect();
+                return Ok(survey);
+            }
+            if cancelled() {
+                anyhow::bail!("folder survey cancelled");
+            }
+            let ty = match entry.file_type() {
+                Ok(ty) => ty,
+                Err(_) => continue,
+            };
+            if ty.is_dir() {
+                survey.subfolders += 1;
+                let name = entry.file_name().to_string_lossy().to_string();
+                if SKIP_DIRS.iter().any(|skip| name.eq_ignore_ascii_case(skip)) {
+                    excluded.insert(name);
+                } else {
+                    stack.push((entry.path(), depth + 1));
+                }
+            } else if ty.is_file() && !fsops::is_sidecar(&entry.path()) && kind_of(&entry.path()).is_some() {
+                if depth == 0 {
+                    survey.here += 1;
+                } else if let Some(below) = survey.below.as_mut() {
+                    *below += 1;
+                }
+            }
+        }
+    }
+
+    survey.excluded = excluded.into_iter().collect();
+    Ok(survey)
 }

@@ -273,6 +273,7 @@
   <div class="turn reveal" style="margin-top:32px">
     <div>
       <p>Not a metaphor. There is no library file, no import step, no proprietary container. Point Blinkview at a folder and it reads what's there. Rename a folder in Finder mid-session and it keeps up, because photos are tracked by content hash, not by path.</p>
+      <p>Pointing starts smaller than that. Double-click a photo or drop a folder on the window and Blinkview <em>peeks</em> — read-only, markerless, forgotten when you close it — and asks before committing: <strong>340 photos here, 84,000 more below. This folder only, or everything?</strong></p>
       <p>Delete Blinkview tomorrow and you lose <em>nothing</em>. Your folders sit exactly where they were, named exactly what you named them — plus a small readable <code>blinkview.json</code> beside each one holding the ratings and names you added, because those were yours and no machine can reproduce them.</p>
       <p>Everything else — thumbnails, the index, face embeddings — lives in your machine's cache directory, <strong>not in your folders</strong>. A forty-byte marker is all a library carries; delete the cache and it rebuilds. That isn't a caveat; it's the promise the whole design is built to keep.</p>
     </div>

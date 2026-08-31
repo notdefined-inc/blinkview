@@ -1,10 +1,20 @@
 # Status
 
-_Last updated: 2026-08-30 · shipping version 0.1.2_
+_Last updated: 2026-08-31 · shipping version 0.1.2_
 
 ## Current work — desktop app
 
-`apps/desktop` runs. Multi-folder sources (remembered across launches), date-grouped
+`apps/desktop` runs. It is a viewer before it is a library: double-clicking a
+photograph (Finder Open With, `Viewer`/`Alternate` rank) or dropping a file or folder
+on the window opens a **peek** — read-only, markerless, shallow over just that folder,
+with a cache under the machine cache root that `end_peek` deletes. A banner offers
+**Keep this folder**, which promotes the peek to a real source. Adding a folder
+surveys it first (directory entries only, capped at 200,000) and offers **This folder
+only** or **Include subfolders**; depth is then a per-source property, changeable from
+the source's context menu, and new sources skip `Library`/`node_modules`& co. while
+descending. ADR-0020.
+
+Multi-folder sources (remembered across launches), date-grouped
 justified grid, lightbox with folder/person context, in-app people review with live
 re-suggestion, selection with context menu, delete to a recoverable `Trash/`, per-photo
 rename, per-person untagging, and the organize sheet (preview then apply).
@@ -146,7 +156,8 @@ they scan, thumbnail and display. WKWebView genuinely cannot show HEIC (an `<img
 reports `naturalWidth: 0`), which is why the transcode exists. See ADR-0005 — this is
 the project's only macOS-only dependency.
 
-Folders can be added by dragging them onto the window, or with the ＋ button.
+Folders are added with the ＋ button, which surveys before committing; anything dragged
+onto the window — or opened from Finder — is peeked first rather than added.
 
 ### Scale (measured on 20,000 distinct photos, debug build)
 
@@ -753,6 +764,28 @@ face alone, which is the intended bias. Reproduce with
   only fully-applied plans, so such a state is not undoable via `undo`.
 
 ## Recently shipped
+- 2026-08-31 Peeking and knowing a folder's size before adding it. A folder dropped on
+  the window — or a photograph opened from Finder — opens a **read-only peek**: the
+  files directly inside it, ordered by filename, with no marker, no watcher, no
+  persistence and a cache that is deleted when the peek closes. Every writing command
+  refuses a peek by name; the one action offered is **Keep this folder**, which
+  promotes it to a full source (marker written, recursive scan, watcher started). The
+  `photo://` boundary grants a peek only its direct files — `parent() ==`, never the
+  subtree — and a photograph opened from inside an added source opens that library,
+  positioned on the photograph. Adding a folder now surveys it first: a cancellable
+  count of what is here and what is below, capped at 200,000 entries, with **This
+  folder only** focused whenever recursion would be the surprising choice. Depth is a
+  property of the source, editable from its context menu; `sources.json` written
+  before this change loads, and those sources stay recursive until edited. New sources
+  skip `Library`, `node_modules`, `.git` and friends while descending — adding
+  `~/Library/Photos` on purpose still works. Verified: 208 workspace tests (including
+  shallow-both-ways, peek cache removal, the 403 boundary and legacy sources), clippy
+  `--all-targets` clean, the command grammar green, and both new UI states screenshot
+  reviewed. The dev build is not bundle-registered, so Finder's Open With hop itself is
+  covered by `owning_source` unit tests plus the `fileAssociations` config rather than
+  a packaged double-click. Specs:
+  docs/SPECS/done/2026-08-31-{peeking-at-a-folder,adding-a-folder-shows-its-size}.md;
+  ADR-0020.
 - 2026-08-30 The everyday cleanup and native-media workflows. **Review** groups
   verified perceptual near-duplicates into day/trip batches, scores sharpness,
   suggests a keeper without applying it, and moves only rejected files to journalled

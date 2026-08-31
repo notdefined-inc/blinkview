@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use chrono::{Datelike, NaiveDateTime, Utc};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Serialize)]
@@ -100,7 +101,16 @@ pub struct AppState {
     /// a phone backup — blocked every command for every other library, so switching
     /// source while thumbnails were generating simply hung until it finished.
     libs: Mutex<HashMap<String, Arc<Mutex<Library>>>>,
-    sources: Mutex<Vec<String>>,
+    sources: Mutex<Vec<SourceEntry>>,
+    /// Markerless, session-only libraries used to look at one folder without adding
+    /// it. Kept separate from `libs` so no save or watcher path can persist one.
+    peeks: Mutex<HashMap<String, Arc<Mutex<Library>>>>,
+    /// File-open events can arrive before the webview has installed its listener.
+    /// They wait here until the frontend explicitly takes them.
+    pending_open: Mutex<Vec<String>>,
+    /// A newer survey, or an explicit cancellation, stops the directory walk already
+    /// in flight. The walk checks between entries and never opens a file.
+    survey_generation: AtomicU64,
     /// One filesystem watcher per open library, so photographs dropped into a folder
     /// in Finder appear without the window being touched.
     watchers: watch::Watchers,
@@ -127,9 +137,42 @@ pub struct AppState {
 
 // ---------------------------------------------------------------- sources
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum SourceEntry {
+    /// Written before source depth existed. It remains recursive and keeps the exact
+    /// no-exclusion behaviour that version had until the user edits it.
+    Legacy(String),
+    Full {
+        path: String,
+        #[serde(default)]
+        shallow: bool,
+    },
+}
+
+impl SourceEntry {
+    fn path(&self) -> &str {
+        match self {
+            Self::Legacy(path) | Self::Full { path, .. } => path,
+        }
+    }
+
+    fn shallow(&self) -> bool {
+        matches!(self, Self::Full { shallow: true, .. })
+    }
+
+    fn skips_default_dirs(&self) -> bool {
+        matches!(self, Self::Full { .. })
+    }
+
+    fn persisted(path: String, shallow: bool) -> Self {
+        Self::Full { path, shallow }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct SourcesFile {
-    sources: Vec<String>,
+    sources: Vec<SourceEntry>,
 }
 
 /// The bundle identifier before the rename (ADR-0017). It names the directory the
@@ -160,7 +203,7 @@ fn adopt_legacy_sources(dir: &std::path::Path, path: &std::path::Path) {
     }
 }
 
-fn load_sources(app: &tauri::AppHandle) -> Vec<String> {
+fn load_source_entries(app: &tauri::AppHandle) -> Vec<SourceEntry> {
     std::fs::read(sources_path(app))
         .ok()
         .and_then(|d| serde_json::from_slice::<SourcesFile>(&d).ok())
@@ -168,7 +211,7 @@ fn load_sources(app: &tauri::AppHandle) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn save_sources(app: &tauri::AppHandle, list: &[String]) {
+fn save_sources(app: &tauri::AppHandle, list: &[SourceEntry]) {
     let _ = std::fs::write(
         sources_path(app),
         serde_json::to_vec_pretty(&SourcesFile { sources: list.to_vec() }).unwrap_or_default(),
@@ -191,6 +234,9 @@ pub struct SourceInfo {
     /// its first scan finishes instead of after.
     #[serde(default)]
     indexing: bool,
+    /// False means recursive, preserving the behaviour sources had before this field.
+    #[serde(default)]
+    shallow: bool,
 }
 
 #[derive(Serialize)]
@@ -330,7 +376,18 @@ fn open_lib(state: &AppState, root: &str) -> R<()> {
         }
     }
 
-    let mut lib = Library::open(root).map_err(err)?;
+    let (shallow, skip_default_dirs) = state
+        .sources
+        .lock()
+        .ok()
+        .and_then(|sources| {
+            sources
+                .iter()
+                .find(|source| same_source(source.path(), root))
+                .map(|source| (source.shallow(), source.skips_default_dirs()))
+        })
+        .unwrap_or((false, false));
+    let mut lib = Library::open_configured(root, shallow, skip_default_dirs).map_err(err)?;
     // Reconcile with the filesystem the moment a library is opened, rather than
     // waiting to be asked (ADR-0011). Photographs added or reorganised in Finder are
     // picked up before anything is drawn, and the common case is cheap because `scan`
@@ -371,6 +428,10 @@ fn with_readable<T>(
     root: &str,
     f: impl FnOnce(&mut Library) -> anyhow::Result<T>,
 ) -> R<T> {
+    if let Some(peek) = peek_handle(state, root)? {
+        let mut guard = peek.lock().map_err(err)?;
+        return f(&mut guard).map_err(err);
+    }
     let open = {
         let libs = state.libs.lock().map_err(err)?;
         libs.get(root).cloned()
@@ -403,6 +464,15 @@ fn with_readable<T>(
 /// off the UI thread. Heavy work (thumbnails, face detection) would otherwise
 /// freeze the window.
 fn with<T>(state: &AppState, root: &str, f: impl FnOnce(&mut Library) -> anyhow::Result<T>) -> R<T> {
+    if peek_handle(state, root)?.is_some() {
+        return Err(format!(
+            "{} is open as a read-only peek. Keep this folder before changing photographs.",
+            std::path::Path::new(root)
+                .file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_else(|| root.into())
+        ));
+    }
     open_lib(state, root)?;
     // Take the registry lock only long enough to find the library, then release it, so
     // work on one library never holds up another.
@@ -412,6 +482,19 @@ fn with<T>(state: &AppState, root: &str, f: impl FnOnce(&mut Library) -> anyhow:
     };
     let mut guard = lib.lock().map_err(err)?;
     f(&mut guard).map_err(err)
+}
+
+fn peek_handle(state: &AppState, root: &str) -> R<Option<Arc<Mutex<Library>>>> {
+    let requested = std::path::Path::new(root)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(root));
+    let peeks = state.peeks.lock().map_err(err)?;
+    Ok(peeks.iter().find_map(|(path, peek)| {
+        let stored = std::path::Path::new(path)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(path));
+        (stored == requested).then(|| peek.clone())
+    }))
 }
 
 /// True when `path` sits in `folder` or anywhere beneath it.
@@ -541,21 +624,24 @@ fn describe(lib: &mut Library) -> anyhow::Result<SourceInfo> {
         thumbs_ready: ready,
         missing: false,
         indexing: false,
+        shallow: lib.is_shallow(),
     })
 }
 
 #[tauri::command]
 async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> R<Vec<SourceInfo>> {
-    let list = load_sources(&app);
+    let list = load_source_entries(&app);
     *state.sources.lock().map_err(err)? = list.clone();
     let mut out = Vec::new();
-    for root in list {
+    for source in list {
+        let root = source.path().to_string();
         if !std::path::Path::new(&root).is_dir() {
             out.push(SourceInfo {
                 name: root.rsplit('/').next().unwrap_or(&root).to_string(),
                 path: root,
                 photos: 0, videos: 0, folders: vec![], people: vec![],
                 faces_analysed: 0, thumbs_ready: 0, missing: true, indexing: false,
+                shallow: source.shallow(),
             });
             continue;
         }
@@ -579,6 +665,7 @@ async fn list_sources(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
                     path: root.clone(),
                     photos: 0, videos: 0, folders: vec![], people: vec![],
                     faces_analysed: 0, thumbs_ready: 0, missing: false, indexing: true,
+                    shallow: source.shallow(),
                 });
             }
         }
@@ -643,20 +730,35 @@ async fn add_source(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     path: String,
+    shallow: Option<bool>,
 ) -> R<SourceInfo> {
+    register_source(&app, &state, path, shallow.unwrap_or(false))
+}
+
+fn register_source(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    path: String,
+    shallow: bool,
+) -> R<SourceInfo> {
+    if !std::path::Path::new(&path).is_dir() {
+        return Err(format!("not a directory: {path}"));
+    }
     // A folder removed earlier is still marked cancelled; adding it back must undo
     // that, or nothing will ever analyse it again.
     if let Ok(mut c) = state.cancelled.lock() {
         c.remove(&path);
     }
-    let list = load_sources(&app);
+    let list = load_source_entries(app);
+    let paths: Vec<String> = list.iter().map(|source| source.path().to_string()).collect();
     // Overlaps are refused here, at the only door a folder can enter through.
-    if let Some(why) = source_conflict(std::path::Path::new(&path), &list) {
+    if let Some(why) = source_conflict(std::path::Path::new(&path), &paths) {
         return Err(why);
     }
     let mut list = list;
-    list.push(path.clone());
-    save_sources(&app, &list);
+    list.push(SourceEntry::persisted(path.clone(), shallow));
+    save_sources(app, &list);
+    *state.sources.lock().map_err(err)? = list;
     let name = std::path::Path::new(&path)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -672,7 +774,300 @@ async fn add_source(
         thumbs_ready: 0,
         missing: false,
         indexing: true,
+        shallow,
     })
+}
+
+#[derive(Serialize)]
+pub struct SurveyInfo {
+    here: usize,
+    below: Option<usize>,
+    subfolders: usize,
+    excluded: Vec<String>,
+}
+
+#[tauri::command]
+async fn survey_folder(state: tauri::State<'_, AppState>, path: String) -> R<SurveyInfo> {
+    let ticket = state.survey_generation.fetch_add(1, Ordering::Relaxed) + 1;
+    let surveyed = scan::survey_folder_cancellable(&path, &|| {
+        state.survey_generation.load(Ordering::Relaxed) != ticket
+    })
+    .map_err(err)?;
+    Ok(SurveyInfo {
+        here: surveyed.here,
+        below: surveyed.below,
+        subfolders: surveyed.subfolders,
+        excluded: surveyed.excluded,
+    })
+}
+
+#[tauri::command]
+fn cancel_survey(state: tauri::State<'_, AppState>) {
+    state.survey_generation.fetch_add(1, Ordering::Relaxed);
+}
+
+#[derive(Clone, Serialize)]
+pub struct PeekInfo {
+    path: String,
+    name: String,
+    photos: usize,
+    videos: usize,
+    subfolders: usize,
+}
+
+fn direct_subfolder_count(root: &std::path::Path) -> usize {
+    std::fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn describe_peek(lib: &Library) -> anyhow::Result<PeekInfo> {
+    let rows = lib.index.all()?;
+    let photos = rows.iter().filter(|row| row.kind == "photo").count();
+    let videos = rows.iter().filter(|row| row.kind == "video").count();
+    let path = lib.root().display().to_string();
+    Ok(PeekInfo {
+        name: lib
+            .root()
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone()),
+        subfolders: direct_subfolder_count(lib.root()),
+        path,
+        photos,
+        videos,
+    })
+}
+
+fn begin_peek(state: &AppState, path: &str) -> R<PeekInfo> {
+    let canonical = std::path::Path::new(path).canonicalize().map_err(err)?;
+    if !canonical.is_dir() {
+        return Err(format!("not a directory: {}", canonical.display()));
+    }
+    let key = canonical.display().to_string();
+    if let Some(existing) = state.peeks.lock().map_err(err)?.get(&key).cloned() {
+        let lib = existing.lock().map_err(err)?;
+        return describe_peek(&lib).map_err(err);
+    }
+
+    let mut lib = Library::peek(&canonical).map_err(err)?;
+    scan::scan_shallow(&mut lib, false).map_err(err)?;
+    let info = describe_peek(&lib).map_err(err)?;
+    state
+        .peeks
+        .lock()
+        .map_err(err)?
+        .insert(key, Arc::new(Mutex::new(lib)));
+    Ok(info)
+}
+
+#[tauri::command]
+async fn peek_folder(state: tauri::State<'_, AppState>, path: String) -> R<PeekInfo> {
+    begin_peek(&state, &path)
+}
+
+#[tauri::command]
+async fn peek_photos(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<Vec<PhotoInfo>> {
+    let peek = peek_handle(&state, &path)?.ok_or_else(|| format!("{path} is not being peeked"))?;
+    let lib = peek.lock().map_err(err)?;
+    let mut out: Vec<PhotoInfo> = lib
+        .index
+        .all()
+        .map_err(err)?
+        .into_iter()
+        .map(|row| PhotoInfo {
+            kind: row.kind,
+            rating: 0,
+            label: None,
+            albums: Vec::new(),
+            bytes: row.size.max(0) as u64,
+            hash: row.hash,
+            path: row.path,
+            taken_at: row.taken_at,
+            faces: 0,
+            people: Vec::new(),
+            width: 0,
+            height: 0,
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+    Ok(out)
+}
+
+fn end_peek_for(state: &AppState, path: &str) -> R<()> {
+    let canonical = std::path::Path::new(path)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let key = canonical.display().to_string();
+    let peek = state
+        .peeks
+        .lock()
+        .map_err(err)?
+        .remove(&key)
+        .ok_or_else(|| format!("{key} is not being peeked"))?;
+    match Arc::try_unwrap(peek) {
+        Ok(lock) => lock.into_inner().map_err(err)?.end_peek().map_err(err),
+        Err(peek) => {
+            state.peeks.lock().map_err(err)?.insert(key, peek);
+            Err("the peek is still serving an image; try closing it again".into())
+        }
+    }
+}
+
+#[tauri::command]
+async fn end_peek(state: tauri::State<'_, AppState>, path: String) -> R<()> {
+    end_peek_for(&state, &path)
+}
+
+#[tauri::command]
+async fn promote_peek(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<SourceInfo> {
+    let canonical = std::path::Path::new(&path).canonicalize().map_err(err)?;
+    let root = canonical.display().to_string();
+    end_peek_for(&state, &root)?;
+    register_source(&app, &state, root.clone(), false)?;
+    open_lib(&state, &root)?;
+    start_watching(&app, &state, &root);
+    with_readable(&state, &root, describe)
+}
+
+#[derive(Serialize)]
+pub struct OpenTarget {
+    mode: String,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    folder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peek: Option<PeekInfo>,
+}
+
+/// Which added source already covers `canonical`, if any.
+///
+/// Returns the source's *stored* path — the string the registry, the open gate and
+/// the sidebar all key on — with the opened file's path relative to the source root,
+/// or the folder when a directory inside the source was opened. Canonicalising only
+/// for the comparison is what keeps a symlinked source a single library: returning
+/// the resolved path would open the same vault again under a second key.
+fn owning_source(
+    canonical: &std::path::Path,
+    entries: &[SourceEntry],
+) -> Option<(String, Option<String>, Option<String>)> {
+    for source in entries {
+        let root = std::path::Path::new(source.path())
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(source.path()));
+        if !canonical.starts_with(&root) {
+            continue;
+        }
+        let rel = canonical
+            .strip_prefix(&root)
+            .ok()?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if canonical.is_file() {
+            return Some((source.path().to_string(), Some(rel), None));
+        }
+        // A directory: the source root itself, or a folder inside it.
+        return Some((
+            source.path().to_string(),
+            None,
+            (!rel.is_empty()).then_some(rel),
+        ));
+    }
+    None
+}
+
+#[tauri::command]
+async fn open_path(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> R<OpenTarget> {
+    let canonical = std::path::Path::new(&path).canonicalize().map_err(err)?;
+    if canonical.is_file() && scan::kind_of(&canonical).is_none() {
+        return Err(format!("Blinkview cannot view {}", canonical.display()));
+    }
+    if let Some((stored, file, folder)) = owning_source(&canonical, &load_source_entries(&app)) {
+        return Ok(OpenTarget {
+            mode: "source".into(),
+            path: stored,
+            file,
+            folder,
+            peek: None,
+        });
+    }
+    if canonical.is_file() {
+        let root = canonical.parent().ok_or("the file has no containing folder")?;
+        let info = begin_peek(&state, &root.display().to_string())?;
+        return Ok(OpenTarget {
+            mode: "peek".into(),
+            path: info.path.clone(),
+            file: canonical.file_name().map(|name| name.to_string_lossy().to_string()),
+            folder: None,
+            peek: Some(info),
+        });
+    }
+    if canonical.is_dir() {
+        let info = begin_peek(&state, &canonical.display().to_string())?;
+        return Ok(OpenTarget {
+            mode: "peek".into(),
+            path: info.path.clone(),
+            file: None,
+            folder: None,
+            peek: Some(info),
+        });
+    }
+    Err(format!("not a file or folder: {}", canonical.display()))
+}
+
+#[tauri::command]
+fn take_open_paths(state: tauri::State<'_, AppState>) -> R<Vec<String>> {
+    let mut pending = state.pending_open.lock().map_err(err)?;
+    Ok(std::mem::take(&mut *pending))
+}
+
+/// Change whether a source includes subfolders, then reconcile without rehashing rows
+/// that remain in scope. Rows that leave a shallow source are derived index state;
+/// ratings and labels beside their photographs are untouched.
+#[tauri::command]
+async fn set_source_depth(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    shallow: bool,
+) -> R<SourceInfo> {
+    let mut entries = load_source_entries(&app);
+    let Some(index) = entries.iter().position(|source| same_source(source.path(), &path)) else {
+        return Err(format!("{path} is not an added folder"));
+    };
+    let stored = entries[index].path().to_string();
+    entries[index] = SourceEntry::persisted(stored, shallow);
+    save_sources(&app, &entries);
+    *state.sources.lock().map_err(err)? = entries;
+
+    open_lib(&state, &path)?;
+    let lib = {
+        let libs = state.libs.lock().map_err(err)?;
+        libs.get(&path).cloned().ok_or("library not open")?
+    };
+    let mut lib = lib.lock().map_err(err)?;
+    lib.configure_scan(shallow, true);
+    let sink = emitter(&app, "scan", &path);
+    scan::scan_with_progress(&mut lib, false, &sink).map_err(err)?;
+    describe(&mut lib).map_err(err)
 }
 
 /// Detect faces for a source that has not been analysed yet.
@@ -825,8 +1220,12 @@ fn remove_source(
     path: String,
     purge: Option<bool>,
 ) -> R<String> {
-    let list: Vec<String> = load_sources(&app).into_iter().filter(|p| !same_source(p, &path)).collect();
+    let list: Vec<SourceEntry> = load_source_entries(&app)
+        .into_iter()
+        .filter(|source| !same_source(source.path(), &path))
+        .collect();
     save_sources(&app, &list);
+    *state.sources.lock().map_err(err)? = list;
     state.libs.lock().map_err(err)?.remove(&path);
     // Stop watching, or a removed source keeps rescanning a library nothing displays.
     state.watchers.unwatch(&path);
@@ -1966,7 +2365,7 @@ pub struct PhotoDetail {
 
 #[tauri::command]
 async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: String) -> R<PhotoDetail> {
-    with(&state, &path, |lib| {
+    with_readable(&state, &path, |lib| {
         let row = lib
             .index
             .all()?
@@ -1974,23 +2373,31 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             .find(|r| r.hash == hash)
             .ok_or_else(|| anyhow::anyhow!("photo not found"))?;
         let sig = lib.index.get_signature(&hash)?;
-        let people_file = lib.people()?;
-        let opt = assign::Options::default();
         let mut people = Vec::new();
         let mut faces = 0;
-        for f in lib.all_faces()? {
-            if f.hash != hash {
-                continue;
-            }
-            faces += 1;
-            if let Some(e) = f.embedding.as_ref() {
-                if let Some(n) = assign::assign(e, &people_file, &opt).person() {
-                    if !people_file.is_excluded(n, &hash) && !people.iter().any(|x| x == n) {
-                        people.push(n.to_string());
+        let meta = if lib.is_peek() {
+            // A peek must not even *read through* the user-data loaders: adopting a
+            // legacy metadata filename is a migration and therefore a write. Peeks
+            // have no ratings or face analysis by design.
+            PhotoMeta::default()
+        } else {
+            let people_file = lib.people()?;
+            let opt = assign::Options::default();
+            for f in lib.all_faces()? {
+                if f.hash != hash {
+                    continue;
+                }
+                faces += 1;
+                if let Some(e) = f.embedding.as_ref() {
+                    if let Some(n) = assign::assign(e, &people_file, &opt).person() {
+                        if !people_file.is_excluded(n, &hash) && !people.iter().any(|x| x == n) {
+                            people.push(n.to_string());
+                        }
                     }
                 }
             }
-        }
+            lib.user_data()?.get(&hash, folder_of(&row.path))
+        };
         Ok(PhotoDetail {
             path: row.path.clone(),
             bytes: row.size.max(0) as u64,
@@ -2001,7 +2408,7 @@ async fn photo_detail(state: tauri::State<'_, AppState>, path: String, hash: Str
             kind: row.kind.clone(),
             faces,
             people,
-            meta: lib.user_data()?.get(&hash, folder_of(&row.path)),
+            meta,
             exif: blinkview_core::metadata::read(&lib.abs(&row.path)),
             strippable: blinkview_core::metadata::strippable(&lib.abs(&row.path)),
             hash,
@@ -3064,6 +3471,41 @@ fn query_param(query: Option<&str>, key: &str) -> Option<String> {
     query.and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix(key).map(str::to_string)))
 }
 
+#[derive(Clone)]
+struct MediaScope {
+    vault: std::path::PathBuf,
+}
+
+/// Resolve the narrow filesystem grant behind `photo://`.
+///
+/// Added sources grant their tree, as before. A peek grants only files whose direct
+/// parent is the peeked folder; `starts_with` here would expose every subfolder even
+/// though a peek promises not to recurse.
+fn media_scope(app: &tauri::AppHandle, canon: &std::path::Path) -> Option<MediaScope> {
+    for source in load_source_entries(app) {
+        let Ok(root) = std::path::Path::new(source.path()).canonicalize() else {
+            continue;
+        };
+        if canon.starts_with(&root) {
+            return Some(MediaScope { vault: blinkview_core::cache::vault_for(&root) });
+        }
+    }
+
+    let state = app.try_state::<AppState>()?;
+    let peeks = state.peeks.lock().ok()?;
+    for peek in peeks.values() {
+        let lib = peek.lock().ok()?;
+        if peek_grants(lib.root(), canon) {
+            return Some(MediaScope { vault: lib.vault().to_path_buf() });
+        }
+    }
+    None
+}
+
+fn peek_grants(root: &std::path::Path, candidate: &std::path::Path) -> bool {
+    candidate.parent() == Some(root)
+}
+
 /// Whether answering this request means spawning ffmpeg — a video's poster that does
 /// not exist yet.
 ///
@@ -3073,12 +3515,19 @@ fn query_param(query: Option<&str>, key: &str) -> Option<String> {
 /// which re-checks existence and would simply serve the file if we guessed wrong.
 fn needs_video_render(app: &tauri::AppHandle, request: &http::Request<Vec<u8>>) -> bool {
     let Ok(decoded) = percent_decode(request.uri().path()) else { return false };
-    let path = std::path::Path::new(&decoded);
+    let Ok(path) = std::path::Path::new(&decoded).canonicalize() else { return false };
     let hash = query_param(request.uri().query(), "t=");
-    video_thumb_miss(path, hash.as_deref(), &load_sources(app))
+    let thumb = hash
+        .as_deref()
+        .and_then(|hash| media_scope(app, &path).map(|scope| thumbs::thumb_path_in(&scope.vault, hash)));
+    video_thumb_miss(&path, hash.as_deref(), thumb.as_deref())
 }
 
-fn video_thumb_miss(path: &std::path::Path, hash: Option<&str>, sources: &[String]) -> bool {
+fn video_thumb_miss(
+    path: &std::path::Path,
+    hash: Option<&str>,
+    thumb: Option<&std::path::Path>,
+) -> bool {
     let is_video = path
         .extension()
         .and_then(|e| e.to_str())
@@ -3086,10 +3535,7 @@ fn video_thumb_miss(path: &std::path::Path, hash: Option<&str>, sources: &[Strin
     if !is_video {
         return false;
     }
-    let Some(hash) = hash else { return false };
-    sources
-        .iter()
-        .all(|s| !blinkview_core::thumbs::thumb_path_at(std::path::Path::new(s), hash).exists())
+    hash.is_some() && thumb.is_some_and(|path| !path.exists())
 }
 
 fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
@@ -3119,30 +3565,14 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     // `?preview=<hash>` asks for the lightbox preview — a derived 2000 px JPEG.
     let preview_hash = param("preview=");
 
-    // Boundary: the file must live inside a source the user added.
-    let sources = load_sources(app);
     let Ok(canon) = path.canonicalize() else { return deny(404) };
-    let allowed = sources.iter().any(|s| {
-        std::path::Path::new(s)
-            .canonicalize()
-            .map(|root| canon.starts_with(root))
-            .unwrap_or(false)
-    });
-    if !allowed {
-        return deny(403);
-    }
-    let source_root = |canon: &std::path::Path| {
-        sources
-            .iter()
-            .map(std::path::PathBuf::from)
-            .find(|r| r.canonicalize().map(|c| canon.starts_with(c)).unwrap_or(false))
-    };
+    let Some(scope) = media_scope(app, &canon) else { return deny(403) };
 
     // The lightbox preview: a derived 2000 px JPEG, rendered on first request. This is
     // what makes the stepper quick — a step used to decode the full original every
     // time, and a 12–48 MP decode per keypress is a wait, not a step.
-    if let (Some(hash), Some(root)) = (preview_hash.as_deref(), source_root(&canon)) {
-        let p = blinkview_core::thumbs::preview_path_at(&root, hash);
+    if let Some(hash) = preview_hash.as_deref() {
+        let p = blinkview_core::thumbs::preview_path_in(&scope.vault, hash);
         if !p.exists() {
             match blinkview_core::thumbs::render_preview(&canon, &p) {
                 Ok(true) => {}
@@ -3164,8 +3594,9 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
 
     // Full-size request for a format the webview cannot decode: serve a cached JPEG.
     if thumb_hash.is_none() && blinkview_core::imageio::needs_conversion(&canon) {
-        if let (Some(hash), Some(root)) = (full_hash, source_root(&canon)) {
-            let derived = blinkview_core::cache::vault_for(&root)
+        if let Some(hash) = full_hash {
+            let derived = scope
+                .vault
                 .join("derived")
                 .join(format!("{hash}.jpg"));
             if !derived.exists()
@@ -3184,10 +3615,8 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
     let serve = match &thumb_hash {
         None => canon.clone(),
         Some(hash) => {
-            match source_root(&canon) {
-                None => canon.clone(),
-                Some(root) => {
-                    let t = blinkview_core::thumbs::thumb_path_at(&root, hash);
+            {
+                    let t = blinkview_core::thumbs::thumb_path_in(&scope.vault, hash);
                     if !t.exists() {
                         let is_video = canon
                             .extension()
@@ -3214,7 +3643,6 @@ fn serve_photo(app: &tauri::AppHandle, request: http::Request<Vec<u8>>) -> http:
                         }
                     }
                     t
-                }
             }
         }
     };
@@ -3338,6 +3766,31 @@ fn percent_decode(s: &str) -> Result<String, ()> {
     String::from_utf8(out).map_err(|_| ())
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+fn queue_open_urls(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
+    let paths: Vec<String> = urls
+        .into_iter()
+        .filter_map(|url| url.to_file_path().ok())
+        .filter(|path| path.is_dir() || (path.is_file() && scan::kind_of(path).is_some()))
+        .map(|path| path.display().to_string())
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(mut pending) = state.pending_open.lock() {
+            pending.extend(paths.iter().cloned());
+        }
+    }
+    for path in paths {
+        let _ = app.emit("open-path", path);
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[allow(unused_mut)]
@@ -3383,7 +3836,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(debug_assertions)]
             bench_payload,
-            list_sources, add_source, remove_source, rescan, create_folder,
+            list_sources, add_source, remove_source, rescan, create_folder, set_source_depth,
+            survey_folder, cancel_survey,
+            peek_folder, peek_photos, end_peek, promote_peek, open_path, take_open_paths,
             photos, build_thumbs, analyze_faces,
             clusters, name_clusters,
             plan_op, apply_op, plan_rename, apply_rename, history, undo,
@@ -3400,8 +3855,16 @@ pub fn run() {
             share_photos, start_file_drag, check_for_updates, open_update,
             forget_person, analyze_all, source_data, pending_work, analyze_resume
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running blinkview");
+        .build(tauri::generate_context!())
+        .expect("error while building blinkview")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                queue_open_urls(app, urls);
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
@@ -3413,6 +3876,97 @@ mod tests {
         dir.parent()
             .unwrap()
             .join(format!("{}-cache", dir.file_name().unwrap().to_string_lossy()))
+    }
+
+    #[test]
+    fn legacy_source_entries_stay_recursive_until_edited() {
+        let file: SourcesFile = serde_json::from_str(r#"{"sources":["/Photos"]}"#).unwrap();
+        assert_eq!(file.sources, vec![SourceEntry::Legacy("/Photos".into())]);
+        assert!(!file.sources[0].shallow());
+        assert!(!file.sources[0].skips_default_dirs());
+
+        let current: SourcesFile =
+            serde_json::from_str(r#"{"sources":[{"path":"/Desktop","shallow":true}]}"#)
+                .unwrap();
+        assert!(current.sources[0].shallow());
+        assert!(current.sources[0].skips_default_dirs());
+        assert_eq!(
+            serde_json::to_value(&current).unwrap(),
+            serde_json::json!({"sources":[{"path":"/Desktop","shallow":true}]})
+        );
+    }
+
+    #[test]
+    fn a_peek_grants_its_direct_files_but_never_its_subtree() {
+        let root = std::path::Path::new("/Desktop/Trip");
+        assert!(peek_grants(root, std::path::Path::new("/Desktop/Trip/a.jpg")));
+        assert!(!peek_grants(
+            root,
+            std::path::Path::new("/Desktop/Trip/Private/a.jpg")
+        ));
+        assert!(!peek_grants(root, std::path::Path::new("/Desktop/a.jpg")));
+    }
+
+    /// Opening a photograph that already lives in an added source must route to that
+    /// library, keyed by the *stored* path, positioned on the file.
+    #[test]
+    fn open_routing_prefers_the_owning_source() {
+        let dir = std::env::temp_dir().join(format!("blinkview-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let nested = dir.join("Photos").join("Trip");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("a.jpg"), b"one").unwrap();
+        let entries = vec![SourceEntry::persisted(
+            dir.join("Photos").display().to_string(),
+            false,
+        )];
+
+        let file = nested.join("a.jpg").canonicalize().unwrap();
+        let (stored, file_rel, folder) = owning_source(&file, &entries).unwrap();
+        assert_eq!(stored, entries[0].path(), "the stored key, not a resolved copy");
+        assert_eq!(file_rel.as_deref(), Some("Trip/a.jpg"));
+        assert_eq!(folder, None);
+
+        // The source root itself, and a folder inside it, open the library too.
+        let root = dir.join("Photos").canonicalize().unwrap();
+        assert_eq!(
+            owning_source(&root, &entries),
+            Some((entries[0].path().to_string(), None, None))
+        );
+        let sub = nested.canonicalize().unwrap();
+        assert_eq!(
+            owning_source(&sub, &entries),
+            Some((entries[0].path().to_string(), None, Some("Trip".into())))
+        );
+
+        // Unrelated paths own nothing, so they become peeks.
+        let outside = dir.join("Elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        assert_eq!(owning_source(&outside.canonicalize().unwrap(), &entries), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The symlink case the stored-key rule exists for: opening through the resolved
+    /// path must still answer with the path the library was added under.
+    #[test]
+    fn open_routing_through_a_symlink_keeps_the_stored_key() {
+        let dir =
+            std::env::temp_dir().join(format!("blinkview-open-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let real = dir.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("a.jpg"), b"one").unwrap();
+        let link = dir.join("link");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        #[cfg(not(unix))]
+        return;
+        let entries = vec![SourceEntry::persisted(link.display().to_string(), false)];
+        let through_real = real.join("a.jpg").canonicalize().unwrap();
+        let (stored, file_rel, _) = owning_source(&through_real, &entries).unwrap();
+        assert_eq!(stored, link.display().to_string());
+        assert_eq!(file_rel.as_deref(), Some("a.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3629,20 +4183,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("blinkview-route-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let sources = vec![dir.display().to_string()];
         let clip = dir.join("clip.mp4");
         let still = dir.join("shot.jpg");
+        let t = blinkview_core::thumbs::thumb_path_at(&dir, "abc");
 
         // A video with no poster anywhere is the slow case.
-        assert!(video_thumb_miss(&clip, Some("abc"), &sources));
+        assert!(video_thumb_miss(&clip, Some("abc"), Some(&t)));
         // Write its poster under the source: no longer a miss.
-        let t = blinkview_core::thumbs::thumb_path_at(&dir, "abc");
         std::fs::create_dir_all(t.parent().unwrap()).unwrap();
         std::fs::write(&t, b"poster").unwrap();
-        assert!(!video_thumb_miss(&clip, Some("abc"), &sources));
+        assert!(!video_thumb_miss(&clip, Some("abc"), Some(&t)));
         // Stills never route to ffmpeg; neither does a video without a thumb request.
-        assert!(!video_thumb_miss(&still, Some("abc"), &sources));
-        assert!(!video_thumb_miss(&clip, None, &sources));
+        assert!(!video_thumb_miss(&still, Some("abc"), Some(&t)));
+        assert!(!video_thumb_miss(&clip, None, Some(&t)));
         // The routing helper resolves through the machine's cache root; take back what
         // the test just put there, or a unit test litters the real thing.
         blinkview_core::cache::forget(&dir);

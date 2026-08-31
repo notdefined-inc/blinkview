@@ -27,6 +27,13 @@ pub struct Library {
     /// writes to it or the folder tree changes, so the walk happens when the answer
     /// could actually have changed instead of once per question.
     user_data: Option<crate::userdata::UserDataSet>,
+    /// A shallow source indexes only files directly in `root`.
+    shallow: bool,
+    /// New sources avoid operating-system and application internals while walking.
+    /// Legacy sources keep their historical no-exclusion behaviour until edited.
+    skip_default_dirs: bool,
+    /// A peek is markerless, temporary and read-only at the command boundary.
+    peek: bool,
 }
 
 impl Library {
@@ -36,11 +43,30 @@ impl Library {
     /// point for everything that is not a test, and tests use [`Library::open_in`] so
     /// they never touch it.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        Self::open_in(root, crate::cache::root())
+        Self::open_configured(root, false, false)
+    }
+
+    /// Open a persisted desktop source with its chosen scan depth and exclusion mode.
+    pub fn open_configured(
+        root: impl AsRef<Path>,
+        shallow: bool,
+        skip_default_dirs: bool,
+    ) -> Result<Self> {
+        Self::open_in_configured(root, crate::cache::root(), shallow, skip_default_dirs)
     }
 
     /// Open a library with its cache under an explicit root.
     pub fn open_in(root: impl AsRef<Path>, cache_root: impl AsRef<Path>) -> Result<Self> {
+        Self::open_in_configured(root, cache_root, false, false)
+    }
+
+    /// [`open_configured`](Self::open_configured) with an explicit cache root.
+    pub fn open_in_configured(
+        root: impl AsRef<Path>,
+        cache_root: impl AsRef<Path>,
+        shallow: bool,
+        skip_default_dirs: bool,
+    ) -> Result<Self> {
         let root = root.as_ref();
         if !root.is_dir() {
             bail!("not a directory: {}", root.display());
@@ -61,7 +87,59 @@ impl Library {
         // And once more against the relocated cache, for a library whose vault was
         // already moved by an earlier session.
         Self::rescue_user_data(&root, &vault);
-        Ok(Self { root, vault, index, user_data: None })
+        Ok(Self {
+            root,
+            vault,
+            index,
+            user_data: None,
+            shallow,
+            skip_default_dirs,
+            peek: false,
+        })
+    }
+
+    /// Open a folder for a temporary, read-only look.
+    ///
+    /// No marker, migration, user-data rescue or library cache is touched. The cache
+    /// lives under `peek/` and [`end_peek`](Self::end_peek) removes it.
+    pub fn peek(root: impl AsRef<Path>) -> Result<Self> {
+        Self::peek_in(root, crate::cache::root())
+    }
+
+    /// [`peek`](Self::peek) with an explicit cache root for tests.
+    pub fn peek_in(root: impl AsRef<Path>, cache_root: impl AsRef<Path>) -> Result<Self> {
+        let root = root.as_ref();
+        if !root.is_dir() {
+            bail!("not a directory: {}", root.display());
+        }
+        let root = root
+            .canonicalize()
+            .with_context(|| format!("resolving {}", root.display()))?;
+        let vault = crate::cache::peek_vault(&root, cache_root.as_ref());
+        let index = Self::open_index(&vault.join("index.sqlite"))?;
+        Ok(Self {
+            root,
+            vault,
+            index,
+            user_data: None,
+            shallow: true,
+            skip_default_dirs: true,
+            peek: true,
+        })
+    }
+
+    /// Close a peek and remove every byte it cached.
+    pub fn end_peek(self) -> Result<()> {
+        if !self.peek {
+            bail!("{} is an added library, not a peek", self.root.display());
+        }
+        let vault = self.vault.clone();
+        drop(self);
+        if vault.exists() {
+            std::fs::remove_dir_all(&vault)
+                .with_context(|| format!("removing peek cache {}", vault.display()))?;
+        }
+        Ok(())
     }
 
     /// The metadata cascade, loaded once and reused.
@@ -95,7 +173,15 @@ impl Library {
         if !db.is_file() {
             bail!("no index yet at {}", db.display());
         }
-        Ok(Self { root, vault, index: Index::open(&db)?, user_data: None })
+        Ok(Self {
+            root,
+            vault,
+            index: Index::open(&db)?,
+            user_data: None,
+            shallow: false,
+            skip_default_dirs: false,
+            peek: false,
+        })
     }
 
     /// Open the index, rebuilding it if it is unusable.
@@ -178,6 +264,24 @@ impl Library {
     /// The derived cache. Outside the photographs since ADR-0019.
     pub fn vault(&self) -> &Path {
         &self.vault
+    }
+
+    pub fn is_peek(&self) -> bool {
+        self.peek
+    }
+
+    pub fn is_shallow(&self) -> bool {
+        self.shallow
+    }
+
+    pub(crate) fn skips_default_dirs(&self) -> bool {
+        self.skip_default_dirs
+    }
+
+    /// Change how the next reconciliation walks this source.
+    pub fn configure_scan(&mut self, shallow: bool, skip_default_dirs: bool) {
+        self.shallow = shallow;
+        self.skip_default_dirs = skip_default_dirs;
     }
 
     pub fn journal_dir(&self) -> PathBuf {

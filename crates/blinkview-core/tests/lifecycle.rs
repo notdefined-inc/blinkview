@@ -320,6 +320,165 @@ fn neither_the_current_nor_the_former_cache_is_indexed() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[test]
+fn a_shallow_source_indexes_only_its_direct_files_and_can_change_depth() {
+    let dir = fixture(
+        "shallow",
+        &["root.jpg", "Trip/inside.jpg", "Trip/Day2/deeper.jpg"],
+    );
+    let cache = cache_for(&dir);
+    let mut lib = Library::open_in_configured(&dir, &cache, true, true).unwrap();
+
+    scan::scan(&mut lib, false).unwrap();
+    assert_eq!(
+        lib.index
+            .all()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect::<Vec<_>>(),
+        vec!["root.jpg"],
+        "a shallow source must not index even one level beneath its root"
+    );
+
+    // User-authored data lives beside the photograph, not in the index, and changing
+    // scan depth must never remove it.
+    std::fs::write(
+        dir.join("Trip/blinkview.json"),
+        br#"{"photos":{"not-an-index-row":{"rating":5}}}"#,
+    )
+    .unwrap();
+    lib.configure_scan(false, true);
+    scan::scan(&mut lib, false).unwrap();
+    assert_eq!(lib.index.count().unwrap(), 3);
+    lib.configure_scan(true, true);
+    scan::scan(&mut lib, false).unwrap();
+    assert_eq!(lib.index.count().unwrap(), 1, "deeper rows must leave the index");
+    assert!(
+        dir.join("Trip/blinkview.json").is_file(),
+        "changing depth must not touch ratings or labels"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&cache).ok();
+}
+
+#[test]
+fn default_exclusions_apply_while_descending_but_never_to_the_chosen_root() {
+    let dir = fixture(
+        "skip-dirs",
+        &["root.jpg", "Trip/inside.jpg", "Library/cached.jpg"],
+    );
+    let cache = cache_for(&dir);
+    let mut lib = Library::open_in_configured(&dir, &cache, false, true).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let paths: Vec<_> = lib.index.all().unwrap().into_iter().map(|r| r.path).collect();
+    assert_eq!(paths, vec!["Trip/inside.jpg", "root.jpg"]);
+    drop(lib);
+
+    let library_root = dir.join("Library");
+    let direct_cache = cache.with_extension("direct");
+    let mut direct =
+        Library::open_in_configured(&library_root, &direct_cache, false, true).unwrap();
+    scan::scan(&mut direct, false).unwrap();
+    assert_eq!(
+        direct.index.count().unwrap(),
+        1,
+        "a directory named Library works when it is the folder explicitly chosen"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&cache).ok();
+    std::fs::remove_dir_all(&direct_cache).ok();
+}
+
+#[test]
+fn surveying_counts_media_without_descending_into_excluded_folders() {
+    let dir = fixture(
+        "survey",
+        &[
+            "root.jpg",
+            "Trip/inside.jpg",
+            "Trip/notes.txt",
+            "Library/cached.jpg",
+        ],
+    );
+    let survey = scan::survey_folder(&dir).unwrap();
+    assert_eq!(survey.here, 1);
+    assert_eq!(survey.below, Some(1));
+    assert_eq!(survey.subfolders, 2);
+    assert_eq!(survey.excluded, vec!["Library"]);
+
+    // The same name is not excluded when it is the root the user chose.
+    let direct = scan::survey_folder(dir.join("Library")).unwrap();
+    assert_eq!(direct.here, 1);
+    assert_eq!(direct.excluded, Vec::<String>::new());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_peek_is_shallow_markerless_and_deletes_its_cache_on_close() {
+    let dir = fixture("peek", &["root.jpg", "Nested/hidden.jpg"]);
+    let cache = cache_for(&dir);
+    let mut lib = Library::peek_in(&dir, &cache).unwrap();
+    let vault = lib.vault().to_path_buf();
+    assert!(lib.is_peek());
+    assert!(lib.is_shallow());
+    assert!(vault.starts_with(cache.join("peek")));
+    assert!(
+        !dir.join(blinkview_core::cache::MARKER).exists(),
+        "looking must not claim the folder"
+    );
+
+    scan::scan_shallow(&mut lib, false).unwrap();
+    assert_eq!(
+        lib.index
+            .all()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect::<Vec<_>>(),
+        vec!["root.jpg"]
+    );
+    lib.end_peek().unwrap();
+    assert!(!vault.exists(), "ending a peek removes every derived byte");
+    assert!(!dir.join(blinkview_core::cache::MARKER).exists());
+
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&cache).ok();
+}
+
+/// Keeping a peeked folder is the full commitment made after the fact: the marker is
+/// written, the recursive scan finds what the peek's depth limit hid, and the peek's
+/// cache is already gone.
+#[test]
+fn promoting_a_peek_gives_a_full_recursive_library() {
+    let dir = fixture("promote", &["root.jpg", "Nested/hidden.jpg"]);
+    let cache = cache_for(&dir);
+
+    let mut peek = Library::peek_in(&dir, &cache).unwrap();
+    scan::scan_shallow(&mut peek, false).unwrap();
+    assert_eq!(peek.index.all().unwrap().len(), 1, "a peek never descends");
+    let peek_vault = peek.vault().to_path_buf();
+    peek.end_peek().unwrap();
+    assert!(!peek_vault.exists());
+
+    let mut lib = Library::open_in(&dir, &cache).unwrap();
+    scan::scan(&mut lib, false).unwrap();
+    let mut paths: Vec<String> =
+        lib.index.all().unwrap().into_iter().map(|r| r.path).collect();
+    paths.sort();
+    assert_eq!(paths, vec!["Nested/hidden.jpg", "root.jpg"]);
+    assert!(
+        dir.join(blinkview_core::cache::MARKER).exists(),
+        "a kept folder is claimed like any added source"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&cache).ok();
+}
+
 /// ADR-0017: a library written before the rename opens with everything intact, and
 /// keeps its index rather than paying for the new name with a full rescan.
 #[test]

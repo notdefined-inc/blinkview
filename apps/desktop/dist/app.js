@@ -51,6 +51,7 @@ const dialog = window.__TAURI__.dialog;
 const S = {
   sources: [],
   source: null,          // active source path
+  peek: null,            // markerless, session-only folder being viewed read-only
   folder: null,          // active subfolder, null = whole source
   person: null,
   cluster: null,           // an unnamed group being viewed
@@ -292,19 +293,27 @@ function renderSidebar() {
     return el("div", {
       class: "row srcrow" + (s.missing ? " missing" : ""), "aria-current": String(active),
       title: s.path, "data-src": s.path,
+      oncontextmenu: e => showSourceCtx(e, s),
     },
       el("button", { class: "grow srcopen", onclick: () => { if (!s.missing) selectSource(s.path); } },
         el("span", { class: "dotmark" }),
         el("span", { class: "grow" }, s.missing ? `${s.name} (missing)` : s.name)),
       el("span", { class: "n num" },
         s.missing ? "" : (s.indexing || S.busy[s.path] ? "indexing\u2026" : String(s.photos))),
+      s.shallow ? el("span", { class: "depthmark", title: "This folder only" }, "direct") : null,
       el("button", { class: "mini sact", title: `Remove ${s.name} from Blinkview`,
         onclick: e => { e.stopPropagation(); removeSource(s.path); } }, "\u2715"));
   }));
 
   const src = S.sources.find(s => s.path === S.source);
   const pb = $("#people-block"), fb = $("#folders-block");
-  if (!src) { pb.hidden = true; fb.hidden = true; return; }
+  if (!src) {
+    pb.hidden = true; fb.hidden = true;
+    $("#searches-block").hidden = true;
+    $("#albums-block").hidden = true;
+    $("#trash-block").hidden = true;
+    return;
+  }
 
   pb.hidden = false;
   const collapsed = S.peopleCollapsed;
@@ -559,7 +568,7 @@ function computeLayout(width) {
   let y = 0;
   // A custom arrangement *is* the order. Grouping it by day or folder would re-sort
   // what someone placed by hand, so it draws as one run with no headings.
-  if (S.sort === "custom") {
+  if (S.sort === "custom" || S.peek) {
     for (const r of justify(S.view, width, ROW_H, GAP)) {
       blocks.push({ kind: "row", y, h: r.h, items: r.items });
       y += r.h + GAP;
@@ -869,6 +878,12 @@ function paintSel() {
   const inTrash = S.folder === TRASH;
   $("#sel-restore").hidden = !inTrash;
   $("#sel-delete").hidden = inTrash;
+  const reason = S.peek ? `“${S.peek.name}” is a read-only peek. Keep the folder to make changes.` : "";
+  for (const id of ["#sel-untag", "#sel-date", "#sel-restore", "#sel-delete"]) {
+    const button = $(id);
+    button.disabled = !!S.peek;
+    button.title = reason;
+  }
 }
 
 function dateInputValue(photo) {
@@ -927,6 +942,17 @@ function showCtx(x, y) {
 
   const items = [];
   if (one) items.push(item("Open", "↩", () => openLightbox(one)));
+  if (S.peek) {
+    items.push(item(`Share ${n}…`, "", () => shareHashes([...S.sel])));
+    items.push(el("hr"));
+    items.push(el("button", {
+      class: "readonly", role: "menuitem", disabled: true,
+      title: `“${S.peek.name}” is a read-only peek. Keep the folder to make changes.`,
+    }, "Read-only peek · keep to make changes"));
+    menu.replaceChildren(...items);
+    placeContextMenu(menu, x, y);
+    return;
+  }
   if (one) items.push(item("Rename…", "", () => renamePhoto(one)));
   if (S.person) items.push(item(`Not ${S.person}`, "", untagSelected));
   items.push(el("hr"));
@@ -946,12 +972,47 @@ function showCtx(x, y) {
   }
   menu.replaceChildren(...items);
 
+  placeContextMenu(menu, x, y);
+}
+
+function placeContextMenu(menu, x, y) {
   menu.hidden = false;
   const r = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, innerWidth - r.width - 8) + "px";
   menu.style.top = Math.min(y, innerHeight - r.height - 8) + "px";
 }
 function hideCtx() { $("#ctx").hidden = true; }
+
+function showSourceCtx(event, source) {
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = $("#ctx");
+  const item = (label, fn, cls = "") => el("button", {
+    class: cls, role: "menuitem", onclick: () => { hideCtx(); fn(); },
+  }, el("span", {}, label));
+  menu.replaceChildren(
+    item(source.shallow ? "Include subfolders" : "This folder only",
+      () => changeSourceDepth(source, !source.shallow)),
+    el("hr"),
+    item(`Remove ${source.name} from Blinkview`, () => removeSource(source.path), "danger"));
+  placeContextMenu(menu, event.clientX, event.clientY);
+}
+
+async function changeSourceDepth(source, shallow) {
+  const action = shallow ? "show only files directly in it" : "include its subfolders";
+  const ok = await confirmDialog(
+    `Change “${source.name}”?`,
+    `Blinkview will ${action}. Ratings and labels stay with their photographs.`,
+    shallow ? "This folder only" : "Include subfolders");
+  if (!ok) return;
+  try {
+    const info = await busy("Updating folder depth…",
+      () => invoke("set_source_depth", { path: source.path, shallow }), source.path);
+    S.sources = S.sources.map(s => s.path === source.path ? info : s);
+    renderSidebar();
+    if (S.source === source.path) await loadPhotos();
+  } catch { /* busy already reports the backend's reason */ }
+}
 
 /* ---------------- editing ---------------- */
 /** Apply one colour preset to everything selected.
@@ -1403,13 +1464,24 @@ function paintLightbox() {
   renderScope(p);
   // Rotate, flip, crop and adjust all end in a JPEG written over the source.
   const raw = isRaw(p.path);
+  const readOnly = !!S.peek;
   for (const id of ["#lb-rot-l", "#lb-rot-r", "#lb-flip", "#lb-crop", "#lb-adjust"]) {
     const b = $(id);
     if (!b) continue;
     b.dataset.title ||= b.title;          // remembered before the reason replaces it
-    b.disabled = raw;
-    b.title = raw
-      ? "A camera RAW is shown from the preview inside it, and never rewritten"
+    b.disabled = raw || readOnly;
+    b.title = readOnly
+      ? `“${S.peek.name}” is a read-only peek. Keep this folder before editing.`
+      : raw
+        ? "A camera RAW is shown from the preview inside it, and never rewritten"
+        : b.dataset.title;
+  }
+  for (const id of ["#lb-rename", "#lb-delete"]) {
+    const b = $(id);
+    b.dataset.title ||= b.title;
+    b.disabled = readOnly;
+    b.title = readOnly
+      ? `“${S.peek.name}” is a read-only peek. Keep this folder before changing files.`
       : b.dataset.title;
   }
 
@@ -1627,7 +1699,8 @@ async function loadPhotos() {
   S.loading = true;
   // Ask for the library this load is *for*, not whatever S.source happens to be by
   // the time the request is built.
-  const photos = hydrate(await invoke("photos", { path: t.source, folder: null, person: null }));
+  const photos = hydrate(await invoke(S.peek ? "peek_photos" : "photos",
+    S.peek ? { path: t.source } : { path: t.source, folder: null, person: null }));
   if (!stillCurrent(t)) return;
   S.loading = false;
   S.photos = photos;
@@ -1925,7 +1998,7 @@ function applyFilter() {
   const parsed = q
     ? parseQuery(q, S.people.filter(p => p.name).map(p => p.name), S.albums.map(a => a[0]))
     : null;
-  scheduleSemantic(parsed && parsed.text.length ? parsed.text.join(" ") : null);
+  scheduleSemantic(!S.peek && parsed && parsed.text.length ? parsed.text.join(" ") : null);
   S.view = S.photos.filter(p =>
     // Trash is a real folder, but it should not appear in the library view unless
     // the user deliberately opens it.
@@ -1946,7 +2019,7 @@ function applyFilter() {
     : 0;
   showQueryChips(parsed);
   const src = S.sources.find(s => s.path === S.source);
-  $("#crumb").textContent = [
+  $("#crumb").textContent = S.peek ? "" : [
     src?.name, S.folder,
     S.person ? `\u{1F464} ${S.person}` : null,
     S.cluster !== null ? "\u{1F464} unnamed person" : null,
@@ -1960,10 +2033,114 @@ function applyFilter() {
   paintSel();
   renderFilters();
 }
+
+function syncPeekChrome() {
+  const peeking = !!S.peek;
+  const bar = $("#peekbar");
+  bar.hidden = !peeking;
+  if (peeking) {
+    $("#peek-name").textContent = S.peek.name;
+    const items = S.peek.photos + S.peek.videos;
+    const folders = S.peek.subfolders;
+    $("#peek-note").textContent =
+      `${items.toLocaleString()} item${items === 1 ? "" : "s"} directly in this folder` +
+      (folders ? ` · ${folders.toLocaleString()} subfolder${folders === 1 ? "" : "s"} not shown` : "");
+  }
+  const reason = peeking
+    ? `“${S.peek.name}” is a read-only peek. Keep this folder to use this feature.`
+    : "";
+  for (const id of ["#btn-ask", "#btn-map", "#btn-tools", "#btn-newfolder", "#btn-review"]) {
+    const button = $(id);
+    if (!button) continue;
+    button.dataset.normalTitle ||= button.title;
+    button.disabled = peeking;
+    button.title = reason || button.dataset.normalTitle;
+  }
+  renderTimelineTools();
+  paintSel();
+}
+
+function refusePeek(action = "make changes") {
+  if (!S.peek) return false;
+  toast(`“${S.peek.name}” is a read-only peek. Keep this folder to ${action}.`);
+  return true;
+}
+
+async function releasePeek() {
+  if (!S.peek) return true;
+  const current = S.peek;
+  if (!$("#lightbox").hidden) closeLightbox();
+  try {
+    await invoke("end_peek", { path: current.path });
+  } catch (e) {
+    toast(String(e), "error");
+    return false;
+  }
+  S.peek = null;
+  syncPeekChrome();
+  return true;
+}
+
+async function enterPeek(info, openedFile = null) {
+  if (S.peek && S.peek.path !== info.path && !(await releasePeek())) return;
+  if (!$("#mapview").hidden) closeMap();
+  toggleAsk(false);
+  $("#sheet").hidden = true;
+  S.peek = info;
+  S.source = info.path;
+  S.folder = null; S.person = null; S.cluster = null; S.clusterHashes = null;
+  S.people = []; S.albums = []; S.searches = [];
+  S.semantic = null; S.semanticReady = null;
+  S.photos = []; S.view = []; S.sel.clear();
+  S.sort = "name"; S.group = "folder"; S.order = [];
+  S.resetScroll = true;
+  syncPeekChrome();
+  renderSidebar();
+  syncToastScope();
+  renderGrid();
+  try {
+    await busy(`Opening ${info.name}…`, loadPhotos, info.path);
+  } catch {
+    await releasePeek();
+    return;
+  }
+  if (openedFile) {
+    const wanted = S.view.find(p => p.path === openedFile || p.name === openedFile);
+    if (wanted) openLightbox(wanted);
+  }
+}
+
+async function closePeek() {
+  if (!(await releasePeek())) return;
+  S.source = null; S.photos = []; S.view = []; S.sel.clear();
+  $("#crumb").textContent = "";
+  renderSidebar();
+  const first = S.sources.find(s => !s.missing);
+  if (first) await selectSource(first.path);
+  else renderWelcome();
+}
+
+async function keepPeek() {
+  if (!S.peek) return;
+  const current = S.peek;
+  if (!$("#lightbox").hidden) closeLightbox();
+  try {
+    const info = await busy(`Adding ${current.name}…`,
+      () => invoke("promote_peek", { path: current.path }), current.path);
+    S.peek = null;
+    syncPeekChrome();
+    await refreshSources();
+    toast(`${info.name} is now a source`, "ok");
+    await selectSource(info.path);
+  } catch { /* busy already reports the reason; the peek remains open */ }
+}
+
 async function selectSource(path) {
+  if (!(await releasePeek())) return;
   S.source = path; S.folder = null; S.person = null;
   S.cluster = null; S.clusterHashes = null; S.people = [];
   S.semantic = null; S.semanticReady = null;
+  syncPeekChrome();
   // Drop the previous library's photographs before the new one's arrive. Leaving them
   // up meant the breadcrumb named one folder while the grid showed another.
   S.photos = []; S.view = []; S.sel.clear();
@@ -2183,18 +2360,95 @@ function namePrompt(id) {
 async function addSource() {
   const picked = await dialog.open({ directory: true, multiple: false, title: "Add a photo folder" });
   if (!picked) return;
+  const survey = await surveyBeforeAdd(picked);
+  if (!survey || survey.error) return;
+  const shallow = survey.subfolders ? await sourceDepthPrompt(picked, survey) : false;
+  if (shallow === null) return;
+  await registerSurveyedSource(picked, shallow);
+}
+
+function surveyBeforeAdd(path) {
+  return new Promise(resolve => {
+    let cancelled = false;
+    let d;
+    const cancel = () => d.done(null);
+    d = dialogFrame(`Counting “${path.split("/").pop() || path}”…`, [
+      el("div", { class: "surveybusy" },
+        el("span", { class: "sp", "aria-hidden": "true" }),
+        el("span", {}, "Looking at folder names and file types — no photographs are opened.")),
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: cancel }, "Cancel")),
+    ]);
+    d.box.querySelector(".sheet-panel").classList.add("survey-panel");
+    d.attach(value => {
+      if (value === null) {
+        cancelled = true;
+        invoke("cancel_survey").catch(() => {});
+      }
+      resolve(value);
+    });
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+    invoke("survey_folder", { path })
+      .then(survey => { if (!cancelled) d.done(survey); })
+      .catch(error => {
+        if (cancelled) return;
+        toast(String(error), "error");
+        d.done({ error: true });
+      });
+  });
+}
+
+function sourceDepthPrompt(path, survey) {
+  return new Promise(resolve => {
+    let d;
+    const direct = survey.here.toLocaleString();
+    const below = survey.below === null
+      ? "More than 200,000 more photographs and videos are below it."
+      : `${survey.below.toLocaleString()} more photograph${survey.below === 1 ? " is" : "s are"} below it.`;
+    const preferShallow = survey.below === null || survey.below > 50_000 ||
+      survey.below > 20 * Math.max(survey.here, 1);
+    const only = el("button", {
+      class: preferShallow ? "btn" : "btn ghost", onclick: () => d.done(true),
+    }, "This folder only");
+    const recursive = el("button", {
+      class: preferShallow ? "btn ghost" : "btn", onclick: () => d.done(false),
+    }, "Include subfolders");
+    const excluded = survey.excluded.length
+      ? `Skipping ${survey.excluded.map(name => `“${name}”`).join(", ")}.`
+      : "No system or cache folders found to skip.";
+    d = dialogFrame(`Add “${path.split("/").pop() || path}”?`, [
+      el("ul", { class: "surveyfacts" },
+        el("li", {}, el("strong", {}, direct),
+          ` photograph${survey.here === 1 ? "" : "s"} or video${survey.here === 1 ? "" : "s"} directly in this folder.`),
+        el("li", { class: preferShallow ? "surveywarn" : "" }, below),
+        el("li", {}, el("strong", {}, survey.subfolders.toLocaleString()),
+          ` subfolder${survey.subfolders === 1 ? "" : "s"}. ${excluded}`)),
+      el("div", { class: "askrow" },
+        el("button", { class: "btn ghost", onclick: () => d.done(null) }, "Cancel"),
+        only, recursive),
+    ]);
+    d.box.querySelector(".sheet-panel").classList.add("survey-panel");
+    d.attach(resolve);
+    document.addEventListener("keydown", d.onKey, true);
+    document.body.append(d.box);
+    setTimeout(() => (preferShallow ? only : recursive).focus(), 40);
+  });
+}
+
+async function registerSurveyedSource(path, shallow) {
   // The folder appears at once and indexes behind itself. Waiting for the first scan
   // of a phone backup before even showing the row is what made this feel like a hang.
   try {
-    const info = await invoke("add_source", { path: picked });
-    S.sources = [...S.sources.filter(s => s.path !== picked), info];
-    S.busy[picked] = { op: "scan", done: 0, total: 0 };
+    const info = await invoke("add_source", { path, shallow });
+    S.sources = [...S.sources.filter(s => s.path !== info.path), info];
+    S.busy[info.path] = { op: "scan", done: 0, total: 0 };
     renderSidebar();
     toast(`${info.name} added`, "ok");
     // Go to what was just added. Reads no longer wait on the scan, so this shows the
     // folder filling in rather than blocking on it.
-    await selectSource(picked);
-    refreshSources().then(() => autodetect(picked));
+    await selectSource(info.path);
+    refreshSources().then(() => autodetect(info.path));
   } catch (e) {
     // A refusal — already in the library, nested inside a source — is an answer,
     // not a crash; the backend worded it for the user.
@@ -2312,6 +2566,7 @@ async function removeSource(path) {
     you say where things are going to go, before there is anything to put in it. */
 async function newFolderPrompt() {
   if (!S.source) return toast("Add a folder first");
+  if (refusePeek("create folders")) return;
   const parent = S.folder && S.folder !== TRASH ? S.folder : "";
   const name = await promptDialog(
     parent ? `New folder inside ${parent.split("/").pop()}` : "New folder", "");
@@ -2627,6 +2882,7 @@ async function runRenameApply(scope, format, out, applyBtn) {
 }
 function openSheet() {
   if (!S.source) return toast("Add a folder first");
+  if (refusePeek("organize photographs")) return;
   $("#sheet-title").textContent = "Organize";
   $("#sheet-body").replaceChildren(
     el("div", { class: "op" },
@@ -2795,6 +3051,34 @@ async function saveNames(cl) {
 /* ---------------- drag and drop ----------------
    Tauri reports OS drops on the window itself; the webview never sees a real path in
    a DOM drop event, so the listener is on the Tauri event rather than `ondrop`. */
+async function handleOpenPath(path) {
+  try {
+    const target = await busy(`Opening ${path.split("/").pop() || path}…`,
+      () => invoke("open_path", { path }));
+    if (target.mode === "peek") {
+      await enterPeek(target.peek, target.file || null);
+      return;
+    }
+    await refreshSources();
+    await selectSource(target.path);
+    if (target.folder) await selectFolder(target.folder);
+    if (target.file) {
+      const wanted = S.view.find(photo => photo.path === target.file);
+      if (wanted) openLightbox(wanted);
+      else toast(`${target.file.split("/").pop()} is not in the indexed library`, "error");
+    }
+  } catch { /* busy already reports the backend's explanation */ }
+}
+
+let openPathChain = Promise.resolve();
+function drainOpenPaths() {
+  openPathChain = openPathChain.then(async () => {
+    const paths = await invoke("take_open_paths");
+    for (const path of [...new Set(paths)]) await handleOpenPath(path);
+  }).catch(error => toast(String(error), "error"));
+  return openPathChain;
+}
+
 /* A drag that begins inside the app is a pan or a selection, never a folder drop.
    Without this guard, dragging to pan a zoomed photo raised the drop overlay. */
 const dropBlocked = () => !$("#lightbox").hidden || !$("#sheet").hidden;
@@ -2806,20 +3090,13 @@ listen("tauri://drag-drop", async ({ payload }) => {
   if (dropBlocked()) return;
   const paths = payload?.paths || [];
   if (!paths.length) return;
-  let added = 0;
-  for (const p of paths) {
-    try {
-      await busy(`Adding ${p.split("/").pop()}…`, () => invoke("add_source", { path: p }));
-      added++;
-    } catch (e) { /* reported by busy */ }
-  }
-  if (added) {
-    await refreshSources();
-    await selectSource(paths[0]);
-    toast(`Added ${added} folder${added > 1 ? "s" : ""}`, "ok");
-    autodetect(paths[0]);
-  }
+  await handleOpenPath(paths[0]);
 });
+
+// Native open events can arrive before this script is ready. The backend queues them;
+// the event is only a prompt to drain that queue, which also prevents handling one
+// path twice when launch delivery and the live event overlap.
+listen("open-path", drainOpenPaths);
 
 /* ---------------- editing ----------------
    Edits are previewed with a CSS transform and only written when saved, so nothing
@@ -3206,7 +3483,7 @@ function monthKey(ts) {
 function renderTimelineTools() {
   const tools = $("#timeline-tools");
   if (!tools) return;
-  tools.hidden = !S.source || !S.view.length;
+  tools.hidden = !S.source || !S.view.length || !!S.peek;
   $("#sort-newest").setAttribute("aria-pressed", String(S.sort === "newest"));
   $("#sort-oldest").setAttribute("aria-pressed", String(S.sort === "oldest"));
   const select = $("#month-jump");
@@ -3253,7 +3530,7 @@ function folderKey() {
 
 /** Arranging is only offered over a whole folder — not a search result or a person. */
 function canArrangeHere() {
-  return !S.person && S.cluster === null && !$("#search").value.trim();
+  return !S.peek && !S.person && S.cluster === null && !$("#search").value.trim();
 }
 
 function clearDropMarks() {
@@ -3265,7 +3542,7 @@ function clearDropMarks() {
 async function loadFolderView() {
   S.sort = "newest";
   S.order = [];
-  if (!S.source) return;
+  if (!S.source || S.peek) return;
   try {
     const v = await invoke("folder_view", { path: S.source, folder: folderKey() });
     if (v?.sort) S.sort = v.sort;
@@ -3276,7 +3553,7 @@ async function loadFolderView() {
 }
 
 function saveFolderView() {
-  if (!S.source) return;
+  if (!S.source || S.peek) return;
   invoke("set_folder_view", {
     path: S.source, folder: folderKey(), sort: S.sort, order: S.order,
   }).catch(e => toast(String(e), "error"));
@@ -3336,6 +3613,8 @@ function paintStars() {
     el("button", {
       class: "star", "data-on": (p.rating || 0) >= n ? "1" : "0",
       "aria-label": `${n} star${n > 1 ? "s" : ""}`,
+      disabled: !!S.peek,
+      title: S.peek ? `“${S.peek.name}” is a read-only peek. Keep this folder before rating.` : null,
       onclick: async () => {
         const next = p.rating === n ? 0 : n;
         await invoke("set_rating", { path: S.source, hashes: [p.hash], rating: next });
@@ -3347,6 +3626,8 @@ function paintStars() {
     el("button", {
       class: "labeldot", style: `background:${labelColour(l)}`,
       "aria-pressed": String(p.label === l), "aria-label": l,
+      disabled: !!S.peek,
+      title: S.peek ? `“${S.peek.name}” is a read-only peek. Keep this folder before labelling.` : null,
       onclick: async () => {
         const next = p.label === l ? null : l;
         await invoke("set_label", { path: S.source, hashes: [p.hash], label: next });
@@ -3748,6 +4029,8 @@ async function placePrompt() {
 
 /* ---------------- wiring ---------------- */
 $("#btn-add").onclick = addSource;
+$("#peek-close").onclick = closePeek;
+$("#peek-keep").onclick = keepPeek;
 $("#btn-newfolder").onclick = newFolderPrompt;
 $("#btn-map").onclick = toggleMap;
 $("#map-in").onclick = () => { MAP.zoom = Math.min(14, MAP.zoom + 0.8); scheduleMap(); };
@@ -4015,10 +4298,14 @@ addEventListener("keydown", e => {
     e.preventDefault();
     toggleSel(S.view[S.lastIndex]);
   }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); doUndo(); }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (!refusePeek("undo changes")) doUndo();
+  }
   if ((e.key === "Backspace" || e.key === "Delete") && S.sel.size) {
     e.preventDefault();
-    S.folder === TRASH ? restoreSelected() : deleteSelected();
+    if (!refusePeek("delete photographs"))
+      S.folder === TRASH ? restoreSelected() : deleteSelected();
   }
 });
 let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderGrid, 120); });
@@ -4040,7 +4327,10 @@ listen("library-changed", async ({ payload }) => {
   loadFolderState();
   checkUpdates(false); // deliberately not awaited: a network check never delays the library
   await refreshSources();
-  if (S.sources.length) {
+  const pending = await invoke("take_open_paths").catch(() => []);
+  if (pending.length) {
+    for (const path of [...new Set(pending)]) await handleOpenPath(path);
+  } else if (!S.source && S.sources.length) {
     const first = S.sources.find(s => !s.missing);
     if (first) await selectSource(first.path);
   }

@@ -1,6 +1,6 @@
 # Peeking at a folder
 
-Status: Draft   Owner: somesh   Date: 2026-08-31
+Status: Shipped   Owner: somesh   Date: 2026-08-31
 
 Executor note: written for someone with no prior context on this codebase. Every file
 reference is a real path and every line number was correct at `478c608`.
@@ -155,19 +155,19 @@ the file that was opened. **Do not write a second viewer.**
 
 ## Tasks
 
-- [ ] 1. `scan::scan_shallow`, and `Library::peek` / `end_peek` / `is_peek` on the peek
+- [x] 1. `scan::scan_shallow`, and `Library::peek` / `end_peek` / `is_peek` on the peek
       cache root (touches: `scan.rs`, `library.rs`, `cache.rs`)
-- [ ] 2. `AppState.peeks`, the four commands, and the parent-only grant in `serve_photo`
+- [x] 2. `AppState.peeks`, the four commands, and the parent-only grant in `serve_photo`
       (touches: `apps/desktop/src-tauri/src/lib.rs`)
-- [ ] 3. Refuse every writing command during a peek, at the command layer, with a message
+- [x] 3. Refuse every writing command during a peek, at the command layer, with a message
       naming the peek (touches: `lib.rs`)
-- [ ] 4. `fileAssociations` + `RunEvent::Opened`. `lib.rs:3403` currently calls
+- [x] 4. `fileAssociations` + `RunEvent::Opened`. `lib.rs:3403` currently calls
       `.run(tauri::generate_context!())`; it must become `.build(...)?.run(|app, event|)`
       to receive the event (touches: `tauri.conf.json`, `lib.rs`)
-- [ ] 5. Window: peek banner with the folder name, "Keep this folder", and dropping an
+- [x] 5. Window: peek banner with the folder name, "Keep this folder", and dropping an
       unadded folder peeks rather than adds (touches: `app.js`, `index.html`, `app.css`)
-- [ ] 6. Tests: shallow scan depth, nothing written, the 403 boundary both ways, cache
+- [x] 6. Tests: shallow scan depth, nothing written, the 403 boundary both ways, cache
       removed on close, an in-source photograph opening its library
       (touches: `tests/lifecycle.rs`, `lib.rs` unit tests)
-- [ ] 7. ADR-0020 (peek vs added: two commitment levels, one library type); STATUS,
+- [x] 7. ADR-0020 (peek vs added: two commitment levels, one library type); STATUS,
       ARCHITECTURE, README, landing page

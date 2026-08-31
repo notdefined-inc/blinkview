@@ -124,6 +124,15 @@ try{document.documentElement.dataset.theme=localStorage.getItem("of-theme")||(ma
         </label>
       </div>
     </div>
+    <div class="peekbar" id="peekbar" hidden role="status">
+      <span class="peekmark" aria-hidden="true">◉</span>
+      <span class="peekcopy">
+        <b>Read-only peek · <span id="peek-name"></span></b>
+        <small id="peek-note"></small>
+      </span>
+      <button class="btn ghost sm" id="peek-close">Close</button>
+      <button class="btn sm" id="peek-keep">Keep this folder</button>
+    </div>
     <div class="qchips" id="qchips" hidden></div>
     <div class="filters" id="filters" hidden>
       <div class="frow"><span class="flab">People</span><span class="fopts" id="f-people"></span></div>

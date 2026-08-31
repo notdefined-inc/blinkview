@@ -27,6 +27,25 @@ own cache. The list lives in the app config directory and is the only
 app-level state; losing it costs nothing but re-adding folders. There is deliberately no
 global database — that is the whole premise (ADR-0001).
 
+A source entry carries a depth: recursive (the default, and what every entry written
+before 2026-08-31 still means) or *shallow* — only the files directly in the folder.
+Depth is chosen at add time from a **survey** (`scan::survey_folder`), which counts
+media and subfolders from directory entries alone, cancellable and capped at 200,000
+entries, and is changeable afterwards without touching user-authored metadata. New
+sources also skip a fixed list of system directory names (`Library`, `node_modules`,
+`.git`, …) while descending; the folder chosen directly is never skipped by its own
+name.
+
+## Peeking
+
+There are two commitment levels over the same `Library` type (ADR-0020). A **peek** is
+a markerless, session-only library: shallow scan, no watcher, a cache under
+`<cache root>/peek/<path-id>/` deleted on close, and every writing command refusing it
+by name. Keeping the folder promotes it to a source. Peeks are how Open With
+(`fileAssociations` → `RunEvent::Opened` → `open_path`) and window drops enter; a path
+already inside a source routes to that library instead, keyed by the stored source
+path so a symlinked folder is never opened twice.
+
 ## What lives where
 
     <library>/
@@ -103,7 +122,9 @@ made", whichever container it is in.
 
 The desktop app registers its own `photo://` scheme rather than using Tauri's asset
 protocol, so the security boundary is explicit: a file is served only if it resolves
-inside a folder the user added. The same handler produces thumbnails and HEIC
+inside a folder the user added — or, while a peek is open, if its *parent* is exactly
+the peeked folder (never its subtree: the promise not to recurse is also the grant).
+The same handler produces thumbnails and HEIC
 transcodes on demand, which is what lets a large library paint immediately — the
 virtualised grid only ever requests the few dozen images actually on screen.
 

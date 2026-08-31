@@ -38,6 +38,18 @@
     "active": true,
     "targets": "all",
     "externalBin": ["binaries/ffmpeg"],
+    "fileAssociations": [
+      {
+        "ext": [
+          "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff",
+          "bmp", "ico", "tga", "qoi", "pbm", "pgm", "ppm", "pnm", "hdr", "dds",
+          "cr2", "cr3", "dng", "nef", "arw", "raf", "mp4", "mov", "m4v"
+        ],
+        "name": "Photographs and videos",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

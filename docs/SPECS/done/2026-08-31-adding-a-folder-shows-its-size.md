@@ -1,6 +1,6 @@
 # Adding a folder shows its size first
 
-Status: Draft   Owner: somesh   Date: 2026-08-31
+Status: Shipped   Owner: somesh   Date: 2026-08-31
 Sequenced after `2026-08-31-peeking-at-a-folder.md`, but independent of it: either can
 ship alone.
 
@@ -157,16 +157,16 @@ work; the rule applies to directories encountered while descending.
 
 ## Tasks
 
-- [ ] 1. `scan::SKIP_DIRS` and the descend-only skip rule, with the chosen root exempt
+- [x] 1. `scan::SKIP_DIRS` and the descend-only skip rule, with the chosen root exempt
       (touches: `crates/blinkview-core/src/scan.rs`)
-- [ ] 2. `survey_folder` with `SURVEY_LIMIT` and cancellation (touches: `scan.rs`,
+- [x] 2. `survey_folder` with `SURVEY_LIMIT` and cancellation (touches: `scan.rs`,
       `apps/desktop/src-tauri/src/lib.rs`)
-- [ ] 3. `SourceEntry` with untagged legacy strings; `shallow` through `Library` into
+- [x] 3. `SourceEntry` with untagged legacy strings; `shallow` through `Library` into
       `scan` (touches: `lib.rs`, `library.rs`, `scan.rs`)
-- [ ] 4. The dialog, its default-focus rule, and wiring `addSource` (`app.js:806`,
+- [x] 4. The dialog, its default-focus rule, and wiring `addSource` (`app.js:806`,
       `:3750`, `:2189`) through the survey (touches: `app.js`, `index.html`, `app.css`)
-- [ ] 5. Change a source's depth from its context menu (touches: `lib.rs`, `app.js`)
-- [ ] 6. Tests: depth honoured both ways, skip list on descent but not on the root,
+- [x] 5. Change a source's depth from its context menu (touches: `lib.rs`, `app.js`)
+- [x] 6. Tests: depth honoured both ways, skip list on descent but not on the root,
       legacy `sources.json` loads, survey opens no files, limit returns `None`
       (touches: `tests/lifecycle.rs`, `scan.rs` unit tests)
-- [ ] 7. Docs: STATUS, ARCHITECTURE, README, landing page
+- [x] 7. Docs: STATUS, ARCHITECTURE, README, landing page

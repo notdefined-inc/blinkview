@@ -171,6 +171,22 @@ body.has-update .shell{top:calc(var(--tb) + 44px)}
 }
 .libhead:has(#crumb:empty){display:none}
 #crumb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.peekbar{
+  margin:0 var(--s6) var(--s3);padding:var(--s3) var(--s4);min-height:52px;
+  display:flex;align-items:center;gap:var(--s3);border-radius:var(--r-lg);
+  color:var(--ink);background:linear-gradient(120deg,
+    color-mix(in srgb,var(--brand-cyan) 12%,var(--glass-2)),
+    color-mix(in srgb,var(--brand-violet) 10%,var(--glass-2)));
+  border:1px solid color-mix(in srgb,var(--accent) 32%,var(--stroke));
+  box-shadow:inset 0 1px 0 var(--stroke)
+}
+.peekmark{
+  width:28px;height:28px;display:grid;place-items:center;flex:0 0 auto;
+  border-radius:var(--r-pill);color:var(--accent-ink);background:var(--accent)
+}
+.peekcopy{display:flex;flex:1;min-width:0;flex-direction:column}
+.peekcopy b{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.peekcopy small{font-size:12px;color:var(--ink-dim)}
 .timeline-tools{margin-left:auto;display:flex;align-items:center;gap:var(--s2);flex:0 0 auto}
 .seg{display:flex;padding:2px;border:1px solid var(--stroke);border-radius:var(--r-pill);background:var(--glass-1)}
 .seg button{padding:3px 9px;border-radius:var(--r-pill);font-size:11px;color:var(--ink-faint)}
@@ -240,6 +256,7 @@ body.has-update .shell{top:calc(var(--tb) + 44px)}
 .btn.ghost{background:rgba(255,255,255,.07);color:var(--ink);font-weight:500;border:1px solid var(--stroke)}
 .btn.ghost:hover{background:rgba(255,255,255,.12)}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+.icon-btn:disabled,.askbtn:disabled{opacity:.38;cursor:not-allowed;filter:none}
 .btn.sm{padding:5px var(--s3);font-size:13px;font-weight:500}
 .btn.danger{color:var(--danger)}
 .btn.danger:hover{background:color-mix(in srgb,var(--danger) 18%,transparent)}
@@ -365,6 +382,11 @@ body.has-update .shell{top:calc(var(--tb) + 44px)}
 .srcrow .srcopen{flex:1;display:flex;align-items:center;gap:8px;background:none;border:0;
   color:inherit;font:inherit;cursor:pointer;padding:0;text-align:left;min-width:0}
 .srcrow:hover .sact,.srcrow:focus-within .sact{opacity:1}
+.depthmark{font-size:10px;color:var(--ink-faint);white-space:nowrap}
+.surveybusy{display:flex;align-items:center;gap:var(--s3);color:var(--ink-dim)}
+.surveyfacts{display:grid;gap:var(--s2);margin:0;padding:0;list-style:none;color:var(--ink-dim);font-size:13px}
+.surveyfacts strong{color:var(--ink);font-variant-numeric:tabular-nums}
+.surveywarn{color:var(--warn)}
 /* The destructive option: present, explained, and deliberately not preselected. */
 .purgerow{display:flex;gap:10px;align-items:flex-start;margin:var(--s4) 0 var(--s2);
   padding:var(--s3);border:1px solid var(--stroke);border-radius:var(--r-md);cursor:pointer}
@@ -592,6 +614,7 @@ main{overflow:auto;position:relative}
 .sheet{position:fixed;inset:0;z-index:70;background:rgba(4,4,8,.55);display:grid;place-items:center;
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .sheet-panel.small{width:min(430px,92vw)}
+.sheet-panel.small.survey-panel{width:min(540px,92vw)}
 .asktext{margin:0 0 var(--s4);color:var(--ink-dim);font-size:13px}
 .askopt{display:flex;gap:var(--s3);align-items:flex-start;padding:var(--s3);
   border:1px solid var(--stroke);border-radius:var(--r);cursor:pointer;margin-bottom:var(--s2)}
@@ -859,13 +882,14 @@ main{overflow:auto;position:relative}
   padding:7px var(--s3);border-radius:var(--r);font-size:13px;color:var(--ink-dim)
 }
 .ctx button:hover{background:rgba(255,255,255,.09);color:var(--ink)}
+.ctx button:disabled{cursor:default;color:var(--ink-faint);background:transparent}
 .ctx button.danger:hover{background:color-mix(in srgb,var(--danger) 18%,transparent);color:var(--danger)}
 .ctx hr{border:0;border-top:1px solid var(--stroke);margin:var(--s1) 0}
 .ctx .k{margin-left:auto;font-size:11px;color:var(--ink-faint)}
 
 /* Drop target feedback. The whole window accepts a folder, so the cue is the window. */
 body.dropping::after{
-  content:"Drop a folder to add it";
+  content:"Drop a file or folder to peek";
   position:fixed;inset:var(--s4);z-index:100;pointer-events:none;
   display:grid;place-items:center;font-size:16px;font-weight:600;color:var(--accent);
   border:2px dashed color-mix(in srgb,var(--accent) 60%,transparent);

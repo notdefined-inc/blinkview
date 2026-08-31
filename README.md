@@ -42,6 +42,8 @@ Everything else — thumbnails, the index, face embeddings — lives in your mac
 
 ## What it actually does
 
+**Looks before it commits.** Double-click a photo in Finder or drop a folder on the window and Blinkview simply shows it — read-only, nothing written, nothing remembered. Keep the folder and it becomes a library in one click. And when you do add one, it counts first: *340 photos here, 84,000 more below — this folder only, or everything?* You decide, per folder, before an hour of indexing happens to you.
+
 **Finds faces, offline.** Detection and recognition run on your machine. Nothing is uploaded. Nothing phones home. You name someone once and Blinkview files the rest — and when it isn't sure, it says so and leaves the photo alone, because a confidently wrong answer is worse than an honest shrug.
 
 **Searches by what's *in* the picture.** Type `a church` and get the church. Type `snowy mountains` and get the mountains. No tagging, no training — a vision model reads the pixels. Ask for `the sea` in a library with no sea and it returns nothing, on purpose. Below the confidence threshold it would rather say nothing than guess.

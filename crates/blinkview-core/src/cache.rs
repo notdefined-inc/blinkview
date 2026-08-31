@@ -90,6 +90,18 @@ pub fn existing_vault_for(lib_root: &Path) -> Option<PathBuf> {
     vault.is_dir().then_some(vault)
 }
 
+/// Create the temporary cache for a peek without reading or writing a library marker.
+///
+/// Kept outside `libraries/` so cache listing and pruning never mistake a transient
+/// view for a source the user committed to keeping.
+pub(crate) fn peek_vault(lib_root: &Path, cache_root: &Path) -> PathBuf {
+    let vault = cache_root.join("peek").join(path_id(lib_root));
+    for sub in ["", "thumbs", "derived"] {
+        let _ = std::fs::create_dir_all(vault.join(sub));
+    }
+    vault
+}
+
 /// Drop the memoized location of a library's cache. Call after deleting one.
 pub fn forget(lib_root: &Path) {
     if let Ok(mut map) = MEMO.lock() {
