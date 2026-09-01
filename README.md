@@ -6,6 +6,10 @@
 
 **Your photos are already organised. They're in folders. Why does no app believe you?**
 
+Blinkview is a free, open-source, local-first photo viewer and photo manager for macOS,
+Windows and Linux. It browses the folders you already have without importing your
+photographs into a proprietary library.
+
 [Install](#install) · [Why this exists](#the-problem-nobody-will-fix) · [What it does](#what-it-actually-does) · [Build from source](#build-it-yourself)
 
 </div>

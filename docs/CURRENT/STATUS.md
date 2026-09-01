@@ -2,6 +2,15 @@
 
 _Last updated: 2026-09-01 · shipping version 0.1.5_
 
+## Website discovery
+
+The public GitHub Pages site identifies Blinkview as a free, open-source photo viewer
+and manager for macOS, Windows and Linux. It exposes a canonical URL, permissive crawl
+rules, a one-page sitemap, large-image search previews and `SoftwareApplication`
+structured data pointing to the public repository and latest release. The repository
+description and topics use the same product language. Search-engine discovery is still
+subject to the normal delay for a newly published project.
+
 ## Dedicated phone UI (in progress)
 
 Paired phones now receive `mobile.html` by user-agent, with `?full=1` retaining access
